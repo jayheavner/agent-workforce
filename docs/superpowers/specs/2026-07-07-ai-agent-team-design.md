@@ -26,7 +26,7 @@ into `~/.claude/`; nothing is edited in place there.
 
 | Agent | Model | Role | Mutation rights |
 |---|---|---|---|
-| orchestrator | `claude-fable-5` | Decompose, dispatch, enforce gates | None (read + dispatch only) |
+| orchestrator | `claude-fable-5` | Decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
 | architect | `claude-fable-5` | Brainstorm, design, spec, plan | Docs only (specs/plans) |
 | builder | `claude-sonnet-5` | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
 | verifier | `claude-sonnet-5` | Run tests and acceptance checks | None (read + run) |
@@ -36,6 +36,11 @@ into `~/.claude/`; nothing is edited in place there.
 | ops | `claude-sonnet-5` | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
 | scribe | `claude-sonnet-5` | Reports, briefs, requirements, postmortems | Docs only |
 | ticketer | `claude-sonnet-5` | Asana write/review/track | Asana via MCP; gated before filing |
+
+Model IDs are pinned as full IDs deliberately: model updates are deliberate edits to
+this repo (re-run install), never automatic. `install.sh` warns if the
+`CLAUDE_CODE_SUBAGENT_MODEL` environment variable is set, since it silently overrides
+every pin in this table.
 
 Model policy: assignments follow `~/.claude/skills/model-picker/approved-models.yaml`
 (`dispatchable_tiers`: frontier = Fable 5 / Opus 4.8; budget = Sonnet 5 / Haiku 4.5).
@@ -81,15 +86,23 @@ from the list does not exist for that agent.
 **Layer 2 — per-agent PreToolUse hooks.** One shared policy script
 (`~/.claude/hooks/agent-team-policy.sh`), parameterized by role, wired into each agent's
 `hooks:` frontmatter. Exit code 2 blocks the call and returns the reason to the agent.
-Role policies:
+Cloud-command strategy is an **allowlist for every role** (block everything except
+approved verbs), not a denylist — AWS CLI mutating verbs are too numerous and
+service-specific to enumerate safely. Role policies:
 
-- builder: block `sam deploy`, `amplify`, `cdk deploy|destroy`, `terraform apply|destroy`, `aws` mutating verbs, `git push` to main/master.
-- verifier: block all file-mutating shell commands and all cloud mutations; allow test runners, linters, read-only git.
+- builder: no cloud CLI at all; block `sam deploy`, `amplify`, `cdk`, `terraform`; block `git push` to main/master (feature branches allowed).
+  Examples: `git push origin main` → block; `git push origin feature/x` → allow; `sam build` → allow; `sam deploy` → block.
+- verifier: block all file-mutating shell commands and all cloud CLI; allow test runners, linters, read-only git.
+  Examples: `pytest` → allow; `git diff` → allow; `aws s3 rm …` → block; `rm -rf build/` → block.
 - reviewer: allow only read-only commands (git log/diff/show, grep-class, test runs).
-- deployer: allow deploy toolchain and read-only verification; block unrelated mutations (package installs outside deploy, git history rewrites).
-- ops: allow cloud reads (`describe|get|list|read`-class); block mutating cloud verbs — those surface as permission prompts per Layer 3, not silent blocks. Hook blocks only the catastrophic class (`delete-account`-tier operations) outright.
+- deployer: allow the deploy toolchain (`sam`, `amplify`, `cdk`, `aws cloudformation|s3 sync` for deploy paths) plus read-only verification; block everything else.
+- ops: allow cloud verbs matching `get-*|list-*|describe-*|head-*` (and Azure `show|list`); every other cloud verb blocks at the hook with instructions to surface the intended command to the human, who runs approved mutations through the gate.
 - architect/scribe: Write/Edit allowed only under `docs/`, `plans/`, or the project's spec directories.
-- all roles: block any command that would write secret-shaped values to disk (existing global rule, enforced here too); only ops and deployer may invoke `op`.
+- all roles: block commands that redirect or interpolate known credential env vars (`$OKTA_TOKEN`, `$GODADDY_API_*`, `OP_SERVICE_ACCOUNT_TOKEN`, `*_API_KEY`, `*_SECRET*`, `*_PASSWORD*`) into files, and block writes of high-entropy token literals the same way the existing secure-secrets discipline defines them; only ops and deployer may invoke `op`.
+- all roles: every hook decision appends one audit line — timestamp, role, command, allow/block — to `~/.claude/logs/agent-team-audit.log`, so any agent's actions (especially deployer) can be reconstructed afterward.
+
+The hook test file (`tests/test_policy_hooks.sh`) encodes the must-block / must-allow
+examples above per role and is the executable form of this policy.
 
 **Layer 3 — permissionMode.**
 
@@ -103,12 +116,16 @@ regardless of session mode.
 
 ## Orchestration
 
-**Invocation.** The user asks for the orchestrator by name for sizable tasks. Ordinary
-sessions are unchanged; the team is opt-in per task.
+**Invocation.** The orchestrator runs **as the main session** — `claude --agent
+orchestrator` (or switching agent in-session) — not as a dispatched subagent. This is
+load-bearing: gates require stopping mid-task to interact with the human, and a
+dispatched subagent returns only a final result. Running main-session also makes the
+`Agent(role)` allowlist in its frontmatter enforceable. Its `description:` is written
+narrowly so ordinary sessions never auto-delegate to it; the team is opt-in per task.
 
 **Routes.**
 
-- Software: architect (design+spec) → GATE → architect (plan) → GATE → builder (TDD) → verifier → reviewer → GATE → deployer → verifier (smoke).
+- Software: architect (design+spec) → GATE → architect (plan) → GATE → builder (TDD) → verifier → reviewer → GATE → deployer → verifier (smoke). A failed smoke check triggers the deployer's rollback procedure — redeploy the previous known-good version (`sam deploy` of the prior artifact, Amplify redeploy of the prior build) — then escalation to the human with the failure evidence. The deployer records the current known-good identifier before every deploy so rollback has a target.
 - Research/ops/document/ticket: researcher or ops gathers → scribe or ticketer produces → GATE before anything outward-facing (filed ticket, sent report, cloud mutation).
 
 **Gate behavior.** At each GATE the orchestrator stops, presents the artifact with a
@@ -120,9 +137,14 @@ attached; maximum two repair loops, then escalate to the human. Any agent hittin
 unexpected state (missing credentials, broken environment) stops and reports rather than
 improvising — the stop-and-alert rule is in every agent's prompt.
 
-**Artifacts.** Specs to `docs/superpowers/specs/`, plans to `docs/plans/`, and a
-per-task `STATUS.md`-style handoff note maintained by the orchestrator so interrupted
-work resumes cleanly.
+**Runaway control.** Every specialist sets `maxTurns` in frontmatter (generous for
+builder/architect, tight for verifier/reviewer); an agent that hits its cap returns
+partial work and the orchestrator escalates rather than re-dispatching blindly.
+
+**Artifacts.** Specs to `docs/superpowers/specs/`, plans to `docs/plans/`. The
+orchestrator has no Write tool by design, so the per-task `STATUS.md`-style handoff
+note is written by the **scribe** at the orchestrator's direction — one scribe dispatch
+per phase transition — so interrupted work resumes cleanly.
 
 ## Repository layout
 
@@ -140,7 +162,10 @@ work resumes cleanly.
 
 `install.sh` follows the config-safety rule: validate in a temp location (`bash -n`,
 frontmatter lint), back up any file being replaced, install only after validation, and
-restore the backup on failure.
+restore the backup on failure. Validation also fails the install if any `skills:` entry
+in any agent file does not resolve to an installed skill (renamed skills must break
+loudly, not degrade silently), and warns if `CLAUDE_CODE_SUBAGENT_MODEL` is set in the
+environment or shell config.
 
 ## Testing the team
 
