@@ -35,9 +35,29 @@ has() { printf '%s' "$CMD" | grep -qE "$1"; }
 # so redirection checks don't false-positive on "2>/dev/null".
 stripped_cmd() { printf '%s' "$CMD" | sed -E 's|[0-9]*>+[[:space:]]*/dev/null||g'; }
 
+SECRET_RE='\$\{?(OKTA_TOKEN|GODADDY_API_KEY|GODADDY_API_SECRET|OP_SERVICE_ACCOUNT_TOKEN|[A-Za-z_]*_API_KEY|[A-Za-z_]*SECRET[A-Za-z_]*|[A-Za-z_]*PASSWORD[A-Za-z_]*)'
+
+check_global_rules() {
+  if has "$SECRET_RE"; then
+    if printf '%s' "$(stripped_cmd)" | grep -qE '(>>?|\|[[:space:]]*tee([[:space:]]|$))'; then
+      block "credential-bearing value directed at a file — forbidden for every role" "$CMD"
+    fi
+  fi
+  case "$ROLE" in
+    ops|deployer) : ;;
+    *)
+      if has '(^|[;&|[:space:]])op[[:space:]]'; then
+        block "only ops and deployer may invoke the 1Password CLI" "$CMD"
+      fi
+      ;;
+  esac
+  return 0
+}
+
 case "$TOOL" in
   Bash)
     CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')"
+    check_global_rules
     case "$ROLE" in
       *) allow "$CMD" ;;
     esac
