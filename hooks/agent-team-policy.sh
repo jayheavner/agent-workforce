@@ -31,6 +31,39 @@ block() { # $1 human reason, $2 detail
 
 has() { printf '%s' "$CMD" | grep -qE "$1"; }
 
+deny_shell_mutation() {
+  if has '(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|chmod|chown|ln|dd|truncate)[[:space:]]'; then
+    block "file-mutating command not allowed for $ROLE" "$CMD"
+  fi
+  if printf '%s' "$(stripped_cmd)" | grep -qE '>>?'; then
+    block "output redirection to a file not allowed for $ROLE" "$CMD"
+  fi
+  if has '\|[[:space:]]*tee([[:space:]]|$)'; then
+    block "tee not allowed for $ROLE" "$CMD"
+  fi
+  if has 'sed[[:space:]]+(-[A-Za-z]*i|--in-place)'; then
+    block "in-place edit not allowed for $ROLE" "$CMD"
+  fi
+  if has 'git[[:space:]]+(add|commit|push|reset|checkout|restore|clean|rebase|merge|stash|tag|rm)([[:space:]]|$)'; then
+    block "mutating git command not allowed for $ROLE" "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])(npm|pnpm|yarn|pip3?|uv|brew)[[:space:]]+(install|add|uninstall|remove|upgrade)'; then
+    block "package management not allowed for $ROLE" "$CMD"
+  fi
+  return 0
+}
+
+policy_readonly_runner() {
+  if has '(^|[;&|[:space:]])(aws|az|gcloud)[[:space:]]'; then
+    block "no cloud CLI for $ROLE" "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])(sam|amplify|cdk|terraform)([[:space:]]|$)'; then
+    block "deploy toolchain is reserved for the deployer" "$CMD"
+  fi
+  deny_shell_mutation
+  allow "$CMD"
+}
+
 policy_builder() {
   if has '(^|[;&|[:space:]])(aws|az|gcloud)[[:space:]]'; then
     block "builder has no cloud CLI access — hand cloud work to ops or deployer" "$CMD"
@@ -92,6 +125,7 @@ case "$TOOL" in
     check_global_rules
     case "$ROLE" in
       builder) policy_builder ;;
+      verifier|reviewer) policy_readonly_runner ;;
       *) allow "$CMD" ;;
     esac
     ;;

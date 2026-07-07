@@ -61,6 +61,20 @@ expect_block builder "$(bash_json 'git push')" "builder: bare push blocks"
 expect_allow builder "$(bash_json 'git push origin feature/hooks')" "builder: push to feature branch allows"
 expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "builder: commit and test allows"
 
+# --- Task 4: verifier/reviewer ---
+expect_allow verifier "$(bash_json 'pytest tests/ -v')" "verifier: test run allows"
+expect_allow verifier "$(bash_json 'npm test')" "verifier: npm test allows"
+expect_allow reviewer "$(bash_json 'git diff main...HEAD')" "reviewer: git diff allows"
+expect_allow reviewer "$(bash_json 'git log --oneline')" "reviewer: git log allows"
+expect_block verifier "$(bash_json 'aws s3 rm s3://bucket/key')" "verifier: cloud blocks"
+expect_block verifier "$(bash_json 'rm -rf build/')" "verifier: rm blocks"
+expect_block verifier "$(bash_json 'echo fixed > src/app.py')" "verifier: redirect to file blocks"
+expect_block verifier "$(bash_json 'sed -i "" "s/a/b/" src/app.py')" "verifier: in-place sed blocks"
+expect_block reviewer "$(bash_json 'git commit -m looks-good')" "reviewer: git commit blocks"
+expect_block reviewer "$(bash_json 'git checkout -- .')" "reviewer: git checkout blocks"
+expect_block verifier "$(bash_json 'pip install requests')" "verifier: package install blocks"
+expect_block reviewer "$(bash_json 'sam deploy')" "reviewer: deploy toolchain blocks"
+
 # --- Task 3: git push refspec bypass hardening ---
 expect_block builder "$(bash_json 'git push origin main:main')" "builder: refspec main:main blocks"
 expect_block builder "$(bash_json 'git push origin HEAD:main')" "builder: refspec HEAD:main blocks"
