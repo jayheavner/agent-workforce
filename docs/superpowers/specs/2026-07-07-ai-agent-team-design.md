@@ -72,6 +72,8 @@ from the list does not exist for that agent.
 - reviewer: Read, Glob, Grep, Bash (hook-restricted to read-only git/diff/test commands).
 - deployer: Read, Glob, Grep, Bash (hook-restricted to deploy + verification commands).
 - researcher: Read, Glob, Grep, WebSearch, WebFetch, Glean MCP tools.
+  (Subagents do not inherit session MCP servers — researcher and ticketer declare
+  their servers explicitly via `mcpServers:` frontmatter.)
 - ops: Read, Glob, Grep, Bash (hook-restricted cloud policy), WebSearch, WebFetch.
 - scribe: Read, Glob, Grep, Write, Edit (hook-restricted to document paths), WebSearch, WebFetch.
 - ticketer: Read, Glob, Grep, Asana MCP tools, AskUserQuestion.
