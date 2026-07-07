@@ -74,6 +74,7 @@ expect_block reviewer "$(bash_json 'git commit -m looks-good')" "reviewer: git c
 expect_block reviewer "$(bash_json 'git checkout -- .')" "reviewer: git checkout blocks"
 expect_block verifier "$(bash_json 'pip install requests')" "verifier: package install blocks"
 expect_block reviewer "$(bash_json 'sam deploy')" "reviewer: deploy toolchain blocks"
+expect_allow reviewer "$(bash_json 'echo "legit commit history"')" "reviewer: false-positive regression — benign text containing git word allows"
 
 # --- Task 3: git push refspec bypass hardening ---
 expect_block builder "$(bash_json 'git push origin main:main')" "builder: refspec main:main blocks"

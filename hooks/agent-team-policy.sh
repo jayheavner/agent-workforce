@@ -44,7 +44,7 @@ deny_shell_mutation() {
   if has 'sed[[:space:]]+(-[A-Za-z]*i|--in-place)'; then
     block "in-place edit not allowed for $ROLE" "$CMD"
   fi
-  if has 'git[[:space:]]+(add|commit|push|reset|checkout|restore|clean|rebase|merge|stash|tag|rm)([[:space:]]|$)'; then
+  if has '(^|[;&|[:space:]])git[[:space:]]+(add|commit|push|reset|checkout|restore|clean|rebase|merge|stash|tag|rm)([[:space:]]|$)'; then
     block "mutating git command not allowed for $ROLE" "$CMD"
   fi
   if has '(^|[;&|[:space:]])(npm|pnpm|yarn|pip3?|uv|brew)[[:space:]]+(install|add|uninstall|remove|upgrade)'; then
