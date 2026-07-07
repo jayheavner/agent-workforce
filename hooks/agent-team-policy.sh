@@ -38,11 +38,22 @@ policy_builder() {
   if has '(^|[;&|[:space:]])(amplify|cdk|terraform)([[:space:]]|$)'; then
     block "deploy toolchain belongs to the deployer" "$CMD"
   fi
-  if has '(^|[;&|[:space:]])sam[[:space:]]+deploy'; then
+  if has '(^|[;&|[:space:]])sam[[:space:]]+deploy([[:space:]]|$)'; then
     block "sam deploy belongs to the deployer" "$CMD"
   fi
   if has 'git[[:space:]]+push'; then
+    # Three independent checks catch main/master as: a bare whitespace-delimited
+    # token, the destination side of a ':'-separated refspec (e.g. HEAD:main),
+    # or a fully-qualified refs/heads/ path — without false-positiving on a
+    # feature-prefixed branch that merely contains "main" as a path segment
+    # (e.g. feature/main).
     if has 'git[[:space:]]+push[^;&|]*[[:space:]](main|master)([[:space:]]|$|:)'; then
+      block "builder may not push to main/master" "$CMD"
+    fi
+    if has ':(main|master)([[:space:]]|$)'; then
+      block "builder may not push to main/master" "$CMD"
+    fi
+    if has '(^|[;&|[:space:]:])refs/heads/(main|master)([[:space:]]|$|:)'; then
       block "builder may not push to main/master" "$CMD"
     fi
     if ! has 'git[[:space:]]+push[[:space:]]+(-u[[:space:]]+)?[^-[:space:]][^[:space:]]*[[:space:]]+[^[:space:]]+'; then

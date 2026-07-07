@@ -61,5 +61,13 @@ expect_block builder "$(bash_json 'git push')" "builder: bare push blocks"
 expect_allow builder "$(bash_json 'git push origin feature/hooks')" "builder: push to feature branch allows"
 expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "builder: commit and test allows"
 
+# --- Task 3: git push refspec bypass hardening ---
+expect_block builder "$(bash_json 'git push origin main:main')" "builder: refspec main:main blocks"
+expect_block builder "$(bash_json 'git push origin HEAD:main')" "builder: refspec HEAD:main blocks"
+expect_block builder "$(bash_json 'git push origin HEAD:master')" "builder: refspec HEAD:master blocks"
+expect_block builder "$(bash_json 'git push origin refs/heads/main')" "builder: fully-qualified refs/heads/main blocks"
+expect_block builder "$(bash_json 'git push origin refs/heads/master')" "builder: fully-qualified refs/heads/master blocks"
+expect_allow builder "$(bash_json 'git push origin feature/main')" "builder: feature/main path segment allows"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
