@@ -31,6 +31,27 @@ block() { # $1 human reason, $2 detail
 
 has() { printf '%s' "$CMD" | grep -qE "$1"; }
 
+policy_builder() {
+  if has '(^|[;&|[:space:]])(aws|az|gcloud)[[:space:]]'; then
+    block "builder has no cloud CLI access — hand cloud work to ops or deployer" "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])(amplify|cdk|terraform)([[:space:]]|$)'; then
+    block "deploy toolchain belongs to the deployer" "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])sam[[:space:]]+deploy'; then
+    block "sam deploy belongs to the deployer" "$CMD"
+  fi
+  if has 'git[[:space:]]+push'; then
+    if has 'git[[:space:]]+push[^;&|]*[[:space:]](main|master)([[:space:]]|$|:)'; then
+      block "builder may not push to main/master" "$CMD"
+    fi
+    if ! has 'git[[:space:]]+push[[:space:]]+(-u[[:space:]]+)?[^-[:space:]][^[:space:]]*[[:space:]]+[^[:space:]]+'; then
+      block "git push must name a remote and an explicit feature branch" "$CMD"
+    fi
+  fi
+  allow "$CMD"
+}
+
 # stdin command with harmless /dev/null redirections removed,
 # so redirection checks don't false-positive on "2>/dev/null".
 stripped_cmd() { printf '%s' "$CMD" | sed -E 's|[0-9]*>+[[:space:]]*/dev/null||g'; }
@@ -59,6 +80,7 @@ case "$TOOL" in
     CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')"
     check_global_rules
     case "$ROLE" in
+      builder) policy_builder ;;
       *) allow "$CMD" ;;
     esac
     ;;

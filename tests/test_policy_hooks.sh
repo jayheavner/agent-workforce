@@ -48,5 +48,18 @@ expect_block builder "$(bash_json 'op read op://vault/item/credential')" "op: bu
 expect_allow ops "$(bash_json 'op read op://vault/item/credential')" "op: ops may invoke 1Password CLI"
 expect_allow deployer "$(bash_json 'op read op://vault/item/credential')" "op: deployer may invoke 1Password CLI"
 
+# --- Task 3: builder ---
+expect_allow builder "$(bash_json 'sam build')" "builder: sam build allows"
+expect_block builder "$(bash_json 'sam deploy --guided')" "builder: sam deploy blocks"
+expect_block builder "$(bash_json 'aws s3 ls')" "builder: any aws blocks"
+expect_block builder "$(bash_json 'cdk deploy')" "builder: cdk blocks"
+expect_block builder "$(bash_json 'terraform apply')" "builder: terraform blocks"
+expect_block builder "$(bash_json 'amplify push')" "builder: amplify blocks"
+expect_block builder "$(bash_json 'git push origin main')" "builder: push to main blocks"
+expect_block builder "$(bash_json 'git push origin master')" "builder: push to master blocks"
+expect_block builder "$(bash_json 'git push')" "builder: bare push blocks"
+expect_allow builder "$(bash_json 'git push origin feature/hooks')" "builder: push to feature branch allows"
+expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "builder: commit and test allows"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
