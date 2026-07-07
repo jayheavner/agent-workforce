@@ -4,7 +4,11 @@
 # Exit 0 = allow. Exit 2 = block (stderr message returned to the agent).
 set -u
 
-ROLE="${1:?usage: agent-team-policy.sh ROLE}"
+if [ -z "${1:-}" ]; then
+  printf 'agent-team policy: usage: agent-team-policy.sh ROLE\n' >&2
+  exit 2
+fi
+ROLE="$1"
 INPUT="$(cat)"
 TOOL="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')"
 CMD=""
