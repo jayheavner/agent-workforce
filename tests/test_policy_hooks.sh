@@ -100,5 +100,10 @@ expect_block deployer "$(bash_json 'git push --force origin main')" "deployer: g
 expect_block deployer "$(bash_json 'npm install left-pad')" "deployer: package install blocks"
 expect_block deployer "$(bash_json 'rm -rf .aws-sam')" "deployer: rm blocks"
 
+# --- Task 5 follow-up: chain-aware segmentation (block whole-string substring bypass) ---
+expect_block deployer "$(bash_json 'sam deploy && rm -rf /')" "deployer: mutation chained after allowed toolchain call blocks"
+expect_block deployer "$(bash_json 'aws sts get-caller-identity && aws iam create-user --user-name backdoor')" "deployer: aws mutation chained after allowed aws call blocks"
+expect_block deployer "$(bash_json 'amplify publish && git push --force origin main')" "deployer: git mutation chained after allowed toolchain call blocks"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
