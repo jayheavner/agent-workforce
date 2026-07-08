@@ -47,8 +47,30 @@ each_segment() { # $1 = callback name, invoked once per chain segment of $CMD
   done < <(printf '%s\n' "$CMD" | sed -E 's/(&&|\|\||;|\|)/\n/g')
 }
 
-_deny_shell_mutation_seg() { # $1 = one chain segment
+# Shared by every role that runs mutation checks (readonly-runner, deployer,
+# builder). Blocks the raw-shell-mutation primitives — file mutation commands,
+# redirection, tee, in-place sed, package management — and, per the
+# command-substitution bypass fix below, the two confirmed-exploitable
+# subshell syntaxes. Deliberately excludes the git-verb block: builder needs
+# `git add`/`git commit` for its own TDD workflow, so that block lives only in
+# `_deny_shell_mutation_seg` (below), not here.
+_deny_raw_mutation_primitives_seg() { # $1 = one chain segment
   local seg="$1"
+  # Command substitution / subshell bypass: a mutating command hidden inside
+  # $(...) or backticks sits immediately after a `(` or a backtick, neither of
+  # which the `(^|[;&|[:space:]])` anchor used above matches — so e.g.
+  # `echo $(rm -rf /)` slipped past every check untouched. Rather than trying
+  # to parse nested subshell contents with POSIX ERE (impractical in bash
+  # 3.2), block the syntax itself unconditionally. Bare-paren subshells
+  # `(cmd)` are intentionally NOT blocked here: a broad bare-`(` check caused
+  # no confirmed exploit in this policy's test matrix but risked false-
+  # positiving on legitimate parenthesized constructs (arithmetic `((x++))`,
+  # grouped test conditions), so the fix is scoped to the two confirmed-
+  # exploitable vectors only: `$(` command substitution and backtick
+  # command substitution.
+  if has_in "$seg" '\$\(|`'; then
+    block "command substitution / subshell syntax not allowed for $ROLE" "$CMD"
+  fi
   if has_in "$seg" '(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|chmod|chown|ln|dd|truncate)[[:space:]]'; then
     block "file-mutating command not allowed for $ROLE" "$CMD"
   fi
@@ -61,11 +83,17 @@ _deny_shell_mutation_seg() { # $1 = one chain segment
   if has_in "$seg" 'sed[[:space:]]+(-[A-Za-z]*i|--in-place)'; then
     block "in-place edit not allowed for $ROLE" "$CMD"
   fi
-  if has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+(add|commit|push|reset|checkout|restore|clean|rebase|merge|stash|tag|rm)([[:space:]]|$)'; then
-    block "mutating git command not allowed for $ROLE" "$CMD"
-  fi
   if has_in "$seg" '(^|[;&|[:space:]])(npm|pnpm|yarn|pip3?|uv|brew)[[:space:]]+(install|add|uninstall|remove|upgrade)'; then
     block "package management not allowed for $ROLE" "$CMD"
+  fi
+  return 0
+}
+
+_deny_shell_mutation_seg() { # $1 = one chain segment
+  local seg="$1"
+  _deny_raw_mutation_primitives_seg "$seg"
+  if has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+(add|commit|push|reset|checkout|restore|clean|rebase|merge|stash|tag|rm)([[:space:]]|$)'; then
+    block "mutating git command not allowed for $ROLE" "$CMD"
   fi
   return 0
 }
@@ -130,6 +158,7 @@ _policy_builder_seg() { # $1 = one chain segment
   if has_in "$seg" '(^|[;&|[:space:]])sam[[:space:]]+deploy([[:space:]]|$)'; then
     block "sam deploy belongs to the deployer" "$CMD"
   fi
+  _deny_raw_mutation_primitives_seg "$seg"
   if has_in "$seg" 'git[[:space:]]+push'; then
     # Three independent checks catch main/master as: a bare whitespace-delimited
     # token, the destination side of a ':'-separated refspec (e.g. HEAD:main),
@@ -154,9 +183,15 @@ _policy_builder_seg() { # $1 = one chain segment
   return 0
 }
 
-# NOTE: policy_builder intentionally does NOT call deny_shell_mutation,
-# matching its pre-existing (Task 3) behavior — see task-5-report.md for
-# why this is flagged to the human rather than silently changed here.
+# Builder calls _deny_raw_mutation_primitives_seg (via _policy_builder_seg)
+# rather than the full _deny_shell_mutation_seg/deny_shell_mutation used by
+# the other roles, because that shared helper's git-verb block list includes
+# `commit` and `add` — both required for builder's normal TDD workflow
+# (commit after every green test cycle). Builder's own push-to-main/master
+# handling above already covers `git push`, so no git-verb block is needed
+# here at all; raw shell-mutation primitives (rm/redirect/tee/in-place sed/
+# package installs/subshell syntax) are still blocked. See task-5-report.md
+# for the human decision that resolved the previously-flagged gap.
 policy_builder() {
   each_segment _policy_builder_seg
   allow "$CMD"

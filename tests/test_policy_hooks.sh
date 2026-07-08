@@ -105,5 +105,29 @@ expect_block deployer "$(bash_json 'sam deploy && rm -rf /')" "deployer: mutatio
 expect_block deployer "$(bash_json 'aws sts get-caller-identity && aws iam create-user --user-name backdoor')" "deployer: aws mutation chained after allowed aws call blocks"
 expect_block deployer "$(bash_json 'amplify publish && git push --force origin main')" "deployer: git mutation chained after allowed toolchain call blocks"
 
+# --- Task 5 follow-up 2: command-substitution/subshell bypass + builder raw-mutation gap ---
+expect_block deployer "$(bash_json 'echo $(rm -rf /)')" "subshell: \$() command substitution blocks for deployer"
+expect_block builder "$(bash_json 'echo $(rm -rf /)')" "subshell: \$() command substitution blocks for builder"
+expect_block deployer "$(bash_json 'echo `rm -rf /`')" "subshell: backtick command substitution blocks for deployer"
+expect_block builder "$(bash_json 'echo `rm -rf /`')" "subshell: backtick command substitution blocks for builder"
+expect_block builder "$(bash_json 'rm -rf /')" "builder: bare rm -rf now blocks (raw mutation primitives)"
+expect_block builder "$(bash_json 'echo test > file.txt')" "builder: file redirect now blocks (raw mutation primitives)"
+expect_block builder "$(bash_json 'sed -i "" "s/a/b/" file.py')" "builder: in-place sed now blocks (raw mutation primitives)"
+# Regression: builder's own git workflow (add/commit) and push-to-feature must still allow.
+expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "builder: commit and test still allows after raw-mutation fix"
+expect_allow builder "$(bash_json 'git push origin feature/hooks')" "builder: push to feature branch still allows after raw-mutation fix"
+expect_allow builder "$(bash_json 'sam build')" "builder: sam build still allows after raw-mutation fix"
+expect_allow builder "$(bash_json 'export SSHPASS="$NAS_PASSWORD" && sshpass -e ssh host uptime')" "builder: env-var use still allows after raw-mutation fix"
+expect_allow verifier "$(bash_json 'pytest -q 2>/dev/null')" "verifier: /dev/null redirect still allows after subshell fix"
+expect_allow reviewer "$(bash_json 'echo "legit commit history"')" "reviewer: benign text still allows after subshell fix"
+expect_allow deployer "$(bash_json 'sam deploy --config-env prod')" "deployer: sam deploy still allows after subshell fix"
+expect_allow deployer "$(bash_json 'curl -sf https://api.example.com/health')" "deployer: smoke check still allows after subshell fix"
+# Bare-paren subshells intentionally NOT blocked (see hooks/agent-team-policy.sh
+# comment): would false-positive on arithmetic, grouped tests, grep -E alternation,
+# and even quoted text containing a paren. Confirm these stay allowed.
+expect_allow builder "$(bash_json 'pytest -q; ((count++))')" "subshell: bare-paren arithmetic not blocked (avoids false positive)"
+expect_allow verifier "$(bash_json '[ -f file.txt ] && (echo found)')" "subshell: bare-paren grouping not blocked (avoids false positive)"
+expect_allow verifier "$(bash_json 'grep -E "(foo|bar)" file.txt')" "subshell: grep -E alternation paren not blocked (avoids false positive)"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
