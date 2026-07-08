@@ -171,5 +171,13 @@ expect_allow ops "$(bash_json 'az account show')" "ops: az show allows"
 expect_block ops "$(bash_json 'az vm delete --name x --yes')" "ops: az delete blocks"
 expect_allow ops "$(bash_json 'dig +short cta.tech')" "ops: general shell allows"
 
+# --- Task 6 follow-up: chain-aware segmentation (block whole-string substring
+# bypass and add raw-mutation coverage — policy_ops previously had neither) ---
+expect_block ops "$(bash_json 'aws iam list-users; aws iam create-user --user-name x')" "ops: aws mutation chained after allowed aws read blocks"
+expect_block ops "$(bash_json 'aws sts get-caller-identity && aws iam create-access-key --user-name backdoor')" "ops: aws mutation chained after allowed sts call blocks"
+expect_block ops "$(bash_json 'aws iam list-users; $(aws iam create-user --user-name x)')" "ops: subshell command substitution after allowed aws read blocks"
+expect_block ops "$(bash_json 'aws iam list-users; rm -rf /important')" "ops: unrelated rm -rf chained after allowed aws read blocks (raw-mutation coverage)"
+expect_block ops "$(bash_json 'aws sts get-caller-identity && rm -rf /tmp/x')" "ops: unrelated rm -rf chained after allowed sts call blocks (raw-mutation coverage)"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

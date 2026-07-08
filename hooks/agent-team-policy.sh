@@ -147,21 +147,34 @@ policy_readonly_runner() {
   allow "$CMD"
 }
 
-policy_ops() {
-  if has '(^|[;&|[:space:]])aws[[:space:]]'; then
-    if has 'aws[[:space:]]+[a-z0-9-]+[[:space:]]+(get-|list-|describe-|head-)' \
-      || has 'aws[[:space:]]+sts[[:space:]]' \
-      || has 'aws[[:space:]]+s3[[:space:]]+ls([[:space:]]|$)'; then
-      allow "$CMD"
-    fi
+_policy_ops_seg() { # $1 = one chain segment; blocks on any disallowed segment
+  local seg="$1"
+  if has_in "$seg" 'aws[[:space:]]+[a-z0-9-]+[[:space:]]+(get-|list-|describe-|head-)' \
+    || has_in "$seg" 'aws[[:space:]]+sts[[:space:]]' \
+    || has_in "$seg" 'aws[[:space:]]+s3[[:space:]]+ls([[:space:]]|$)'; then
+    return 0
+  fi
+  if has_in "$seg" 'az[[:space:]][^;&|]*[[:space:]](show|list)([[:space:]]|$)'; then
+    return 0
+  fi
+  if has_in "$seg" '(^|[;&|[:space:]])aws[[:space:]]'; then
     block "mutating aws verb — present the exact command to the human at a gate instead" "$CMD"
   fi
-  if has '(^|[;&|[:space:]])az[[:space:]]'; then
-    if has 'az[[:space:]][^;&|]*[[:space:]](show|list)([[:space:]]|$)'; then
-      allow "$CMD"
-    fi
+  if has_in "$seg" '(^|[;&|[:space:]])az[[:space:]]'; then
     block "mutating az command — present the exact command to the human at a gate instead" "$CMD"
   fi
+  _deny_raw_mutation_primitives_seg "$seg"
+}
+
+# Every segment of the chain must independently be a recognized-safe
+# read-verb call, or pass the raw-mutation-primitives check with no block.
+# Mirrors policy_deployer's chain-safe shape: matching one segment against
+# the aws/az allowlist no longer short-circuits an allow for the rest of the
+# chain (that was the chaining bypass), and any segment with no aws/az at
+# all (e.g. a bare `rm -rf /important` riding after a benign aws call) still
+# goes through the shared raw-mutation guard (that was the zero-coverage gap).
+policy_ops() {
+  each_segment _policy_ops_seg
   allow "$CMD"
 }
 
