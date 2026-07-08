@@ -11,7 +11,7 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-policy.sh builder"
-    - matcher: Write|Edit
+    - matcher: Write|Edit|NotebookEdit
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-policy.sh builder"
