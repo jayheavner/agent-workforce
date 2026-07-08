@@ -151,10 +151,10 @@ Run this once, in full, after the first install, before trusting the team with r
 - [ ] 2. Start `claude --agent orchestrator`; give it a disposable task: "Build a CLI tool in a
       fresh temp project that converts CSV to JSON, through the full pipeline including
       review; skip deploy."
-- [ ] 3. Confirm: the design gate fired before any code was written; the plan gate fired; the
-      builder committed test-first; the verifier reported evidence rather than an assertion;
-      the reviewer returned an explicit verdict; a STATUS note exists and is accurate.
-- [ ] 4. Confirm lane enforcement from the audit log: running
+- [ ] 3. Confirm: design gate fired before any code; plan gate fired; builder committed
+      test-first; verifier reported evidence; reviewer returned a verdict; a STATUS note
+      exists and is accurate.
+- [ ] 4. Confirm lane enforcement from the audit log:
       `grep decision=block ~/.claude/logs/agent-team-audit.log` shows any attempted
-      out-of-lane commands were caught, and that no role bypassed its policy.
-- [ ] 5. Only after all four of the above pass, use the team on real work.
+      out-of-lane commands, and no role bypassed its policy.
+- [ ] 5. Only after all four pass, use the team on real work.
