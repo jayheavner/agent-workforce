@@ -69,12 +69,23 @@ done
 
 # --- backup ---
 mkdir -p "$BACKUP" "$CLAUDE_DIR/agents" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/logs" || fail "cannot create target directories"
+
+# Track which of the files this installer manages were pre-existing (i.e. got
+# a backup copy) vs. not, so a failure partway through install can tell "roll
+# back to the old version" apart from "this was never here — remove it."
+PREEXISTING_AGENTS=""
 for f in "$REPO"/agents/*.md; do
-  existing="$CLAUDE_DIR/agents/$(basename "$f")"
-  [ -f "$existing" ] && cp "$existing" "$BACKUP/"
+  bn="$(basename "$f")"
+  existing="$CLAUDE_DIR/agents/$bn"
+  if [ -f "$existing" ]; then
+    cp "$existing" "$BACKUP/"
+    PREEXISTING_AGENTS="$PREEXISTING_AGENTS $bn"
+  fi
 done
-[ -f "$CLAUDE_DIR/hooks/agent-team-policy.sh" ] && cp "$CLAUDE_DIR/hooks/agent-team-policy.sh" "$BACKUP/"
-[ -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" ] && cp "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" "$BACKUP/"
+PREEXISTING_POLICY=0
+PREEXISTING_POLICY_LIB=0
+[ -f "$CLAUDE_DIR/hooks/agent-team-policy.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy.sh" "$BACKUP/"; PREEXISTING_POLICY=1; }
+[ -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" "$BACKUP/"; PREEXISTING_POLICY_LIB=1; }
 
 restore() {
   echo "install: restoring backup from $BACKUP" >&2
@@ -88,14 +99,31 @@ restore() {
   done
 }
 
+# Undo whatever THIS run freshly installed with no pre-existing version to
+# roll back to, so a failed fresh install reverts to "nothing installed"
+# instead of leaving a partial (and potentially broken) install behind.
+# Only ever touches the exact files this installer manages — never anything
+# else that happens to live in $CLAUDE_DIR/agents or $CLAUDE_DIR/hooks.
+cleanup_fresh() {
+  for f in "$REPO"/agents/*.md; do
+    bn="$(basename "$f")"
+    case " $PREEXISTING_AGENTS " in
+      *" $bn "*) : ;; # was pre-existing; restore() already handled it
+      *) rm -f "$CLAUDE_DIR/agents/$bn" ;;
+    esac
+  done
+  [ "$PREEXISTING_POLICY" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy.sh"
+  [ "$PREEXISTING_POLICY_LIB" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh"
+}
+
 # --- install ---
-if ! cp "$REPO"/agents/*.md "$CLAUDE_DIR/agents/"; then restore; fail "agent copy failed; backup restored"; fi
-if ! cp "$REPO/hooks/agent-team-policy.sh" "$CLAUDE_DIR/hooks/"; then restore; fail "hook copy failed; backup restored"; fi
-if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$CLAUDE_DIR/hooks/"; then restore; fail "hook lib copy failed; backup restored"; fi
+if ! cp "$REPO"/agents/*.md "$CLAUDE_DIR/agents/"; then restore; cleanup_fresh; fail "agent copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-policy.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook lib copy failed; rolled back"; fi
 # Only the entry point is ever executed directly (agent frontmatter and the
 # shell invoke it by path); agent-team-policy-lib.sh is only ever `source`d
 # by agent-team-policy.sh, so it needs to be readable, not executable.
-chmod +x "$CLAUDE_DIR/hooks/agent-team-policy.sh" || { restore; fail "chmod failed; backup restored"; }
+chmod +x "$CLAUDE_DIR/hooks/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
 
 echo "install: OK — 10 agents installed, policy hook installed, backup at $BACKUP"
 echo "install: start the team with: claude --agent orchestrator"
