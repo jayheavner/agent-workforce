@@ -147,6 +147,24 @@ policy_readonly_runner() {
   allow "$CMD"
 }
 
+policy_ops() {
+  if has '(^|[;&|[:space:]])aws[[:space:]]'; then
+    if has 'aws[[:space:]]+[a-z0-9-]+[[:space:]]+(get-|list-|describe-|head-)' \
+      || has 'aws[[:space:]]+sts[[:space:]]' \
+      || has 'aws[[:space:]]+s3[[:space:]]+ls([[:space:]]|$)'; then
+      allow "$CMD"
+    fi
+    block "mutating aws verb — present the exact command to the human at a gate instead" "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])az[[:space:]]'; then
+    if has 'az[[:space:]][^;&|]*[[:space:]](show|list)([[:space:]]|$)'; then
+      allow "$CMD"
+    fi
+    block "mutating az command — present the exact command to the human at a gate instead" "$CMD"
+  fi
+  allow "$CMD"
+}
+
 _policy_builder_seg() { # $1 = one chain segment
   local seg="$1"
   if has_in "$seg" '(^|[;&|[:space:]])(aws|az|gcloud)[[:space:]]'; then
@@ -255,6 +273,7 @@ case "$TOOL" in
     case "$ROLE" in
       builder) policy_builder ;;
       deployer) policy_deployer ;;
+      ops) policy_ops ;;
       verifier|reviewer) policy_readonly_runner ;;
       *) allow "$CMD" ;;
     esac

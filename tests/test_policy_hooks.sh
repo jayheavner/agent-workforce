@@ -159,5 +159,17 @@ expect_allow builder "$(bash_json 'git add .')" "destructive-git: git add . unaf
 expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "destructive-git: core TDD loop (commit && test) unaffected, still allows for builder"
 expect_allow builder "$(bash_json 'git push origin feature/hooks')" "destructive-git: push to feature branch unaffected, still allows for builder"
 
+# --- Task 6: ops ---
+expect_allow ops "$(bash_json 'aws ec2 describe-instances --region us-east-1')" "ops: describe allows"
+expect_allow ops "$(bash_json 'aws iam list-users')" "ops: list allows"
+expect_allow ops "$(bash_json 'aws sts get-caller-identity')" "ops: sts allows"
+expect_allow ops "$(bash_json 'aws s3 ls')" "ops: s3 ls allows"
+expect_block ops "$(bash_json 'aws ec2 terminate-instances --instance-ids i-123')" "ops: terminate blocks"
+expect_block ops "$(bash_json 'aws iam create-access-key --user-name x')" "ops: create blocks"
+expect_allow ops "$(bash_json 'az vm list --output table')" "ops: az list allows"
+expect_allow ops "$(bash_json 'az account show')" "ops: az show allows"
+expect_block ops "$(bash_json 'az vm delete --name x --yes')" "ops: az delete blocks"
+expect_allow ops "$(bash_json 'dig +short cta.tech')" "ops: general shell allows"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
