@@ -181,3 +181,15 @@ environment or shell config.
 In: ten agent definitions, policy hook script + tests, install script, README, this spec.
 Out (deliberate follow-ons): plugin packaging, per-agent persistent `memory:` tuning,
 Haiku downgrades, remote/managed-agent deployment.
+
+**Known limitation — the Bash policy hook is a best-effort denylist on command
+TEXT, not a real shell parser.** It matches regex patterns against the raw command
+string; it does not tokenize or evaluate the shell grammar. A sufficiently obfuscated
+command — unusual quoting, no-space fusing, base64-encoded payloads decoded and
+`eval`'d, command names assembled from environment variables, or other indirection —
+can defeat it, and this is accepted rather than chased with further regex iteration.
+The design's actual security boundary is the human-in-the-loop `permissionMode` layer
+(Layer 3) for roles in `default` mode, where hook-allowed mutations still prompt the
+human. The read-only roles (verifier, reviewer, researcher — `dontAsk` mode) rely on the
+hook layer more heavily specifically because they are expected to need no mutation
+capability at all, not because the hook is airtight.

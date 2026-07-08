@@ -284,5 +284,42 @@ expect_allow builder "$(bash_json 'python3 script.py')" "gap4: python3 running a
 expect_allow builder "$(bash_json 'python3 -m pytest')" "gap4: python3 -m module invocation still allows"
 expect_allow builder "$(bash_json 'bash deploy.sh')" "gap4: bash running a real script file still allows"
 
+# --- Hardening pass 2 (adversarial review): five interpreter/eval-escape
+# bypasses that executed real code while the policy returned allow. The regex
+# denylist is best-effort on command TEXT, not a shell parser (see spec Scope);
+# these close the five specific, now-known bypasses. ---
+# (1) Quoted interpreter flag — bash strips quotes, interpreter gets bare -c/-e.
+expect_block builder "$(bash_json 'python3 "-c" "import os; os.system(\"echo x\")"')" "hp2: quoted flag python3 \"-c\" blocks"
+expect_block builder "$(bash_json "python3 '-c' 'import os'")" "hp2: single-quoted flag python3 '-c' blocks"
+expect_block builder "$(bash_json 'bash "-c" "rm x"')" "hp2: quoted flag bash \"-c\" blocks"
+expect_block verifier "$(bash_json 'perl "-e" "unlink glob(\"*\")"')" "hp2: quoted flag perl \"-e\" blocks"
+expect_block builder "$(bash_json 'node "-e" "process.exit()"')" "hp2: quoted flag node \"-e\" blocks"
+expect_block builder "$(bash_json 'ruby "-e" "File.delete(\"x\")"')" "hp2: quoted flag ruby \"-e\" blocks"
+# (2) No-space fused code — `-c"..."` with no whitespace.
+expect_block builder "$(bash_json 'python3 -c"import os; os.system(\"echo x\")"')" "hp2: fused python3 -c\"...\" (no space) blocks"
+# (3) Fused short flags — `-cx`, `-ex`.
+expect_block builder "$(bash_json 'bash -cx "rm x"')" "hp2: fused short flag bash -cx blocks"
+expect_block builder "$(bash_json 'python3 -cx "import os"')" "hp2: fused short flag python3 -cx blocks"
+# (4) Path-qualified interpreter — `/bin/bash`, `/usr/bin/python3`.
+expect_block builder "$(bash_json '/bin/bash -c "rm x"')" "hp2: path-qualified /bin/bash -c blocks"
+expect_block builder "$(bash_json '/usr/bin/python3 -c "import os"')" "hp2: path-qualified /usr/bin/python3 -c blocks"
+# (5) Quoted eval — bash strips quotes, executes as real eval.
+expect_block builder "$(bash_json '"eval" "echo hi"')" "hp2: quoted \"eval\" blocks"
+# Regression: path-qualified basename must match EXACTLY — pythonic3 is NOT python3.
+expect_allow builder "$(bash_json '/usr/bin/mytool --config x')" "hp2: unrelated path-qualified tool still allows (no false match)"
+# Regression: prior-round gap fixes must stay undisturbed.
+expect_block builder "$(bash_json 'tee victim.txt')" "hp2: gap1 bare tee still blocks (undisturbed)"
+expect_block builder "$(bash_json 'cat <(rm -rf /)')" "hp2: gap2 process substitution still blocks (undisturbed)"
+expect_block builder "$(bash_json 'ls; op')" "hp2: gap3 bare op still blocks for builder (undisturbed)"
+# Regression: legitimate interpreter/shell invocations must stay allowed.
+expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "hp2: commit && test still allows"
+expect_allow deployer "$(bash_json 'sam deploy --config-env prod')" "hp2: sam deploy still allows"
+expect_allow verifier "$(bash_json 'pytest tests/ -v')" "hp2: pytest still allows"
+expect_allow verifier "$(bash_json 'npm test')" "hp2: npm test still allows"
+expect_allow builder "$(bash_json 'python3 script.py')" "hp2: python3 script.py still allows"
+expect_allow builder "$(bash_json 'python3 -m pytest')" "hp2: python3 -m pytest still allows"
+expect_allow deployer "$(bash_json 'bash deploy.sh')" "hp2: bash deploy.sh (real script) still allows"
+expect_allow ops "$(bash_json 'op read op://vault/item/credential')" "hp2: op read still allows for ops"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
