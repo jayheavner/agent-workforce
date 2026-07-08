@@ -275,3 +275,22 @@ check_global_rules() {
   esac
   return 0
 }
+
+# Mirrors check_global_rules' Bash-path secret guard, but for the Write/Edit/
+# NotebookEdit dispatch: applies to EVERY role (the design spec's "all roles"
+# guarantee), not just builder, since architect/scribe must never be allowed
+# to write a secret into a doc file either. Reuses SECRET_RE as-is against
+# $CONTENT (the file content / new_string / new_source being written), so
+# scope is identical to the Bash-path check: shell-variable-style references
+# to a known-sensitive env var name (e.g. $OKTA_TOKEN, ${MY_API_KEY}) written
+# verbatim as text. Detecting a literal high-entropy secret VALUE with no `$`
+# prefix is out of scope here — that is a separate entropy-scanning feature.
+# Fails open on missing content: if extraction found nothing (e.g. an Edit
+# variant whose tool_input didn't populate any of the fallback-chain fields),
+# this only inspects what's actually present rather than blocking blind.
+check_write_content_secrets() {
+  if [ -n "$CONTENT" ] && has_in "$CONTENT" "$SECRET_RE"; then
+    block "file content references a credential-bearing variable name — writing secrets to any file is forbidden for every role" "$CONTENT"
+  fi
+  return 0
+}

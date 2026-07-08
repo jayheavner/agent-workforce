@@ -18,6 +18,12 @@ run_policy() { # $1 role, $2 json
 
 bash_json() { jq -cn --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}'; }
 write_json() { jq -cn --arg f "$1" '{tool_name:"Write",tool_input:{file_path:$f}}'; }
+# $1 file_path, $2 tool_name (Write|Edit|NotebookEdit), $3 content field name
+# (content|new_string|new_source), $4 content value.
+write_content_json() {
+  jq -cn --arg f "$1" --arg t "$2" --arg k "$3" --arg v "$4" \
+    '{tool_name:$t,tool_input:({file_path:$f} + {($k):$v})}'
+}
 
 expect() { # $1 expected_rc, $2 role, $3 json, $4 label
   run_policy "$2" "$3"
@@ -198,6 +204,20 @@ expect_block architect "$(write_json '/Users/jay/claude/x/install.sh')" "docwrit
 expect_block architect "$(write_json '/Users/jay/claude/x/docs/../../../../etc/passwd')" "path-traversal: traversal in docs/ path blocks"
 expect_block scribe "$(write_json '../../../etc/passwd')" "path-traversal: relative traversal blocks"
 expect_allow architect "$(write_json '/Users/jay/claude/x/docs/my..file.md')" "path-traversal: filename with '..' as substring (not segment) allows"
+
+# --- Task 8 follow-up: secret-to-file-content block (Write/Edit/NotebookEdit
+# dispatch), universal across roles, closing the gap vs. the Bash-path-only
+# check_global_rules secret guard. ---
+expect_block builder "$(write_content_json '/tmp/test/app.py' 'Write' 'content' 'print("hi"); token = "$OKTA_TOKEN"')" "write-secret: builder Write with \$OKTA_TOKEN embedded in content blocks"
+expect_block builder "$(write_content_json '/tmp/test/config.py' 'Write' 'content' 'API_KEY = "${MY_API_KEY}"')" "write-secret: builder Write with \${MY_API_KEY} in content blocks"
+expect_block builder "$(write_content_json '/tmp/test/app.py' 'Edit' 'new_string' 'password = "$NAS_PASSWORD"')" "write-secret: builder Edit new_string with \$NAS_PASSWORD blocks"
+expect_block scribe "$(write_content_json '/Users/jay/claude/x/docs/notes.md' 'Write' 'content' 'secret: $GODADDY_API_SECRET')" "write-secret: scribe docs/ write with secret in content blocks (content check fires before path check would allow)"
+
+# Regressions: existing allow/block behavior must be unaffected by the new check.
+expect_allow builder "$(write_content_json '/tmp/test/app.py' 'Write' 'content' 'print("hello world")')" "write-secret: builder Write with no secret pattern still allows"
+expect_allow architect "$(write_content_json '/Users/jay/claude/x/docs/superpowers/specs/2026-07-08-y-design.md' 'Write' 'content' 'no secrets here')" "write-secret: architect docs/ write with no secret pattern still allows (Task 7 unaffected)"
+expect_block architect "$(write_content_json '/Users/jay/claude/x/src/app.py' 'Write' 'content' 'no secrets here')" "write-secret: architect src/ write with no secret pattern still blocks on PATH (Task 7 path-restriction unaffected; content check passes, path check fires)"
+expect_allow deployer "$(write_content_json '/tmp/test/notes.txt' 'Write' 'content' 'no secrets here')" "write-secret: deployer Write allows (deployer has no Write/Edit hooks matcher — this call reaches the policy script only when invoked directly, as this test does; not a bug, deployer's agent definition never registers this hook in practice)"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

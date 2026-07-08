@@ -13,6 +13,7 @@ INPUT="$(cat)"
 TOOL="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')"
 CMD=""
 FILE=""
+CONTENT=""
 LOG_FILE="${AGENT_TEAM_AUDIT_LOG:-$HOME/.claude/logs/agent-team-audit.log}"
 
 audit() { # $1 decision, $2 detail
@@ -52,6 +53,8 @@ case "$TOOL" in
     ;;
   Write|Edit|NotebookEdit)
     FILE="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
+    CONTENT="$(printf '%s' "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // .tool_input.new_source // .tool_input.source // empty')"
+    check_write_content_secrets
     case "$ROLE" in
       architect|scribe) policy_docwriter_path ;;
       *) allow "$FILE" ;;
