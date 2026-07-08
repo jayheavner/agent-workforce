@@ -84,5 +84,21 @@ expect_block builder "$(bash_json 'git push origin refs/heads/main')" "builder: 
 expect_block builder "$(bash_json 'git push origin refs/heads/master')" "builder: fully-qualified refs/heads/master blocks"
 expect_allow builder "$(bash_json 'git push origin feature/main')" "builder: feature/main path segment allows"
 
+# --- Task 5: deployer ---
+expect_allow deployer "$(bash_json 'sam deploy --config-env prod')" "deployer: sam deploy allows"
+expect_allow deployer "$(bash_json 'sam build')" "deployer: sam build allows"
+expect_allow deployer "$(bash_json 'amplify publish')" "deployer: amplify allows"
+expect_allow deployer "$(bash_json 'cdk deploy --require-approval never')" "deployer: cdk allows"
+expect_allow deployer "$(bash_json 'aws cloudformation describe-stacks --stack-name x')" "deployer: cfn read allows"
+expect_allow deployer "$(bash_json 'aws s3 sync ./build s3://bucket')" "deployer: s3 sync allows"
+expect_allow deployer "$(bash_json 'aws lambda get-function --function-name f')" "deployer: aws get- verb allows"
+expect_allow deployer "$(bash_json 'aws sts get-caller-identity')" "deployer: sts allows"
+expect_allow deployer "$(bash_json 'curl -sf https://api.example.com/health')" "deployer: smoke check allows"
+expect_block deployer "$(bash_json 'aws iam create-user --user-name x')" "deployer: aws mutation outside toolchain blocks"
+expect_block deployer "$(bash_json 'terraform apply')" "deployer: terraform blocks"
+expect_block deployer "$(bash_json 'git push --force origin main')" "deployer: git mutation blocks"
+expect_block deployer "$(bash_json 'npm install left-pad')" "deployer: package install blocks"
+expect_block deployer "$(bash_json 'rm -rf .aws-sam')" "deployer: rm blocks"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -53,6 +53,26 @@ deny_shell_mutation() {
   return 0
 }
 
+policy_deployer() {
+  if has '(^|[;&|[:space:]])(sam|amplify|cdk)([[:space:]]|$)'; then
+    allow "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])aws[[:space:]]'; then
+    if has 'aws[[:space:]]+cloudformation[[:space:]]' \
+      || has 'aws[[:space:]]+s3[[:space:]]+(sync|cp|ls)([[:space:]]|$)' \
+      || has 'aws[[:space:]]+sts[[:space:]]' \
+      || has 'aws[[:space:]]+[a-z0-9-]+[[:space:]]+(get-|list-|describe-|head-)'; then
+      allow "$CMD"
+    fi
+    block "aws command outside the deploy toolchain — surface it to the human at a gate" "$CMD"
+  fi
+  if has '(^|[;&|[:space:]])terraform([[:space:]]|$)'; then
+    block "terraform is not part of this team's deploy toolchain" "$CMD"
+  fi
+  deny_shell_mutation
+  allow "$CMD"
+}
+
 policy_readonly_runner() {
   if has '(^|[;&|[:space:]])(aws|az|gcloud)[[:space:]]'; then
     block "no cloud CLI for $ROLE" "$CMD"
@@ -125,6 +145,7 @@ case "$TOOL" in
     check_global_rules
     case "$ROLE" in
       builder) policy_builder ;;
+      deployer) policy_deployer ;;
       verifier|reviewer) policy_readonly_runner ;;
       *) allow "$CMD" ;;
     esac
