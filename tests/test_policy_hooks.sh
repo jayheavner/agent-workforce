@@ -129,5 +129,35 @@ expect_allow builder "$(bash_json 'pytest -q; ((count++))')" "subshell: bare-par
 expect_allow verifier "$(bash_json '[ -f file.txt ] && (echo found)')" "subshell: bare-paren grouping not blocked (avoids false positive)"
 expect_allow verifier "$(bash_json 'grep -E "(foo|bar)" file.txt')" "subshell: grep -E alternation paren not blocked (avoids false positive)"
 
+# --- Task 5 hardening follow-up (adversarial review, fix 1): trailing-word
+# regex gap in raw-mutation-primitives check. A verb at the very end of a
+# chain segment (no argument in the same segment — e.g. because the argument
+# arrives via a pipe like `xargs`, or the verb is simply the last token) was
+# never matched because the old pattern required a space AFTER the verb.
+expect_block builder "$(bash_json 'true && rm')" "raw-mutation: bare trailing rm (no argument) blocks"
+expect_block builder "$(bash_json 'find . -name \"*.py\" | xargs rm')" "raw-mutation: find | xargs rm blocks (conservative — args unknown until exec)"
+expect_block builder "$(bash_json 'rm -rf /tmp/x')" "raw-mutation: rm -rf with argument still blocks (unchanged)"
+expect_block builder "$(bash_json 'npm install')" "raw-mutation: bare npm install (no package) blocks"
+expect_block builder "$(bash_json 'npm install left-pad')" "raw-mutation: npm install left-pad still blocks (unchanged)"
+expect_allow builder "$(bash_json 'npm test')" "raw-mutation: npm test unaffected, still allows"
+
+# --- Task 5 hardening follow-up (adversarial review, fix 2): builder had no
+# coverage for destructive git verbs (git clean / checkout -- / reset --hard /
+# restore without --staged). These bypass builder's raw-mutation-primitives
+# check entirely because builder deliberately skips the shared git-verb
+# blocklist (it needs add/commit). New narrower check closes the gap without
+# reintroducing that block on add/commit.
+expect_block builder "$(bash_json 'git clean -fdx')" "destructive-git: git clean -fdx blocks for builder"
+expect_block builder "$(bash_json 'git checkout -- .')" "destructive-git: git checkout -- . blocks for builder"
+expect_block builder "$(bash_json 'git checkout -- src/app.py')" "destructive-git: git checkout -- src/app.py blocks for builder"
+expect_allow builder "$(bash_json 'git checkout feature/other-branch')" "destructive-git: git checkout <branch> (switch, not discard) still allows for builder"
+expect_block builder "$(bash_json 'git reset --hard HEAD~1')" "destructive-git: git reset --hard blocks for builder"
+expect_allow builder "$(bash_json 'git reset HEAD~1')" "destructive-git: git reset (soft/mixed, no --hard) still allows for builder"
+expect_block builder "$(bash_json 'git restore src/app.py')" "destructive-git: bare git restore blocks for builder"
+expect_allow builder "$(bash_json 'git restore --staged src/app.py')" "destructive-git: git restore --staged still allows for builder"
+expect_allow builder "$(bash_json 'git add .')" "destructive-git: git add . unaffected, still allows for builder"
+expect_allow builder "$(bash_json 'git commit -m x && pytest -q')" "destructive-git: core TDD loop (commit && test) unaffected, still allows for builder"
+expect_allow builder "$(bash_json 'git push origin feature/hooks')" "destructive-git: push to feature branch unaffected, still allows for builder"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -71,7 +71,7 @@ _deny_raw_mutation_primitives_seg() { # $1 = one chain segment
   if has_in "$seg" '\$\(|`'; then
     block "command substitution / subshell syntax not allowed for $ROLE" "$CMD"
   fi
-  if has_in "$seg" '(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|chmod|chown|ln|dd|truncate)[[:space:]]'; then
+  if has_in "$seg" '(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|chmod|chown|ln|dd|truncate)([[:space:]]|$)'; then
     block "file-mutating command not allowed for $ROLE" "$CMD"
   fi
   if has_in "$(stripped_cmd_of "$seg")" '>>?'; then
@@ -159,6 +159,30 @@ _policy_builder_seg() { # $1 = one chain segment
     block "sam deploy belongs to the deployer" "$CMD"
   fi
   _deny_raw_mutation_primitives_seg "$seg"
+  # Destructive-git-verb check, narrower than _deny_shell_mutation_seg's full
+  # git blocklist (which blocks commit/add — both required for builder's TDD
+  # workflow). These four forms discard work irrecoverably outside git's
+  # normal history, so they're blocked for builder even though commit/add/
+  # checkout-to-a-branch/reset-soft are all legitimate builder operations:
+  if has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+clean([[:space:]]|$)'; then
+    block "git clean destroys untracked files — not allowed for $ROLE" "$CMD"
+  fi
+  # `git checkout --` / `git checkout <ref> --` is the discard-changes-to-a-
+  # path syntax; plain `git checkout <branch>` (no `--`) switches branches and
+  # must remain allowed, so this only matches when `--` appears as its own
+  # token after checkout.
+  if has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+checkout([[:space:]]+[^[:space:]]+)*[[:space:]]+--([[:space:]]|$)'; then
+    block "git checkout -- discards uncommitted changes — not allowed for $ROLE" "$CMD"
+  fi
+  if has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+reset([[:space:]]+[^[:space:]]+)*[[:space:]]+--hard([[:space:]]|$)'; then
+    block "git reset --hard discards commits and working-tree changes — not allowed for $ROLE" "$CMD"
+  fi
+  # Bare `git restore <path>` discards working-tree changes; `--staged` only
+  # unstages (safe) and must remain allowed.
+  if has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+restore([[:space:]]|$)' \
+    && ! has_in "$seg" '(^|[;&|[:space:]])git[[:space:]]+restore([[:space:]]+[^[:space:]]+)*[[:space:]]+--staged([[:space:]]|$)'; then
+    block "git restore without --staged discards working-tree changes — not allowed for $ROLE" "$CMD"
+  fi
   if has_in "$seg" 'git[[:space:]]+push'; then
     # Three independent checks catch main/master as: a bare whitespace-delimited
     # token, the destination side of a ':'-separated refspec (e.g. HEAD:main),
@@ -188,10 +212,12 @@ _policy_builder_seg() { # $1 = one chain segment
 # the other roles, because that shared helper's git-verb block list includes
 # `commit` and `add` — both required for builder's normal TDD workflow
 # (commit after every green test cycle). Builder's own push-to-main/master
-# handling above already covers `git push`, so no git-verb block is needed
-# here at all; raw shell-mutation primitives (rm/redirect/tee/in-place sed/
-# package installs/subshell syntax) are still blocked. See task-5-report.md
-# for the human decision that resolved the previously-flagged gap.
+# handling above already covers `git push`; a narrower destructive-git-verb
+# check (git clean / checkout -- / reset --hard / restore without --staged)
+# lives inline in _policy_builder_seg above. Raw shell-mutation primitives
+# (rm/redirect/tee/in-place sed/package installs/subshell syntax) are also
+# still blocked. See task-5-report.md for the human decisions that resolved
+# the previously-flagged gaps.
 policy_builder() {
   each_segment _policy_builder_seg
   allow "$CMD"
