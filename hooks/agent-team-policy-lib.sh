@@ -237,6 +237,19 @@ stripped_cmd_of() { printf '%s' "$1" | sed -E 's|[0-9]*>+[[:space:]]*/dev/null||
 
 SECRET_RE='\$\{?(OKTA_TOKEN|GODADDY_API_KEY|GODADDY_API_SECRET|OP_SERVICE_ACCOUNT_TOKEN|[A-Za-z_]*_API_KEY|[A-Za-z_]*SECRET[A-Za-z_]*|[A-Za-z_]*PASSWORD[A-Za-z_]*)'
 
+policy_docwriter_path() {
+  case "$FILE" in
+    */docs/*|docs/*|*/plans/*|plans/*|*/doc-inventory/*|doc-inventory/*)
+      allow "$FILE" ;;
+    */STATUS.md|STATUS.md|*/STATUS-*.md)
+      allow "$FILE" ;;
+    */scratchpad/*)
+      allow "$FILE" ;;
+    *)
+      block "writes are limited to docs/, plans/, doc-inventory/, STATUS notes, and the scratchpad" "$FILE" ;;
+  esac
+}
+
 check_global_rules() {
   if has "$SECRET_RE"; then
     if printf '%s' "$(stripped_cmd)" | grep -qE '(>>?|\|[[:space:]]*tee([[:space:]]|$))'; then

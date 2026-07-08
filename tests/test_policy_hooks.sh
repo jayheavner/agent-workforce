@@ -179,5 +179,14 @@ expect_block ops "$(bash_json 'aws iam list-users; $(aws iam create-user --user-
 expect_block ops "$(bash_json 'aws iam list-users; rm -rf /important')" "ops: unrelated rm -rf chained after allowed aws read blocks (raw-mutation coverage)"
 expect_block ops "$(bash_json 'aws sts get-caller-identity && rm -rf /tmp/x')" "ops: unrelated rm -rf chained after allowed sts call blocks (raw-mutation coverage)"
 
+# --- Task 7: docwriter paths ---
+expect_allow architect "$(write_json '/Users/jay/claude/x/docs/superpowers/specs/2026-07-08-y-design.md')" "docwriter: docs/ allows"
+expect_allow scribe "$(write_json '/Users/jay/claude/x/plans/handoff.md')" "docwriter: plans/ allows"
+expect_allow scribe "$(write_json '/Users/jay/claude/x/STATUS.md')" "docwriter: STATUS.md allows"
+expect_allow scribe "$(write_json '/Users/jay/claude/x/doc-inventory/map.tsv')" "docwriter: doc-inventory allows"
+expect_block architect "$(write_json '/Users/jay/claude/x/src/app.py')" "docwriter: source file blocks"
+expect_block scribe "$(write_json '/Users/jay/.claude/settings.json')" "docwriter: claude config blocks"
+expect_block architect "$(write_json '/Users/jay/claude/x/install.sh')" "docwriter: script blocks"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -53,6 +53,7 @@ case "$TOOL" in
   Write|Edit|NotebookEdit)
     FILE="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
     case "$ROLE" in
+      architect|scribe) policy_docwriter_path ;;
       *) allow "$FILE" ;;
     esac
     ;;
