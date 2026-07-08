@@ -22,47 +22,16 @@ each_segment() { # $1 = callback name, invoked once per chain segment of $CMD
   done < <(printf '%s\n' "$CMD" | sed -E 's/(&&|\|\||;|\|)/\n/g')
 }
 
-# Shared by every role that runs mutation checks (readonly-runner, deployer,
-# builder). Blocks the raw-shell-mutation primitives — file mutation commands,
-# redirection, tee, in-place sed, package management — and, per the
-# command-substitution bypass fix below, the two confirmed-exploitable
-# subshell syntaxes. Deliberately excludes the git-verb block: builder needs
-# `git add`/`git commit` for its own TDD workflow, so that block lives only in
-# `_deny_shell_mutation_seg` (below), not here.
-_deny_raw_mutation_primitives_seg() { # $1 = one chain segment
-  local seg="$1"
-  # Command substitution / subshell bypass: a mutating command hidden inside
-  # $(...) or backticks sits immediately after a `(` or a backtick, neither of
-  # which the `(^|[;&|[:space:]])` anchor used above matches — so e.g.
-  # `echo $(rm -rf /)` slipped past every check untouched. Rather than trying
-  # to parse nested subshell contents with POSIX ERE (impractical in bash
-  # 3.2), block the syntax itself unconditionally. Bare-paren subshells
-  # `(cmd)` are intentionally NOT blocked here: a broad bare-`(` check caused
-  # no confirmed exploit in this policy's test matrix but risked false-
-  # positiving on legitimate parenthesized constructs (arithmetic `((x++))`,
-  # grouped test conditions), so the fix is scoped to the two confirmed-
-  # exploitable vectors only: `$(` command substitution and backtick
-  # command substitution.
-  if has_in "$seg" '\$\(|`'; then
-    block "command substitution / subshell syntax not allowed for $ROLE" "$CMD"
-  fi
-  if has_in "$seg" '(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|chmod|chown|ln|dd|truncate)([[:space:]]|$)'; then
-    block "file-mutating command not allowed for $ROLE" "$CMD"
-  fi
-  if has_in "$(stripped_cmd_of "$seg")" '>>?'; then
-    block "output redirection to a file not allowed for $ROLE" "$CMD"
-  fi
-  if has_in "$seg" '\|[[:space:]]*tee([[:space:]]|$)'; then
-    block "tee not allowed for $ROLE" "$CMD"
-  fi
-  if has_in "$seg" 'sed[[:space:]]+(-[A-Za-z]*i|--in-place)'; then
-    block "in-place edit not allowed for $ROLE" "$CMD"
-  fi
-  if has_in "$seg" '(^|[;&|[:space:]])(npm|pnpm|yarn|pip3?|uv|brew)[[:space:]]+(install|add|uninstall|remove|upgrade)'; then
-    block "package management not allowed for $ROLE" "$CMD"
-  fi
-  return 0
-}
+# The raw-shell-mutation primitive blocklist (_deny_raw_mutation_primitives_seg)
+# lives in agent-team-policy-mutations.sh, sourced here from this file's own
+# directory. It grew past what would keep this file under the 300-line ceiling
+# once the final security-hardening pass added Gap 1/2/4 coverage (tee any
+# form, install, archive/compression tools, process substitution, eval,
+# raw-interpreter invocation, and interpreter inline-code flags), so it was
+# split into its own file. This is the second level of a two-level source
+# chain (entry point -> this lib -> mutations); resolving from ${BASH_SOURCE[0]}
+# rather than $0 keeps it correct no matter how the entry point was invoked.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-team-policy-mutations.sh"
 
 _deny_shell_mutation_seg() { # $1 = one chain segment
   local seg="$1"
@@ -268,7 +237,7 @@ check_global_rules() {
   case "$ROLE" in
     ops|deployer) : ;;
     *)
-      if has '(^|[;&|[:space:]])op[[:space:]]'; then
+      if has '(^|[;&|[:space:]])op([[:space:]]|$)'; then
         block "only ops and deployer may invoke the 1Password CLI" "$CMD"
       fi
       ;;

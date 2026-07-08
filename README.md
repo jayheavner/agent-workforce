@@ -44,9 +44,10 @@ bash install.sh
 Nothing is copied anywhere until every validation check below passes:
 
 - `jq` is present on the machine (the policy hook depends on it to parse tool-call JSON).
-- Both hook files — `hooks/agent-team-policy.sh` (the entry point) and
+- All three hook files — `hooks/agent-team-policy.sh` (the entry point),
   `hooks/agent-team-policy-lib.sh` (the shared helpers and per-role policy functions it
-  sources) — pass `bash -n` syntax checks.
+  sources), and `hooks/agent-team-policy-mutations.sh` (the raw-shell-mutation blocklist that
+  the lib file in turn sources) — pass `bash -n` syntax checks.
 - The full policy test suite (`tests/test_policy_hooks.sh`) passes.
 - Every agent file under `agents/` has YAML frontmatter with the required keys (`name`,
   `description`, `model`), and the `model` value is one of the three pinned team models
@@ -66,9 +67,10 @@ Nothing is copied anywhere until every validation check below passes:
 Only after all of that passes does the installer touch `~/.claude/`. Any agent file already
 installed under `~/.claude/agents/` that this run is about to replace is copied first into a
 timestamped backup directory, `~/.claude/backups/agent-team-<timestamp>/`; the same applies to
-`~/.claude/hooks/agent-team-policy.sh` and `~/.claude/hooks/agent-team-policy-lib.sh` if they
-already exist. If any copy step fails partway through — an agent file, the policy script, or
-the policy library — the installer restores every file it just backed up and removes any file
+`~/.claude/hooks/agent-team-policy.sh`, `~/.claude/hooks/agent-team-policy-lib.sh`, and
+`~/.claude/hooks/agent-team-policy-mutations.sh` if they already exist. If any copy step fails
+partway through — an agent file, the policy script, the policy library, or the mutations
+blocklist — the installer restores every file it just backed up and removes any file
 it freshly created that had no prior version to restore, so a failed install always reverts
 cleanly to whatever state existed before it ran; it never leaves a partial or broken install in
 place. A successful run prints where the backup was written and reminds you how to start the
@@ -136,12 +138,16 @@ format written by the `audit()` function in `hooks/agent-team-policy.sh`:
 The log exists so that any agent's actions — especially the deployer's, since it is the one
 role whose mutations reach real cloud infrastructure — can be reconstructed after the fact,
 and so that lane enforcement can be checked directly rather than taken on faith. It also
-accumulates across the two files that make up the hook: `hooks/agent-team-policy.sh` is the
+accumulates across the three files that make up the hook: `hooks/agent-team-policy.sh` is the
 thin entry point that every agent's frontmatter actually invokes, and it sources
 `hooks/agent-team-policy-lib.sh` for the shared helper functions and the per-role policy logic
-(builder, deployer, ops, and the shared read-only-runner policy used by verifier and reviewer).
-If you need to change what a role is allowed to do, the per-role function you want is in the
-library file, not the entry point.
+(builder, deployer, ops, and the shared read-only-runner policy used by verifier and reviewer),
+which in turn sources `hooks/agent-team-policy-mutations.sh` for the raw-shell-mutation
+blocklist shared by every mutation-checked role (file-mutation primitives, redirection, tee,
+archive/compression tools, in-place sed, package management, subshell/process-substitution
+syntax, and the eval/interpreter escape hatches). If you need to change what a role is allowed
+to do, the per-role function you want is in the library file; if you need to change what raw
+shell primitive is blocked for everyone, it is in the mutations file. Neither is the entry point.
 
 ## Shakedown checklist
 
