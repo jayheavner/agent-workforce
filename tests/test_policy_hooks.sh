@@ -188,5 +188,16 @@ expect_block architect "$(write_json '/Users/jay/claude/x/src/app.py')" "docwrit
 expect_block scribe "$(write_json '/Users/jay/.claude/settings.json')" "docwriter: claude config blocks"
 expect_block architect "$(write_json '/Users/jay/claude/x/install.sh')" "docwriter: script blocks"
 
+# --- Task 7 hardening: path traversal vulnerability ---
+# The glob patterns like '*/docs/*' match substrings, not normalized paths.
+# A path like '/Users/jay/claude/x/docs/../../../../etc/passwd' contains the
+# substring '/docs/' so matches '*/docs/*', but resolves outside the docs tree.
+# Fix: reject any path containing '..' as a full path segment (bounded by '/'
+# or string start/end). This blocks the traversal without breaking legitimate
+# files that happen to contain '.' characters.
+expect_block architect "$(write_json '/Users/jay/claude/x/docs/../../../../etc/passwd')" "path-traversal: traversal in docs/ path blocks"
+expect_block scribe "$(write_json '../../../etc/passwd')" "path-traversal: relative traversal blocks"
+expect_allow architect "$(write_json '/Users/jay/claude/x/docs/my..file.md')" "path-traversal: filename with '..' as substring (not segment) allows"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

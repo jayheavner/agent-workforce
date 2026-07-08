@@ -238,6 +238,15 @@ stripped_cmd_of() { printf '%s' "$1" | sed -E 's|[0-9]*>+[[:space:]]*/dev/null||
 SECRET_RE='\$\{?(OKTA_TOKEN|GODADDY_API_KEY|GODADDY_API_SECRET|OP_SERVICE_ACCOUNT_TOKEN|[A-Za-z_]*_API_KEY|[A-Za-z_]*SECRET[A-Za-z_]*|[A-Za-z_]*PASSWORD[A-Za-z_]*)'
 
 policy_docwriter_path() {
+  # Block path traversal: reject any path containing '..' as a full path segment
+  # (bounded by '/' or string start/end), e.g. '/../', '/..', '../', or '..'.
+  # This prevents paths like '/docs/../../../../etc/passwd' from bypassing the
+  # glob checks below by containing a substring match to '*/docs/*' while
+  # resolving outside the allowed tree.
+  if has_in "$FILE" '(^|/)\.\.(/|$)'; then
+    block "path contains a '..' segment — traversal outside the allowed write tree is not permitted" "$FILE"
+  fi
+
   case "$FILE" in
     */docs/*|docs/*|*/plans/*|plans/*|*/doc-inventory/*|doc-inventory/*)
       allow "$FILE" ;;
