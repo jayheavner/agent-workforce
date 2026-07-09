@@ -134,17 +134,33 @@ parse_dispatch() { # $1 file, $2 agent_type
   '
 }
 
+# Load prior entries if the existing file is a valid "ok" doc; a sticky
+# "unavailable" file is handled earlier (Task 6). Missing/invalid -> fresh.
+PRIOR='{}'
+if [ -f "$COST_FILE" ] && jq -e '.status=="ok"' "$COST_FILE" >/dev/null 2>&1; then
+  PRIOR="$(jq -c '.dispatches // {}' "$COST_FILE")"
+fi
+
 # Scan the whole subagents dir every fire (D4: not just the just-fired
 # dispatch) so an earlier dispatch's cost is never missing from the totals.
+# Incremental rule: a dispatch file whose byte size matches its recorded
+# entry is reused unchanged; new or size-changed files are (re)parsed in
+# full and their entry replaced (D7 self-heal — never merged/appended).
 DISPATCHES='{}'
 if [ -d "$SUBAGENTS_DIR" ]; then
   for f in "$SUBAGENTS_DIR"/agent-*.jsonl; do
     [ -e "$f" ] || continue
     aid="$(basename "$f")"; aid="${aid#agent-}"; aid="${aid%.jsonl}"
-    atype="unknown"; [ "$aid" = "$AGENT_ID" ] && atype="$AGENT_TYPE"
-    entry="$(parse_dispatch "$f" "$atype")" || write_unavailable "$(basename "$f"): $entry"
-    if printf '%s' "$entry" | jq -e '.error' >/dev/null 2>&1; then
-      write_unavailable "$(basename "$f"): $(printf '%s' "$entry" | jq -r .error)"
+    size="$(wc -c < "$f" | tr -d ' ')"
+    prior_size="$(printf '%s' "$PRIOR" | jq -r --arg k "$aid" '.[$k].file_size // "none"')"
+    if [ "$prior_size" = "$size" ]; then
+      entry="$(printf '%s' "$PRIOR" | jq -c --arg k "$aid" '.[$k]')"   # reuse unchanged
+    else
+      atype="unknown"; [ "$aid" = "$AGENT_ID" ] && atype="$AGENT_TYPE"
+      entry="$(parse_dispatch "$f" "$atype")" || write_unavailable "$(basename "$f"): $entry"
+      if printf '%s' "$entry" | jq -e '.error' >/dev/null 2>&1; then
+        write_unavailable "$(basename "$f"): $(printf '%s' "$entry" | jq -r .error)"
+      fi
     fi
     DISPATCHES="$(jq -n --argjson d "$DISPATCHES" --arg k "$aid" --argjson v "$entry" '$d + {($k):$v}')"
   done

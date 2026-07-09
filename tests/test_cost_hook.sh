@@ -92,5 +92,31 @@ j() { jq -r "$1" "$CF"; }   # read a path out of the cost file
 [ "$(j '.totals.models."claude-sonnet-5".cost_usd')" = "0.0555" ] && ok || no "total sonnet cost"
 [ "$(j '.totals.cost_usd')" = "0.1165" ] && ok || no "grand cost 0.1165"
 
+# --- Task 5: idempotent + incremental ---
+run_hook "$(payload "$CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"
+FIRST="$(cat "$CF")"
+run_hook "$(payload "$CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"
+SECOND="$(cat "$CF")"
+# updated_at may differ; compare everything except updated_at.
+a="$(printf '%s' "$FIRST"  | jq 'del(.updated_at)')"
+b="$(printf '%s' "$SECOND" | jq 'del(.updated_at)')"
+[ "$a" = "$b" ] && ok || no "re-fire is idempotent (totals unchanged)"
+
+# Growth: copy the good tree into scratch, append a request to dispatch A, re-fire.
+GROW="$SCRATCH/grow"
+mkdir -p "$GROW/$SID/subagents"
+cp "$FIXROOT/good/$SID.jsonl" "$GROW/$SID.jsonl"
+cp "$FIXROOT/good/$SID/subagents/"agent-*.jsonl "$GROW/$SID/subagents/"
+# Append one more opus request to A: input 1000, out 100, no cache -> cost 0.0075
+cat >> "$GROW/$SID/subagents/agent-aaaa1111.jsonl" <<'EOF'
+{"type":"assistant","isSidechain":true,"agentId":"aaaa1111","requestId":"req_A3","uuid":"a3","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:02:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_A3","type":"message","role":"assistant","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":100}}}
+EOF
+GROW_CF="$(costfile_for "$CWD" "$SLUG" "$SID")"
+run_hook "$(payload "$CWD" "$GROW/$SID.jsonl" "$SID" aaaa1111 architect)"
+# A opus cost now 0.061 + 0.0075 = 0.0685; grand 0.1165 + 0.0075 = 0.124
+[ "$(jq -r '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd' "$GROW_CF")" = "0.0685" ] && ok || no "growth updates dispatch A cost to 0.0685"
+[ "$(jq -r '.dispatches.aaaa1111.requests' "$GROW_CF")" = "3" ] && ok || no "growth updates dispatch A requests to 3"
+[ "$(jq -r '.totals.cost_usd' "$GROW_CF")" = "0.124" ] && ok || no "growth updates grand total to 0.124"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
