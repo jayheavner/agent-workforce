@@ -73,18 +73,31 @@ Nothing is copied anywhere until every validation check below passes:
 - The installer also warns (without failing) if the `CLAUDE_CODE_SUBAGENT_MODEL` environment
   variable is set, either in the current shell or in `~/.zshrc`, `~/.zprofile`, or
   `~/.zshenv` — that variable silently overrides every model pin in the roster table above.
+- Every vendored skill directory under `skills/` has a `SKILL.md` (exact filename, uppercase)
+  with `name:` and `description:` frontmatter, and `name:` matches the directory it lives in;
+  a skill missing any of that fails the install before anything is copied. The three copies
+  of `references/coding-standards.md` (under `coding-standards/`, `code-review/`, and
+  `plan-review/`) must be hash-identical — a diverged copy fails the install rather than
+  silently installing inconsistent guidance.
+- The sandbox install-test suite (`tests/test_install_skills.sh`) runs as part of validation:
+  it installs the vendored skills into a throwaway `HOME`, confirms all ten arrive with an
+  exact-name `SKILL.md`, checks the manifest records a correct hash for every file, and
+  confirms `--check` reports OK, then DRIFT and MISSING after deliberately corrupting an
+  installed file.
 
 Only after all of that passes does the installer touch `~/.claude/`. Any agent file already
 installed under `~/.claude/agents/` that this run is about to replace is copied first into a
 timestamped backup directory, `~/.claude/backups/agent-team-<timestamp>/`; the same applies to
-`~/.claude/hooks/agent-team-policy.sh`, `~/.claude/hooks/agent-team-policy-lib.sh`, and
-`~/.claude/hooks/agent-team-policy-mutations.sh` if they already exist. If any copy step fails
-partway through — an agent file, the policy script, the policy library, or the mutations
-blocklist — the installer restores every file it just backed up and removes any file
-it freshly created that had no prior version to restore, so a failed install always reverts
-cleanly to whatever state existed before it ran; it never leaves a partial or broken install in
-place. A successful run prints where the backup was written and reminds you how to start the
-team.
+`~/.claude/hooks/agent-team-policy.sh`, `~/.claude/hooks/agent-team-policy-lib.sh`,
+`~/.claude/hooks/agent-team-policy-mutations.sh`, and every file under `~/.claude/skills/` that
+a vendored skill is about to replace, if they already exist. If any copy step fails partway
+through — an agent file, the policy script, the policy library, the mutations blocklist, or a
+skill file — the installer restores every file it just backed up (skills files by their full
+relative path, so nested files under `skills/<name>/references/...` roll back correctly) and
+removes any file it freshly created that had no prior version to restore, so a failed install
+always reverts cleanly to whatever state existed before it ran; it never leaves a partial or
+broken install in place. A successful run prints where the backup was written and reminds you
+how to start the team.
 
 ## How to use
 
@@ -147,11 +160,15 @@ new machine DOES need, and how each is guarded:
    the researcher's Glean access and the ticketer's Asana access ride on claude.ai
    connectors, which are account-scoped, not machine-scoped.
 2. **`jq`** — the policy hook parses tool-call JSON with it. The installer fails without it.
-3. **The skills the agents preload or invoke** — the superpowers plugin plus the org
-   skills (coding-standards, code-review, secure-secrets, write-ticket, and the rest named
-   in the agent files). The installer resolves every one, including the architect's
-   situationally-invoked skills, and fails loudly on any that are missing rather than
-   installing a team that degrades at runtime.
+3. **The superpowers plugin** (plus the client's own built-in skills) — the only skill
+   dependency that is still genuinely external to this repo. The ten org skills the agents
+   preload or invoke (coding-standards, code-review, secure-secrets, write-ticket, and the
+   rest named in the agent files) are **vendored** under `skills/` in this repo and
+   installed by `install.sh` into `~/.claude/skills/`; they are no longer a separate
+   machine dependency to track. The installer still resolves every skill reference,
+   including the architect's situationally-invoked skills, and still fails loudly on
+   anything missing — now that only means a gap in the superpowers plugin or a client
+   built-in, since the org skills ship with the repo itself.
 4. **Role credentials in the environment** ($OKTA_TOKEN, AWS profiles, the 1Password
    service-account token) — only needed for the ops/deployer work that uses them, and
    machine-specific by nature.
@@ -162,29 +179,38 @@ what that machine is missing.
 
 ## Drift detection — the anti-fog mechanism
 
-Documentation gets forgotten; the installed agents are what actually runs. Three
-mechanisms keep repo and reality aligned without relying on anyone's memory:
+Documentation gets forgotten; the installed agents, hooks, and skills are what actually runs.
+Three mechanisms keep repo and reality aligned without relying on anyone's memory:
 
 - Every install writes a **build manifest** (`~/.claude/agent-team-manifest.json`): the
-  repo commit, install timestamp, and a checksum of every installed file.
+  repo commit, install timestamp, and a checksum of every installed file — agents, hooks,
+  and every vendored skill file, each tracked under its own manifest key
+  (skill files use the key `skills/<name>/<relpath>`, so nested files such as
+  `skills/coding-standards/references/coding-standards.md` are tracked individually).
 - **`bash install.sh --check`** verifies the installation any time, without touching
-  anything: it re-runs the full validation (skills resolve, jq present, hook tests pass)
-  and compares checksums three ways — an installed file that was hand-edited under
-  `~/.claude/` reports DRIFT, a repo that changed since the last install reports STALE,
-  a repo agent never installed reports NEW. Any finding exits nonzero with the exact file
-  named. Run it on any machine you suspect is behind.
+  anything: it re-runs the full validation (skill resolution and the vendored-skills
+  checks above, `jq` present, hook and install-skills tests pass) and compares checksums
+  the same way for agents, hooks, and skills alike — an installed file hand-edited under
+  `~/.claude/` (including a skill file edited or deleted directly under
+  `~/.claude/skills/`) reports DRIFT or MISSING, a repo file changed since the last
+  install reports STALE, a repo file never installed reports NEW, and a file the manifest
+  still lists but the repo no longer has reports REMOVED. Any finding exits nonzero with
+  the exact file named. Run it on any machine you suspect is behind.
 - The **orchestrator announces its build** ("team build `<commit>`, installed `<date>`")
   as the first line of every session, read from the manifest — so a stale install is
   visible in the first message of any task, on any machine, rather than discovered later.
 
 ## How to change the team
 
-Edit the agent definitions, hook files, or tests in this repository — never edit files under
-`~/.claude/agents/` or `~/.claude/hooks/` directly, since those are install targets that get
-overwritten the next time `install.sh` runs, and a direct edit there will silently vanish. After
-making a change, re-run `bash install.sh` to validate and reinstall. A model change for any
-role is a deliberate, reviewed edit to that agent's `model:` frontmatter line in this repo,
-followed by an install — models are never changed automatically or implicitly.
+Edit the agent definitions, hook files, skills, or tests in this repository — never edit files
+under `~/.claude/agents/`, `~/.claude/hooks/`, or `~/.claude/skills/` directly, since those are
+install targets that get overwritten the next time `install.sh` runs, and a direct edit there
+will silently vanish (or, if you leave it in place, `bash install.sh --check` will flag it as
+DRIFT). Skill edits are made under `skills/` in this repo and installed the same way as agents
+and hooks — via `bash install.sh` — never by hand-editing the installed copy. After making a
+change, re-run `bash install.sh` to validate and reinstall. A model change for any role is a
+deliberate, reviewed edit to that agent's `model:` frontmatter line in this repo, followed by an
+install — models are never changed automatically or implicitly.
 
 ## Audit log
 
