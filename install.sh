@@ -46,6 +46,25 @@ bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests fa
 bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
 bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
 
+# --- vendored skills validation (before anything is copied) ---
+for d in "$REPO"/skills/*/; do
+  name="$(basename "$d")"
+  sm="$d/SKILL.md"
+  [ -f "$sm" ] || fail "skills/$name has no SKILL.md"
+  fm="$(awk '/^---$/{n++; next} n==1{print}' "$sm")"
+  printf '%s\n' "$fm" | grep -qE '^name:' || fail "skills/$name/SKILL.md: missing frontmatter 'name:'"
+  printf '%s\n' "$fm" | grep -qE '^description:' || fail "skills/$name/SKILL.md: missing frontmatter 'description:'"
+  smname="$(printf '%s\n' "$fm" | sed -n 's/^name:[[:space:]]*//p')"
+  [ "$smname" = "$name" ] || fail "skills/$name/SKILL.md: name '$smname' != directory '$name'"
+done
+# the three coding-standards.md copies must be hash-identical (DRY guard, 3.11)
+cs_a="$REPO/skills/coding-standards/references/coding-standards.md"
+cs_b="$REPO/skills/code-review/references/coding-standards.md"
+cs_c="$REPO/skills/plan-review/references/coding-standards.md"
+h_a="$(sha "$cs_a")"; h_b="$(sha "$cs_b")"; h_c="$(sha "$cs_c")"
+[ "$h_a" = "$h_b" ] || fail "coding-standards.md differs: code-review copy diverged from coding-standards"
+[ "$h_a" = "$h_c" ] || fail "coding-standards.md differs: plan-review copy diverged from coding-standards"
+
 # Built-in skills ship with the Claude Code client itself and have no
 # SKILL.md on disk anywhere (not under ~/.claude/skills/, not in the plugin
 # cache) — "verify" is one of these. Listed explicitly so the check below
@@ -62,7 +81,7 @@ resolve_skill() { # $1 skill ref (bare or ns:name) -> 0 if found
       case "$BUILTIN_SKILLS" in
         *" $1 "*) return 0 ;;
       esac
-      [ -f "$HOME/.claude/skills/$1/SKILL.md" ]
+      [ -f "$REPO/skills/$1/SKILL.md" ] || [ -f "$HOME/.claude/skills/$1/SKILL.md" ]
       ;;
   esac
 }
@@ -97,6 +116,13 @@ for s in superpowers:brainstorming plan-review ux-to-ui-design; do
   resolve_skill "$s" || fail "architect situational skill '$s' does not resolve to an installed skill"
 done
 
+# The sandbox install-skills test itself invokes install.sh against its own
+# throwaway HOME; without this guard, that inner install.sh run would reach
+# this same line and spawn another copy of the test — unbounded recursion.
+# The test exports AGENT_TEAM_SKIP_INSTALL_TEST=1 before invoking install.sh
+# (see tests/test_install_skills.sh), so the inner run skips this check.
+[ -n "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ] || bash "$REPO/tests/test_install_skills.sh" >/dev/null || fail "install-skills tests failed — run tests/test_install_skills.sh to see which"
+
 [ -n "${CLAUDE_CODE_SUBAGENT_MODEL:-}" ] \
   && warn "CLAUDE_CODE_SUBAGENT_MODEL is set in this environment; it overrides every model pin"
 for rc in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv"; do
@@ -114,6 +140,7 @@ if [ "$MODE" = "check" ]; then
     case "$rel" in
       agents/*) inst="$CLAUDE_DIR/agents/$(basename "$rel")" ;;
       hooks/*)  inst="$CLAUDE_DIR/hooks/$(basename "$rel")" ;;
+      skills/*) inst="$CLAUDE_DIR/skills/${rel#skills/}" ;;
       *) continue ;;
     esac
     if [ ! -f "$inst" ]; then
@@ -134,6 +161,13 @@ EOF
     jq -e --arg k "$rel" '.files[$k] != null' "$MANIFEST" >/dev/null \
       || { echo "check: NEW — $rel exists in the repo but was never installed"; drift=1; }
   done
+  while IFS= read -r rel; do
+    rel="skills/${rel#./}"
+    jq -e --arg k "$rel" '.files[$k] != null' "$MANIFEST" >/dev/null \
+      || { echo "check: NEW — $rel exists in the repo but was never installed"; drift=1; }
+  done <<EOF
+$(cd "$REPO/skills" && find . -type f)
+EOF
   if [ "$drift" -eq 0 ]; then
     echo "check: OK — installed team matches repo build $(jq -r '.commit' "$MANIFEST") (installed $(jq -r '.installed_at' "$MANIFEST"))"
     exit 0
@@ -142,7 +176,7 @@ EOF
 fi
 
 # --- backup ---
-mkdir -p "$BACKUP" "$CLAUDE_DIR/agents" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/logs" || fail "cannot create target directories"
+mkdir -p "$BACKUP" "$CLAUDE_DIR/agents" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/logs" || fail "cannot create target directories"
 
 # Track which of the files this installer manages were pre-existing (i.e. got
 # a backup copy) vs. not, so a failure partway through install can tell "roll
@@ -169,6 +203,23 @@ PREEXISTING_GUARD=0
 [ -f "$CLAUDE_DIR/hooks/model-rates.json" ] && { cp "$CLAUDE_DIR/hooks/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 
+# Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
+# and hooks/ trees above, so they get their own backup loop keyed by relative
+# path rather than basename — the case-by-basename scheme in restore() can't
+# express nested destinations.
+PREEXISTING_SKILLS=""
+while IFS= read -r rel; do
+  rel="${rel#./}"
+  inst="$CLAUDE_DIR/skills/$rel"
+  if [ -f "$inst" ]; then
+    mkdir -p "$BACKUP/skills/$(dirname "$rel")"
+    cp "$inst" "$BACKUP/skills/$rel"
+    PREEXISTING_SKILLS="$PREEXISTING_SKILLS $rel"
+  fi
+done <<EOF
+$(cd "$REPO/skills" && find . -type f)
+EOF
+
 restore() {
   echo "install: restoring backup from $BACKUP" >&2
   for b in "$BACKUP"/*; do
@@ -183,6 +234,15 @@ restore() {
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
+  if [ -d "$BACKUP/skills" ]; then
+    while IFS= read -r b; do
+      rel="${b#"$BACKUP"/skills/}"
+      mkdir -p "$CLAUDE_DIR/skills/$(dirname "$rel")"
+      cp "$b" "$CLAUDE_DIR/skills/$rel"
+    done <<EOF
+$(find "$BACKUP/skills" -type f 2>/dev/null)
+EOF
+  fi
 }
 
 # Undo whatever THIS run freshly installed with no pre-existing version to
@@ -204,6 +264,15 @@ cleanup_fresh() {
   [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-cost.sh"
   [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/model-rates.json"
   [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh"
+  while IFS= read -r rel; do
+    rel="${rel#./}"
+    case " $PREEXISTING_SKILLS " in
+      *" $rel "*) : ;;                                  # pre-existing; restore() handled it
+      *) rm -f "$CLAUDE_DIR/skills/$rel" ;;             # freshly installed; revert to "not here"
+    esac
+  done <<EOF
+$(cd "$REPO/skills" && find . -type f)
+EOF
 }
 
 # --- install ---
@@ -214,6 +283,13 @@ if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$CLAUDE_DIR/hooks/"; then 
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
+while IFS= read -r rel; do
+  rel="${rel#./}"
+  mkdir -p "$CLAUDE_DIR/skills/$(dirname "$rel")" || { restore; cleanup_fresh; fail "cannot create skills target dir for $rel; rolled back"; }
+  if ! cp "$REPO/skills/$rel" "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "skill copy failed for $rel; rolled back"; fi
+done <<EOF
+$(cd "$REPO/skills" && find . -type f)
+EOF
 # Only the entry point is ever executed directly (agent frontmatter and the
 # shell invoke it by path); agent-team-policy-lib.sh and
 # agent-team-policy-mutations.sh are only ever `source`d (a two-level chain:
@@ -230,6 +306,9 @@ TMP_MANIFEST="$(mktemp)"
 {
   for f in "$REPO"/agents/*.md; do printf 'agents/%s\t%s\n' "$(basename "$f")" "$(sha "$f")"; done
   for h in $HOOK_FILES; do printf 'hooks/%s\t%s\n' "$h" "$(sha "$REPO/hooks/$h")"; done
+  while IFS= read -r rel; do rel="${rel#./}"; printf 'skills/%s\t%s\n' "$rel" "$(sha "$REPO/skills/$rel")"; done <<EOF
+$(cd "$REPO/skills" && find . -type f)
+EOF
 } | jq -R -n \
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg repo "$REPO" \
@@ -244,6 +323,6 @@ else
   warn "manifest write failed — install is fine, but 'install.sh --check' and the orchestrator's build line won't work until a successful re-install"
 fi
 
-echo "install: OK — 10 agents installed, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
+echo "install: OK — 10 agents + 10 skills installed, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
 echo "install: verify any time with: bash install.sh --check"
 echo "install: start the team with: claude --agent orchestrator"
