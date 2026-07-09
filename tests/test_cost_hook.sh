@@ -65,5 +65,32 @@ run_hook "$(jq -cn --arg cwd "$CWD" --arg tp "$GOOD_TP" '{transcript_path:$tp, c
 [ "$RC" -eq 0 ] && ok || no "missing session_id exits 0"
 [ ! -f "$NOSID" ] && ok || no "missing session_id writes nothing"
 
+# --- Task 4: exact math over the good fixture (fire once, whole dir scanned) ---
+run_hook "$(payload "$CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"
+j() { jq -r "$1" "$CF"; }   # read a path out of the cost file
+
+# Dispatch A (opus)
+[ "$(j '.dispatches.aaaa1111.agent_type')" = "architect" ] && ok || no "A agent_type"
+[ "$(j '.dispatches.aaaa1111.requests')" = "2" ] && ok || no "A requests=2 (dedup)"
+[ "$(j '.dispatches.aaaa1111.models."claude-opus-4-8".input_tokens')" = "3000" ] && ok || no "A opus input"
+[ "$(j '.dispatches.aaaa1111.models."claude-opus-4-8".output_tokens')" = "1100" ] && ok || no "A opus output (dedup max 600+500)"
+[ "$(j '.dispatches.aaaa1111.models."claude-opus-4-8".cache_write_5m_tokens')" = "2000" ] && ok || no "A opus cw5m"
+[ "$(j '.dispatches.aaaa1111.models."claude-opus-4-8".cache_write_1h_tokens')" = "0" ] && ok || no "A opus cw1h"
+[ "$(j '.dispatches.aaaa1111.models."claude-opus-4-8".cache_read_tokens')" = "12000" ] && ok || no "A opus cr"
+[ "$(j '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd')" = "0.061" ] && ok || no "A opus cost 0.061"
+
+# Dispatch B (sonnet) — intro + standard + 5m/1h split
+[ "$(j '.dispatches.bbbb2222.models."claude-sonnet-5".input_tokens')" = "10000" ] && ok || no "B sonnet input"
+[ "$(j '.dispatches.bbbb2222.models."claude-sonnet-5".output_tokens')" = "1800" ] && ok || no "B sonnet output"
+[ "$(j '.dispatches.bbbb2222.models."claude-sonnet-5".cache_write_5m_tokens')" = "1000" ] && ok || no "B sonnet cw5m"
+[ "$(j '.dispatches.bbbb2222.models."claude-sonnet-5".cache_write_1h_tokens')" = "500" ] && ok || no "B sonnet cw1h"
+[ "$(j '.dispatches.bbbb2222.models."claude-sonnet-5".cache_read_tokens')" = "10000" ] && ok || no "B sonnet cr"
+[ "$(j '.dispatches.bbbb2222.models."claude-sonnet-5".cost_usd')" = "0.0555" ] && ok || no "B sonnet cost 0.0555 (intro+std)"
+
+# Grand totals
+[ "$(j '.totals.models."claude-opus-4-8".cost_usd')" = "0.061" ] && ok || no "total opus cost"
+[ "$(j '.totals.models."claude-sonnet-5".cost_usd')" = "0.0555" ] && ok || no "total sonnet cost"
+[ "$(j '.totals.cost_usd')" = "0.1165" ] && ok || no "grand cost 0.1165"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
