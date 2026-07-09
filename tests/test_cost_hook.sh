@@ -149,5 +149,20 @@ run_hook "$(payload "$EMPTY_CWD" "$EMPTY_TP" "$SID" eeee5555 scribe)"
 [ "$(jq -r '.status' "$EMPTY_CF")" = "ok" ] && ok || no "empty subagents dir -> status ok"
 [ "$(jq -r '.totals.cost_usd' "$EMPTY_CF")" = "0" ] && ok || no "empty subagents dir -> zero cost"
 
+# --- Task 8: server web-tool counts carried, not priced ---
+WT="$SCRATCH/webtool"
+mkdir -p "$WT/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$WT/$SID.jsonl"
+cat > "$WT/$SID/subagents/agent-ffff6666.jsonl" <<'EOF'
+{"type":"assistant","isSidechain":true,"agentId":"ffff6666","requestId":"req_W1","uuid":"w1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_W1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10,"server_tool_use":{"web_search_requests":3,"web_fetch_requests":2}}}}
+EOF
+WT_CWD="/fake/wt"; WT_SLUG="-fake-wt"
+WT_CF="$(costfile_for "$WT_CWD" "$WT_SLUG" "$SID")"
+run_hook "$(payload "$WT_CWD" "$WT/$SID.jsonl" "$SID" ffff6666 researcher)"
+[ "$(jq -r '.totals.web_search_requests' "$WT_CF")" = "3" ] && ok || no "web_search_requests carried = 3"
+[ "$(jq -r '.totals.web_fetch_requests' "$WT_CF")" = "2" ] && ok || no "web_fetch_requests carried = 2"
+# cost is token-only: (100*5 + 10*25)/1e6 = 750/1e6 = 0.00075, unaffected by web counts
+[ "$(jq -r '.totals.cost_usd' "$WT_CF")" = "0.00075" ] && ok || no "web-tool request cost is token-only 0.00075"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
