@@ -17,7 +17,7 @@ MODE="install"
 fail() { echo "$MODE: FAIL — $*" >&2; exit 1; }
 warn() { echo "$MODE: WARNING — $*" >&2; }
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
-HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh"
+HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh model-rates.json"
 
 # --- validation (nothing is touched until all of this passes) ---
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -26,7 +26,15 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 bash -n "$REPO/hooks/agent-team-policy.sh" || fail "policy script failed bash -n"
 bash -n "$REPO/hooks/agent-team-policy-lib.sh" || fail "policy lib script failed bash -n"
 bash -n "$REPO/hooks/agent-team-policy-mutations.sh" || fail "policy mutations script failed bash -n"
+[ -f "$REPO/hooks/agent-team-cost.sh" ] || fail "hooks/agent-team-cost.sh is missing from repo"
+[ -f "$REPO/hooks/model-rates.json" ] || fail "hooks/model-rates.json is missing from repo"
+bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
+jq empty "$REPO/hooks/model-rates.json" || fail "model-rates.json is not valid JSON"
+jq -e '[.models[] | [.input,.output,.cache_write_5m,.cache_write_1h,.cache_read] | all(type=="number")] | all' \
+  "$REPO/hooks/model-rates.json" >/dev/null \
+  || fail "model-rates.json: every model must carry five numeric rate keys"
 bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
+bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
 
 # Built-in skills ship with the Claude Code client itself and have no
 # SKILL.md on disk anywhere (not under ~/.claude/skills/, not in the plugin
@@ -144,6 +152,10 @@ PREEXISTING_POLICY_MUT=0
 [ -f "$CLAUDE_DIR/hooks/agent-team-policy.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy.sh" "$BACKUP/"; PREEXISTING_POLICY=1; }
 [ -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" "$BACKUP/"; PREEXISTING_POLICY_LIB=1; }
 [ -f "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh" "$BACKUP/"; PREEXISTING_POLICY_MUT=1; }
+PREEXISTING_COST=0
+PREEXISTING_RATES=0
+[ -f "$CLAUDE_DIR/hooks/agent-team-cost.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
+[ -f "$CLAUDE_DIR/hooks/model-rates.json" ] && { cp "$CLAUDE_DIR/hooks/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 
 restore() {
   echo "install: restoring backup from $BACKUP" >&2
@@ -153,6 +165,8 @@ restore() {
       agent-team-policy.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       agent-team-policy-lib.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       agent-team-policy-mutations.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
+      agent-team-cost.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
+      model-rates.json) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -174,6 +188,8 @@ cleanup_fresh() {
   [ "$PREEXISTING_POLICY" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy.sh"
   [ "$PREEXISTING_POLICY_LIB" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh"
   [ "$PREEXISTING_POLICY_MUT" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh"
+  [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-cost.sh"
+  [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/model-rates.json"
 }
 
 # --- install ---
@@ -181,11 +197,14 @@ if ! cp "$REPO"/agents/*.md "$CLAUDE_DIR/agents/"; then restore; cleanup_fresh; 
 if ! cp "$REPO/hooks/agent-team-policy.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook lib copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook mutations copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-cost.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/model-rates.json" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 # Only the entry point is ever executed directly (agent frontmatter and the
 # shell invoke it by path); agent-team-policy-lib.sh and
 # agent-team-policy-mutations.sh are only ever `source`d (a two-level chain:
 # entry point -> lib -> mutations), so they need to be readable, not executable.
 chmod +x "$CLAUDE_DIR/hooks/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
+chmod +x "$CLAUDE_DIR/hooks/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
 
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;
@@ -209,6 +228,6 @@ else
   warn "manifest write failed — install is fine, but 'install.sh --check' and the orchestrator's build line won't work until a successful re-install"
 fi
 
-echo "install: OK — 10 agents installed, policy hook installed, build $COMMIT recorded, backup at $BACKUP"
+echo "install: OK — 10 agents installed, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
 echo "install: verify any time with: bash install.sh --check"
 echo "install: start the team with: claude --agent orchestrator"
