@@ -75,7 +75,7 @@ is_transient_partial() { # $1 file
 }
 
 # parse_dispatch FILE AGENT_TYPE -> prints the per-dispatch JSON object on
-# stdout on success, or a one-line reason on stderr and a non-zero exit on any
+# stdout on success, or a one-line reason on stdout and a non-zero exit on any
 # recognition failure. One jq program per dispatch file: dedups by
 # message.id, sums the five token classes per model, prices each logical
 # request against the rates by its timestamp, and emits the per-dispatch
