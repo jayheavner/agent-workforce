@@ -138,5 +138,16 @@ run_hook "$(payload "$UNK_CWD" "$UNK_TP" "$SID" dddd4444 verifier)"
 run_hook "$(payload "$MAL_CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"
 [ "$(jq -r '.status' "$MAL_CF")" = "unavailable" ] && ok || no "unavailable is sticky for the session"
 
+# --- Task 7: empty state ---
+EMPTY_CWD="/fake/empty"; EMPTY_SLUG="-fake-empty"
+EMPTY_TP="$SCRATCH/empty/$SID.jsonl"   # no subagents dir exists alongside it
+mkdir -p "$SCRATCH/empty"
+printf '%s\n' '{"type":"user"}' > "$EMPTY_TP"
+EMPTY_CF="$(costfile_for "$EMPTY_CWD" "$EMPTY_SLUG" "$SID")"
+run_hook "$(payload "$EMPTY_CWD" "$EMPTY_TP" "$SID" eeee5555 scribe)"
+[ "$RC" -eq 0 ] && ok || no "empty subagents dir exits 0"
+[ "$(jq -r '.status' "$EMPTY_CF")" = "ok" ] && ok || no "empty subagents dir -> status ok"
+[ "$(jq -r '.totals.cost_usd' "$EMPTY_CF")" = "0" ] && ok || no "empty subagents dir -> zero cost"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
