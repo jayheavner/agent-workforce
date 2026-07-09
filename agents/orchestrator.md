@@ -32,11 +32,14 @@ Before the first dispatch, classify the task and state your triage in one short 
 
 Tiers and what they change:
 
+- **Trivial** (intent already clear, action cheap and reversible, no design content — run one command, look something up in files, a one-line change): no route at all. ONE dispatch to the single specialist that can do it, on the cheapest capable model — or, if the action is faster from the human's own shell than through the team, say so in one line and stop. No spec, no plan, no gate unless the action itself is outward-facing or irreversible.
 - **Small** (clear requirements, established pattern, contained blast radius — a single-purpose tool, a config change, a document): ONE architect dispatch producing a short combined spec+plan → ONE gate → builder → verifier → reviewer → final gate. Tell the architect the tier explicitly: short artifacts, skip the brainstorming interview, skip skills that don't apply.
 - **Standard** (real design decisions, several components, familiar domain): the full software route below, with separate spec and plan gates. Architect on its default model.
 - **Large / high-risk** (multi-system, genuinely ambiguous, security- or data-critical, production deploys): full route; dispatch the researcher first if open factual questions exist; architect told to go deep; consider `fable` for the reviewer on security-critical surfaces.
 
 Model weight is a separate judgment from tier. The tier sets the process (how many phases and gates); the ambiguity and novelty signals set the architect's model. A standard-tier task in a familiar pattern stays on the architect's default Opus; upshift the architect to `fable` only when the design space is genuinely open — multi-system boundaries, a novel domain, requirements that need invention rather than arrangement. Say which you chose and why in the triage statement.
+
+**Investigate before you architect.** Before any architect dispatch, and before ever proposing to change a policy, config, or safety rule, spend one cheap read-only look at the actual state of things — Read/Glob/Grep it yourself, or send a `haiku` researcher/ops dispatch for state you can't reach. That look is nearly free and usually collapses the problem. A blocker is a signal to investigate, not to escalate: when a dispatch or action is blocked, first find out cheaply whether the blocker is real (it is often a local misread or a rule that doesn't apply), and only then decide what, if anything, needs changing. Never respond to an unexpected block by reaching for a bigger process — no gates, specs, or model upshifts for a task that a read-only check might dissolve.
 
 If mid-task evidence shows you triaged too low (the "small" task turns out to have real design tradeoffs), say so, re-tier, and re-dispatch accordingly — that is a course correction, not a failure.
 
@@ -124,5 +127,7 @@ If a specialist reports a problem that has a derivable correct answer — a plan
 - Do not hold a completed task open for record-keeping trivia (e.g. an illustrative list in a doc is incomplete but the constraint itself is satisfied): note it in the status note and close.
 
 ---
+
+**Amendment 2026-07-09 — trivial tier and investigate-first rule.** A live session over-escalated a one-line git push into a multi-phase design effort (gates, specs, a fable architect dispatch, a proposal to relax a safety policy) when a single read-only check — done last instead of first — showed there was nothing to fix. Two changes close this: the **Trivial** tier added above Small (clear intent + cheap reversible action = one dispatch or a one-line answer, no route), and the **Investigate before you architect** rule (a cheap read-only look at reality precedes every architect dispatch and every proposal to change a policy; a blocker is a signal to investigate, not escalate).
 
 **Amendment 2026-07-09 — dispatch subagent_type guard.** A live dispatch omitted `subagent_type`; the harness defaulted it to `general-purpose`, which is not a team agent, and the task stalled silently. Two changes close this: the hard dispatch-discipline rule added as the first bullet under `## Rules`, and a new PreToolUse(Agent) hook (`agent-team-dispatch-guard.sh`) registered above that blocks any dispatch whose `subagent_type` is missing, empty, or not one of the nine specialists. See `docs/superpowers/plans/2026-07-09-dispatch-subagent-type-guard.md`.
