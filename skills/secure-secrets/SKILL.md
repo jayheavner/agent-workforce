@@ -9,7 +9,7 @@ description: >-
   write or echo a secret value to any file, log, or transcript, with the single
   exception that secret values may be passed as arguments to op item create and
   op item edit because that is the vault's intended write path.
-allowed-tools: [Bash(op:*), Bash(date:*), Read, Edit, Write, Glob, Grep, TodoWrite]
+allowed-tools: [Bash(op:*), Bash(command:*), Bash(export:*), Bash(cat:*), Bash(git:*), Bash(curl:*), Bash(sed:*), Bash(cut:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, Glob, Grep, TodoWrite]
 ---
 # Secure Secrets Skill
 
@@ -180,9 +180,13 @@ For each credential, ask:
 - Show matching items and ask user to select the correct one
 - Ask: "Which vault is it in?" (or auto-detect from search results)
 - Ask: "Which field contains the credential?" (default: `credential`, but could be `password`, `api_key`, etc.)
-- Verify the credential matches by reading it from 1Password:
+- Verify the credential matches by comparing the stored value to the source
+  value without printing either one. Extract the source value from its file in
+  the same command, then compare and report only match/no-match:
   ```bash
-  op read "op://ClaudeCodeAccess-Jay/Item Name/field_name"
+  FILEVAL="$(sed -n '42p' ~/.zshrc | cut -d'"' -f2)"
+  [ "$(op read "op://ClaudeCodeAccess-Jay/Item Name/field_name")" = "$FILEVAL" ] \
+    && echo MATCH || echo "NO MATCH"
   ```
 - If values match: Skip migration, document the existing reference
 - If values don't match: Warn user and ask what to do:
@@ -209,8 +213,11 @@ Before creating the 1Password entry:
 - Determine which service/tenant it belongs to
 - Identify associated username or account
 
-Example (the value is referenced through a shell variable, never inlined):
+The secret is never typed as a literal into any command. Populate the shell
+variable by extracting it from the source file in the same command, then
+reference the variable:
 ```bash
+VALUE="$(sed -n '42p' ~/.zshrc | cut -d'"' -f2)"
 curl -H "Authorization: Bearer $VALUE" https://api.service.com/user
 ```
 
@@ -240,10 +247,12 @@ to a tool. Use consistent field naming:
 - Passwords: `username` and `password` fields
 
 #### Step 4: Test 1Password Integration
-After creating the entry, immediately test that it can be retrieved:
+After creating the entry, immediately test that it can be retrieved. This is an
+existence check only — discard the value so it never reaches stdout:
 
 ```bash
-op read "op://ClaudeCodeAccess-Jay/Item Name/field_name"
+op read "op://ClaudeCodeAccess-Jay/Item Name/field_name" >/dev/null \
+  && echo "retrieved OK" || echo "retrieval FAILED"
 ```
 
 If the credential was tested in Step 2, re-run that test using the 1Password
@@ -291,7 +300,7 @@ Maintain lists of:
 **IMPORTANT:** Only remove secrets from files AFTER they have been successfully
 stored in and re-read from 1Password in Phase 3. There is no plaintext backup
 step: the verified vault entry is the backup, and copying a secret into a
-`/reports/` folder or anywhere else on disk is forbidden.
+`reports/` folder or anywhere else on disk is forbidden.
 
 1. **Update shell configs**
    - Remove hardcoded credential values
@@ -315,7 +324,7 @@ Create documentation that records references and decisions only. No document
 produced by this skill may contain a secret value — only `op://` references,
 risk levels, and audit metadata.
 
-**Reports** (store in a `/reports/` folder):
+**Reports** (store in a `reports/` folder):
 - Migration summaries
 - Credential rotation plans
 - Testing reports (documenting what was tested during migration)
@@ -323,7 +332,7 @@ risk levels, and audit metadata.
 - Security audit reports
 - Inventory reports
 
-#### 1. Migration Summary (→ `/reports/MIGRATION_SUMMARY.md`)
+#### 1. Migration Summary (→ `reports/MIGRATION_SUMMARY.md`)
 - **Scan scope:** Exact directories and files that were scanned, with timestamp
 - **Total secrets found:** Count and breakdown
 - **Breakdown by risk level:** CRITICAL, HIGH, MEDIUM
@@ -333,7 +342,7 @@ risk levels, and audit metadata.
 - **What was already in 1Password:** File path, `op://` reference, whether values matched, action taken, timestamp
 - **What was deleted:** File path, line number, type/description (NOT the value), timestamp, reason, risk level
 
-#### 2. Credential Rotation Plan (→ `/reports/CREDENTIALS_ROTATION_PLAN.md`)
+#### 2. Credential Rotation Plan (→ `reports/CREDENTIALS_ROTATION_PLAN.md`)
 For each credential, document:
 - **Priority:** Based on risk level
   - CRITICAL (git-committed): IMMEDIATE rotation required
@@ -344,14 +353,14 @@ For each credential, document:
 - **Impact:** What depends on this credential
 - **Status:** Not rotated / In progress / Rotated
 
-#### 3. Testing Report (→ `/reports/TESTING_REPORT.md`)
+#### 3. Testing Report (→ `reports/TESTING_REPORT.md`)
 - **Pre-migration tests:** What was tested before storing (validity, service identification)
 - **Post-migration tests:** Verification that `op read` works and credentials function
 - **Test results:** Pass/fail/skipped status per credential (results only, never values)
 - **Failures and resolutions:** Issues encountered and how they were resolved
 - **Untested credentials:** Which credentials could not be tested and why
 
-#### 4. Quick Reference (→ `/reports/CREDENTIAL_QUICK_REFERENCE.md`)
+#### 4. Quick Reference (→ `reports/CREDENTIAL_QUICK_REFERENCE.md`)
 List all credentials with their 1Password references (references only):
 ```
 Okta token:  op read "op://ClaudeCodeAccess-Jay/Okta API Token/credential"
@@ -428,13 +437,15 @@ Phase 2: Scanning project + user config...
 
 Phase 3: Migrating this credential
   Confirm it is a real secret -> user: "Migrate"
-  Test validity (value referenced through a shell variable, not inlined):
+  Test validity (value extracted from the source file in the same command,
+  never typed as a literal):
+    VALUE="$(sed -n '42p' ~/.zshrc | cut -d'"' -f2)"
     curl -s -H "Authorization: SSWS $VALUE" https://cta.okta.com/api/v1/users/me  -> valid
   Store in the vault (value passed only to op item create):
     op item create --vault ClaudeCodeAccess-Jay --category "API Credential" \
       --title "Okta API Token - Internal Tenant" credential="$VALUE" --tags "claude code"
-  Verify it round-trips:
-    op read "op://ClaudeCodeAccess-Jay/Okta API Token - Internal Tenant/credential"  -> retrieved
+  Verify it round-trips (value discarded to /dev/null, never printed):
+    op read "op://ClaudeCodeAccess-Jay/Okta API Token - Internal Tenant/credential" >/dev/null && echo "retrieved OK"
   Only now edit ~/.zshrc: replace the hardcoded value with an op read comment.
 
 Reference recorded:
