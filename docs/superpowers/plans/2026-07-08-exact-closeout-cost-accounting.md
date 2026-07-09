@@ -10,6 +10,15 @@
 
 **Reference spec:** `docs/superpowers/specs/2026-07-08-exact-closeout-cost-accounting-design.md` (APPROVED). Read it before starting. Component numbers below (Component 1–6) map to that spec.
 
+> **Amendment 2026-07-09 (post-implementation correctness fix + 3 nits).** Tasks 1–13 already
+> shipped. Code review found that the sticky-unavailable path is too eager: any sibling dispatch
+> file caught mid-write (0-byte, or a truncated final line) trips the whole-file parse, writes the
+> sticky marker, and — via the sticky early-return — permanently pins the session to
+> `"unavailable"`, defeating the D7 self-heal the spec promised. **Tasks 14–17 below** fix this and
+> fold in three review nits. They are ordered test-first and touch only the delta; Tasks 1–13 stay
+> as-is. See the spec's dated amendments (§D7, Component 1 step 5, Components 6) for the precise
+> two-mode behavior. Run Task 17 (full acceptance) after the delta tasks.
+
 ## Global Constraints
 
 Copied verbatim from the spec and the repo's fixed constraints — every task's requirements implicitly include this section:
@@ -1148,6 +1157,377 @@ git add -A && git commit -m "chore: acceptance run for exact cost accounting"
 
 ---
 
+## Task 14: Partial-read is transient — skip this fire, do not go sticky (Amendment 2026-07-09)
+
+This is the core correctness fix. A sibling dispatch file that is **0-byte** or whose **final line is an unterminated/unparseable tail while every preceding line parses** is treated as *still being written*: it is skipped this fire (not counted, no sticky marker), so a later fire picks it up once flushing completes. Every other parse failure stays sticky-unavailable, exactly as today.
+
+**Files:**
+- Create: `tests/fixtures/cost/partial/<SID>/subagents/agent-aaaa1111.jsonl` (good, complete — same content as the good opus dispatch)
+- Create: `tests/fixtures/cost/partial/<SID>/subagents/agent-9999pppp.jsonl` (a valid line + a truncated, unterminated final line)
+- Create: `tests/fixtures/cost/partial/<SID>.jsonl` (main transcript stub)
+- Modify: `hooks/agent-team-cost.sh`
+- Modify: `tests/test_cost_hook.sh`
+
+**Interfaces:**
+- Consumes: `parse_dispatch` (Task 4), `write_unavailable` (Task 3), the scan loop (Task 5).
+- Produces: a new hook helper `is_transient_partial FILE` → exit 0 if the file is a transient partial (0-byte, OR non-empty with an unterminated/unparseable final line and all preceding lines valid JSON objects), exit 1 otherwise. The scan loop `continue`s (skips) transient files without adding an entry or writing the marker.
+
+- [ ] **Step 1: Create the partial fixtures**
+
+Create `tests/fixtures/cost/partial/11111111-2222-3333-4444-555555555555.jsonl`:
+
+```json
+{"type":"user","uuid":"u1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T00:00:00.000Z"}
+```
+
+Create the complete-and-good sibling `tests/fixtures/cost/partial/11111111-2222-3333-4444-555555555555/subagents/agent-aaaa1111.jsonl` — identical content to the good opus dispatch (Task 2 Step 2), so it prices to opus cost 0.061:
+
+```json
+{"type":"assistant","isSidechain":true,"agentId":"aaaa1111","requestId":"req_A1","uuid":"a1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_A1","type":"message","role":"assistant","usage":{"input_tokens":1000,"cache_creation_input_tokens":2000,"cache_read_input_tokens":4000,"cache_creation":{"ephemeral_5m_input_tokens":2000,"ephemeral_1h_input_tokens":0},"output_tokens":500}}}
+{"type":"assistant","isSidechain":true,"agentId":"aaaa1111","requestId":"req_A2","uuid":"a2a","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:01:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_A2","type":"message","role":"assistant","usage":{"input_tokens":2000,"cache_creation_input_tokens":0,"cache_read_input_tokens":8000,"output_tokens":100}}}
+{"type":"assistant","isSidechain":true,"agentId":"aaaa1111","requestId":"req_A2","uuid":"a2b","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:01:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_A2","type":"message","role":"assistant","usage":{"input_tokens":2000,"cache_creation_input_tokens":0,"cache_read_input_tokens":8000,"output_tokens":300}}}
+{"type":"assistant","isSidechain":true,"agentId":"aaaa1111","requestId":"req_A2","uuid":"a2c","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:01:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_A2","type":"message","role":"assistant","usage":{"input_tokens":2000,"cache_creation_input_tokens":0,"cache_read_input_tokens":8000,"output_tokens":600}}}
+```
+
+Create the mid-write sibling `tests/fixtures/cost/partial/11111111-2222-3333-4444-555555555555/subagents/agent-9999pppp.jsonl` — one complete valid JSON line, then a truncated final line that is NOT newline-terminated and does NOT parse (a JSON object cut off mid-write). Write it so the last byte is not a newline. Use `printf` so no trailing newline is added:
+
+```bash
+mkdir -p tests/fixtures/cost/partial/11111111-2222-3333-4444-555555555555/subagents
+printf '%s\n%s' \
+  '{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P1","uuid":"p1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_P1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}' \
+  '{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P2","uuid":"p2","message":{"model":"claude-opus-4-8","id":"msg_P2","usage":{"input_tokens":50,"cache_cre' \
+  > tests/fixtures/cost/partial/11111111-2222-3333-4444-555555555555/subagents/agent-9999pppp.jsonl
+```
+
+(The final line is a genuine truncated tail: valid JSON prefix, cut off mid-key. It must not parse; the preceding line must parse.)
+
+- [ ] **Step 2: Write the failing tests — partial sibling is skipped, good sibling still priced, no sticky**
+
+Add to `tests/test_cost_hook.sh`, before the `echo "passed=..."` line:
+
+```bash
+# --- Task 14: transient partial-read is skipped, not sticky (Amendment 2026-07-09) ---
+PART_TP="$FIXROOT/partial/$SID.jsonl"
+PART_CWD="/fake/part"; PART_SLUG="-fake-part"
+PART_CF="$(costfile_for "$PART_CWD" "$PART_SLUG" "$SID")"
+run_hook "$(payload "$PART_CWD" "$PART_TP" "$SID" aaaa1111 architect)"
+[ "$RC" -eq 0 ] && ok || no "partial fire exits 0"
+# The truncated sibling must NOT flip the session to unavailable.
+[ "$(jq -r '.status' "$PART_CF")" = "ok" ] && ok || no "partial sibling does NOT go sticky-unavailable"
+# The good sibling is still priced.
+[ "$(jq -r '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd' "$PART_CF")" = "0.061" ] && ok || no "good sibling still prices to 0.061 despite partial neighbor"
+# The partial sibling contributes NO entry this fire (picked up later once complete).
+[ "$(jq -r '.dispatches | has("9999pppp")' "$PART_CF")" = "false" ] && ok || no "partial sibling has no entry this fire"
+
+# Once the partial file finishes flushing (becomes valid), a LATER fire folds it in.
+GROWP="$SCRATCH/growpart"
+mkdir -p "$GROWP/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$GROWP/$SID.jsonl"
+cp "$FIXROOT/partial/$SID/subagents/agent-aaaa1111.jsonl" "$GROWP/$SID/subagents/"
+# The completed version of 9999pppp: the truncated tail is now a valid, newline-terminated line.
+printf '%s\n%s\n' \
+  '{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P1","uuid":"p1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_P1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}' \
+  '{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P2","uuid":"p2","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:01.000Z","message":{"model":"claude-opus-4-8","id":"msg_P2","type":"message","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}' \
+  > "$GROWP/$SID/subagents/agent-9999pppp.jsonl"
+GROWP_CF="$(costfile_for "$PART_CWD" "$PART_SLUG" "$SID")"
+run_hook "$(payload "$PART_CWD" "$GROWP/$SID.jsonl" "$SID" 9999pppp researcher)"
+[ "$(jq -r '.status' "$GROWP_CF")" = "ok" ] && ok || no "later fire stays ok after partial completes"
+[ "$(jq -r '.dispatches | has("9999pppp")' "$GROWP_CF")" = "true" ] && ok || no "completed partial IS folded in on later fire (self-heal)"
+# 9999pppp cost = P1 (100*5+10*25)/1e6=0.00075 + P2 (50*5+5*25)/1e6=0.000375 = 0.001125
+[ "$(jq -r '.dispatches."9999pppp".models."claude-opus-4-8".cost_usd' "$GROWP_CF")" = "0.001125" ] && ok || no "completed partial prices to 0.001125"
+
+# 0-byte sibling alongside a good one: skipped, good one still priced, not sticky.
+ZERO="$SCRATCH/zero"
+mkdir -p "$ZERO/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$ZERO/$SID.jsonl"
+cp "$FIXROOT/partial/$SID/subagents/agent-aaaa1111.jsonl" "$ZERO/$SID/subagents/"
+: > "$ZERO/$SID/subagents/agent-0000zzzz.jsonl"   # 0-byte sibling
+ZERO_CWD="/fake/zero"; ZERO_SLUG="-fake-zero"
+ZERO_CF="$(costfile_for "$ZERO_CWD" "$ZERO_SLUG" "$SID")"
+run_hook "$(payload "$ZERO_CWD" "$ZERO/$SID.jsonl" "$SID" aaaa1111 architect)"
+[ "$(jq -r '.status' "$ZERO_CF")" = "ok" ] && ok || no "0-byte sibling does NOT go sticky"
+[ "$(jq -r '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd' "$ZERO_CF")" = "0.061" ] && ok || no "0-byte sibling: good dispatch still priced"
+[ "$(jq -r '.dispatches | has("0000zzzz")' "$ZERO_CF")" = "false" ] && ok || no "0-byte sibling has no entry this fire"
+```
+
+- [ ] **Step 3: Run the test to verify it fails**
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: FAIL — the current hook whole-file-parses `agent-9999pppp.jsonl`, fails on the truncated tail, and calls `write_unavailable`, so `.status` is `"unavailable"` (not `"ok"`) and the good sibling is lost. The 0-byte case likewise fails recognition today.
+
+- [ ] **Step 4: Add the `is_transient_partial` helper and skip transient files in the scan loop**
+
+In `hooks/agent-team-cost.sh`, add this helper immediately BEFORE `parse_dispatch()` (after the `write_unavailable` / rates-load block):
+
+```bash
+# is_transient_partial FILE -> exit 0 if the file looks like it is still being
+# written (so it must be SKIPPED this fire and left for a later fire), exit 1
+# otherwise. Two transient signatures (Amendment 2026-07-09, spec Component 1
+# step 5): a 0-byte file; OR a non-empty file whose FINAL line fails to parse as
+# JSON while EVERY preceding line parses as a JSON object (the mid-write tail).
+# Any other parse failure is a genuine unrecognizable file (handled by
+# parse_dispatch -> write_unavailable), not transient.
+is_transient_partial() { # $1 file
+  local file="$1"
+  [ -s "$file" ] || return 0                      # 0-byte -> transient
+  # If the whole file already parses, it is not partial.
+  if jq -e . "$file" >/dev/null 2>&1; then return 1; fi
+  # File has a parse failure somewhere. Transient only if it is confined to an
+  # unterminated final line: all-but-last lines parse AND the last line does not.
+  local total head_ok last_ok
+  total="$(wc -l < "$file" | tr -d ' ')"          # count of NEWLINE chars
+  # An unterminated tail means the byte stream does not end in a newline; the
+  # "extra" trailing content is the (total+1)-th logical line. Validate the
+  # first $total physical lines as a group, then the trailing remainder alone.
+  head_ok=1; last_ok=1
+  if [ "$total" -gt 0 ]; then
+    head -n "$total" "$file" | jq -e . >/dev/null 2>&1 || head_ok=0
+  fi
+  # The trailing remainder after the last newline (empty if file ends in \n).
+  tail -c +"$(( $(head -n "$total" "$file" | wc -c) + 1 ))" "$file" | jq -e . >/dev/null 2>&1 || last_ok=0
+  # Transient iff the head parses cleanly and only the trailing remainder is bad.
+  [ "$head_ok" -eq 1 ] && [ "$last_ok" -eq 0 ] && return 0
+  return 1
+}
+```
+
+Then, in the scan loop, add the transient check as the FIRST thing inside the `for f` body, before the size read:
+
+```bash
+  for f in "$SUBAGENTS_DIR"/agent-*.jsonl; do
+    [ -e "$f" ] || continue
+    if is_transient_partial "$f"; then continue; fi   # still being written -> skip this fire
+    aid="$(basename "$f")"; aid="${aid#agent-}"; aid="${aid%.jsonl}"
+    size="$(wc -c < "$f" | tr -d ' ')"
+    ...
+```
+
+(Leave the rest of the loop body — the size-keyed reuse and `parse_dispatch` call — unchanged. A skipped file simply gets no entry this fire; a later fire, once the file is complete, runs the full path.)
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: all assertions pass, `failed=0`. The truncated and 0-byte siblings are skipped (no sticky), the good sibling prices to 0.061, and the completed-later fire folds `9999pppp` in at 0.001125.
+
+- [ ] **Step 6: Confirm a genuine mid-file corruption is STILL sticky (regression guard)**
+
+Important boundary note. The committed malformed fixture (`tests/fixtures/cost/malformed/.../agent-cccc3333.jsonl`) has a valid line 1, a bad line 2, AND a trailing newline. Under `is_transient_partial` that is NOT transient: `wc -l` counts 2 newlines, the `head -n 2` group includes the bad line so the head fails to parse (`head_ok=0`), and the function returns 1 → `parse_dispatch` → `write_unavailable`. So Task 6's malformed case (status unavailable) still holds unchanged — DO NOT "fix" it to sticky by hand; verify Task 6 still passes.
+
+Accepted ambiguity (spec §D7 Amendment 2026-07-09): an unterminated final bad line with NO trailing newline IS classified transient — that is the intended behavior, because it is indistinguishable from a mid-flush truncation and the trade is "missing, never wrong" (see the spec). Do not add code to disambiguate it; a truly corrupt no-newline tail that never completes is simply never counted.
+
+To make the still-sticky intent explicit for the unambiguous case, add one assertion that a bad line FOLLOWED by a good line still goes sticky:
+
+Add to `tests/test_cost_hook.sh`:
+
+```bash
+# A bad line in the MIDDLE (good line after it) is genuine corruption -> sticky.
+MIDBAD="$SCRATCH/midbad"
+mkdir -p "$MIDBAD/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$MIDBAD/$SID.jsonl"
+printf '%s\n%s\n%s\n' \
+  '{"type":"assistant","isSidechain":true,"agentId":"7777mmmm","message":{"model":"claude-opus-4-8","id":"m1","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}' \
+  'not json at all {{{' \
+  '{"type":"assistant","isSidechain":true,"agentId":"7777mmmm","message":{"model":"claude-opus-4-8","id":"m2","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}' \
+  > "$MIDBAD/$SID/subagents/agent-7777mmmm.jsonl"
+MIDBAD_CWD="/fake/midbad"; MIDBAD_SLUG="-fake-midbad"
+MIDBAD_CF="$(costfile_for "$MIDBAD_CWD" "$MIDBAD_SLUG" "$SID")"
+run_hook "$(payload "$MIDBAD_CWD" "$MIDBAD/$SID.jsonl" "$SID" 7777mmmm researcher)"
+[ "$(jq -r '.status' "$MIDBAD_CF")" = "unavailable" ] && ok || no "bad line in middle stays genuine -> unavailable"
+```
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: PASS — `is_transient_partial` returns 1 for this file (the bad line is not the sole trailing remainder; the head-of-file group including the bad middle line fails to parse), so `parse_dispatch` runs and `write_unavailable` fires as before.
+
+- [ ] **Step 7: Confirm the file stays under 300 lines**
+
+Run: `wc -l hooks/agent-team-cost.sh`
+Expected: under 300.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add hooks/agent-team-cost.sh tests/test_cost_hook.sh tests/fixtures/cost/partial
+git commit -m "fix: transient partial-read sibling is skipped, not sticky (self-heal)"
+```
+
+---
+
+## Task 15: Fix the `parse_dispatch` comment — stdout, not stderr (Amendment 2026-07-09, nit 1)
+
+The header comment on `parse_dispatch` says failures print the reason "on stderr". The code prints the reason on **stdout** (via `echo`), and the scan loop relies on capturing it there. The code is correct; only the comment is wrong.
+
+**Files:**
+- Modify: `hooks/agent-team-cost.sh`
+
+- [ ] **Step 1: Correct the comment**
+
+In `hooks/agent-team-cost.sh`, replace the `parse_dispatch` header comment phrase:
+
+```
+# stdout on success, or a one-line reason on stderr and a non-zero exit on any
+```
+with:
+```
+# stdout on success, or a one-line reason on stdout and a non-zero exit on any
+```
+
+(No code change. The scan loop captures the reason via `entry="$(parse_dispatch …)"`, which reads stdout — the existing behavior is correct.)
+
+- [ ] **Step 2: Verify the suite still passes (comment-only change)**
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: `failed=0` — behavior unchanged.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add hooks/agent-team-cost.sh
+git commit -m "docs: correct parse_dispatch comment (reason prints on stdout)"
+```
+
+---
+
+## Task 16: Installer rate-precision guard + UUID session_id check (Amendment 2026-07-09, nits 2 & 3)
+
+Two defense-in-depth additions: fail the installer if any rate carries more than 4 fractional decimal digits (protects the `nofloat` 10-decimal snap), and reject a non-UUID `session_id` in the hook before building the cost-file path.
+
+**Files:**
+- Modify: `install.sh`
+- Modify: `hooks/agent-team-cost.sh`
+- Modify: `tests/test_cost_hook.sh`
+
+**Interfaces:**
+- Produces (hook): a UUID-shape guard on `session_id` — non-UUID ⇒ write nothing, exit 0.
+- Produces (installer): the existing `jq -e` rate-shape check is extended with a fractional-digit bound.
+
+- [ ] **Step 1: Write the failing test — non-UUID session_id writes nothing**
+
+Add to `tests/test_cost_hook.sh`:
+
+```bash
+# --- Task 16: non-UUID session_id is rejected (path confinement) ---
+BADSID_CWD="/fake/badsid"; BADSID_SLUG="-fake-badsid"
+BADSID="../../etc/evil"                       # not a UUID; would escape the dir
+BADSID_CF="$AGENT_TEAM_COST_DIR/$BADSID_SLUG--$BADSID.json"
+run_hook "$(payload "$BADSID_CWD" "$GOOD_TP" "$BADSID" aaaa1111 architect)"
+[ "$RC" -eq 0 ] && ok || no "non-UUID session_id exits 0"
+[ ! -f "$BADSID_CF" ] && ok || no "non-UUID session_id writes nothing"
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: FAIL — the current hook builds the path from any non-empty `session_id` and writes a file.
+
+- [ ] **Step 3: Add the UUID guard to the hook**
+
+In `hooks/agent-team-cost.sh`, immediately after the existing `[ -n "$TRANSCRIPT" ] || exit 0` line, add:
+
+```bash
+# Path-confinement defense (Amendment 2026-07-09): session_id must be a UUID
+# before it is used to build the cost-file name. Claude Code always supplies one.
+case "$SESSION_ID" in
+  [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) : ;;
+  *) exit 0 ;;
+esac
+```
+
+(A `case` glob is used rather than a regex to avoid a `[[ =~ ]]` bashism dependency; the pattern is the exact 8-4-4-4-12 hex UUID shape. It runs before `COST_FILE` is constructed.)
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: `failed=0` — the non-UUID payload now exits 0 and writes nothing; the existing fixtures all use the valid UUID `11111111-2222-3333-4444-555555555555` and still pass.
+
+- [ ] **Step 5: Extend the installer rate-shape check with a fractional-digit bound**
+
+In `install.sh`, replace the existing rate-shape check (the `jq -e '[.models[] | [.input,...] | all(type=="number")] | all'` block, currently at lines 33–35) with a version that also bounds fractional precision. Include the `intro` rates in the scan:
+
+```bash
+jq -e '
+  def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
+  def entries: [ .models[], ( .models[].intro | select(. != null) ) ];
+  ([ entries[] | rates[] | type == "number" ] | all)
+  and
+  # No rate may carry more than 4 fractional decimal digits: r*10000 must be an
+  # integer. Protects the hook nofloat 10-decimal snap invariant.
+  ([ entries[] | rates[] | (. * 10000) | (. == (. | floor)) ] | all)
+' "$REPO/hooks/model-rates.json" >/dev/null \
+  || fail "model-rates.json: every model needs five numeric rate keys, each with at most 4 fractional decimal digits"
+```
+
+- [ ] **Step 6: Verify the installer accepts the current rates and rejects an over-precise one**
+
+Run:
+```bash
+bash -n install.sh
+jq -e '
+  def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
+  def entries: [ .models[], ( .models[].intro | select(. != null) ) ];
+  ([ entries[] | rates[] | type == "number" ] | all)
+  and ([ entries[] | rates[] | (. * 10000) | (. == (. | floor)) ] | all)
+' hooks/model-rates.json
+```
+Expected: `bash -n` clean; the jq check prints `true` (all current rates have ≤2 decimals). To confirm the guard bites, run the same jq program against a temporary over-precise value:
+```bash
+jq '.models."claude-opus-4-8".input = 5.12345' hooks/model-rates.json | jq -e '
+  def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
+  def entries: [ .models[], ( .models[].intro | select(. != null) ) ];
+  ([ entries[] | rates[] | (. * 10000) | (. == (. | floor)) ] | all)'
+```
+Expected: prints `false` (5-decimal rate rejected). This is a manual confirmation, not a committed fixture — do not write the over-precise value to any file.
+
+- [ ] **Step 7: Run the installer end-to-end**
+
+Run: `bash install.sh && bash install.sh --check`
+Expected: `install: OK — ...` then `check: OK — ...`; both test suites pass inside the validation gate.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add install.sh hooks/agent-team-cost.sh tests/test_cost_hook.sh
+git commit -m "feat: installer rate-precision guard + UUID session_id path confinement"
+```
+
+---
+
+## Task 17: Full acceptance run for the amendment
+
+**Files:** none created — verification only.
+
+- [ ] **Step 1: Run the cost-hook suite**
+
+Run: `bash tests/test_cost_hook.sh`
+Expected: `failed=0`, exit 0 — including the new Task 14 (transient skip + self-heal + 0-byte + mid-file-corruption-still-sticky) and Task 16 (non-UUID rejected) cases.
+
+- [ ] **Step 2: Run the policy suite (regression)**
+
+Run: `bash tests/test_policy_hooks.sh`
+Expected: `failed=0`, exit 0 — untouched.
+
+- [ ] **Step 3: Run the installer end-to-end**
+
+Run: `bash install.sh && bash install.sh --check`
+Expected: `install: OK — ...` then `check: OK — ...`.
+
+- [ ] **Step 4: Confirm no file exceeds 300 lines and no deletion/move was authored in the hook**
+
+Run:
+```bash
+wc -l hooks/agent-team-cost.sh tests/test_cost_hook.sh
+grep -nE '(^|[^-])\b(rm|mv)\b' hooks/agent-team-cost.sh || echo "cost hook: no rm/mv (expected)"
+```
+Expected: both files under 300 lines; the cost hook contains no `rm`/`mv`. (The test file creates scratch fixtures with `printf`/`cp`/`mkdir` only — no deletion of committed files.)
+
+- [ ] **Step 5: Final commit if anything changed during acceptance**
+
+```bash
+git status
+git add -A && git commit -m "chore: acceptance run for cost-accounting self-heal amendment" || true
+```
+
+---
+
 ## Self-Review
 
 **1. Spec coverage.**
@@ -1166,3 +1546,18 @@ git add -A && git commit -m "chore: acceptance run for exact cost accounting"
 **3. Type consistency.** Cost-file key names are identical everywhere: `input_tokens`, `output_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens`, `cache_read_tokens`, `cost_usd`, `file_size`, `requests`, `agent_type`, `web_search_requests`, `web_fetch_requests`, `status`, `unavailable_reason`, `dispatches`, `totals`. `parse_dispatch`, `write_unavailable`, `run_hook`, `payload`, `costfile_for` are used consistently. Env vars `AGENT_TEAM_COST_DIR` / `AGENT_TEAM_RATES` match spec Component 1. Slug rule (`/`→`-`) is identical in hook, tests, orchestrator, and README.
 
 Resolved during planning: the malformed-line detection uses `jq -e . "$file"` (whole-file parse fails on any non-JSON line) rather than a per-line loop, which is simpler and matches recognition rule 5a. The good-fixture token values were chosen so every per-model and grand cost is exact at four decimals (0.061, 0.0555, 0.1165), so `jq`'s float printing yields clean equality without a rounding-tolerance helper in the tests.
+
+---
+
+### Self-Review addendum — Amendment 2026-07-09 (Tasks 14–17)
+
+**Spec coverage of the amendment.**
+- §D7 / Component 1 step 5 two-mode behavior (transient-skip vs sticky-unavailable) → Task 14: the `is_transient_partial` helper (0-byte OR unterminated final line with valid head) skips the file this fire; every other parse failure still routes to `write_unavailable`. Task 14 Step 6 pins the "genuine mid-file corruption stays sticky" boundary so the fix does not silently loosen the never-a-wrong-number guarantee.
+- Self-heal now demonstrably true → Task 14 Step 2's later-fire assertion (`9999pppp` absent this fire, folded in at 0.001125 once complete).
+- Nit 1 (stdout comment) → Task 15, comment-only.
+- Nit 2 (rate-precision guard) → Task 16 Steps 5–6, extending the installer's existing `jq -e` rate-shape check to bound fractional digits (r*10000 must be integer), intro rates included.
+- Nit 3 (UUID session_id path confinement) → Task 16 Steps 1–4, a `case`-glob guard before the cost-file path is built, with a `../../etc/evil` negative test.
+
+**Constraint check.** No new packages (bash + jq only). No `rm`/`mv` authored in hook or tests — Task 14/16 fixtures use `printf`/`cp`/`mkdir`/`:` truncation into scratch dirs only; committed fixtures are created via Write, never deleted. `is_transient_partial` uses `head`/`tail`/`wc` (coreutils, already relied on). The UUID guard uses a `case` glob, not a `[[ =~ ]]` bashism. Files stay under 300 lines (Task 14 Step 7, Task 17 Step 4). No numbers added to the script; the precision bound lives in `install.sh`, and rate values stay only in `model-rates.json`.
+
+**Boundary the fix must NOT cross (data-integrity guarantee kept).** The amendment narrows the sticky-unavailable trigger, so it must not let a genuinely corrupt file slip through as "ok". The discriminator is deliberately conservative: a parse failure is treated as transient ONLY when it is confined to a single unterminated trailing remainder with an otherwise-clean head — the exact and only signature a mid-flush write can produce. Anything else (bad line with good lines after it, shape/dedup/split/model-rate violations) remains sticky-unavailable. Task 14 Step 6 is the regression guard for this line.

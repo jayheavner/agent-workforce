@@ -2,6 +2,21 @@
 
 **Date:** 2026-07-08
 **Status:** Accepted 2026-07-08; implemented per docs/superpowers/plans/2026-07-08-exact-closeout-cost-accounting.md
+
+> **Amendment 2026-07-09 (partial-read self-heal fix).** Code review found a contradiction between
+> D7's promised self-heal and the implemented behavior. The hook re-scans the WHOLE subagents
+> directory every fire and treats ANY sibling file that fails to parse as a hard recognition
+> failure — writing the sticky `"unavailable"` marker. Combined with the sticky early-return, that
+> means a single sibling dispatch file caught mid-write (a truncated, not-yet-newline-terminated
+> final line, or a still-empty 0-byte file) permanently pins the whole session to `"unavailable"`
+> and forces the estimate fallback — defeating the feature in exactly the concurrent/lagging case
+> D7 says self-heal covers. The fix (specified in §D7 and Component 1 step 5 below, marked
+> "Amendment 2026-07-09") DISTINGUISHES two failure modes at the point a sibling file fails to
+> parse: a genuinely unrecognizable-but-complete file stays sticky-unavailable (unchanged); a
+> file that is plausibly still being written is SKIPPED this fire and left for a later fire to
+> pick up once flushing completes. This amendment also folds in three review nits, noted inline in
+> Components 1, 5, and 6. No redesign; the two-path fallback, dedup, pricing, and schema are
+> unchanged.
 **Relation to existing spec:** This ships the follow-on that `2026-07-07-ai-agent-team-design.md`
 §Scope explicitly deferred: "exact per-session cost accounting (a transcript-parsing PostToolUse
 hook summing per-request input/output/cache usage — the closeout's estimate table is the shipped
@@ -151,11 +166,27 @@ which is acceptance criterion 3.
 
 The hooks doc warns the transcript file may lag the in-memory conversation when a hook fires.
 For this design the exposure is small — the hook reads per-dispatch files that were finished
-before the *current* dispatch's completion event — but the last-completed dispatch's own file
-could in principle still be flushing. Mitigations: (a) every fire re-scans **all** dispatch
-files and re-sums any whose byte size changed, so any later fire self-heals earlier partial
-reads; (b) in the standard route a scribe status-note dispatch follows the last work dispatch
-before the final gate, providing that later fire in practice. Documented as a known limitation.
+before the *current* dispatch's completion event — but a sibling dispatch file (or the
+last-completed dispatch's own file) could in principle still be flushing when a fire scans the
+whole directory. Mitigations: (a) every fire re-scans **all** dispatch files and re-sums any
+whose byte size changed; (b) in the standard route a scribe status-note dispatch follows the last
+work dispatch before the final gate, providing a later fire in practice.
+
+> **Amendment 2026-07-09 — self-heal now actually works.** The original text claimed "any later
+> fire self-heals earlier partial reads." That was only true if the partial read did not trip the
+> sticky marker — but it did: the whole-file `jq -e .` parse fails on a truncated final line, the
+> hook wrote sticky `"unavailable"`, and the sticky early-return then blocked every later fire from
+> ever re-scanning. A transient timing artifact permanently pinned the session. Correction: the
+> hook now DISTINGUISHES a **transient partial read** from a **genuine unrecognizable file** (see
+> Component 1 step 5, Amendment 2026-07-09) and, for the transient case, SKIPS that one file this
+> fire WITHOUT writing the sticky marker — so a later fire, once the file has finished flushing,
+> picks it up and prices it. Discriminator: a **0-byte file**, OR a file whose **final line is not
+> newline-terminated / does not parse as JSON while every preceding line parses**, is treated as
+> "still being written" → skip this fire, leave for later. Any other parse failure (a fully-written
+> non-JSON line anywhere but the unterminated tail, a shape/dedup/split violation, a model absent
+> from rates) remains a genuine unrecognizable file → sticky `"unavailable"`, as before. With this
+> fix the self-heal claim is true: the good dispatches price correctly now, and the transient file
+> is folded in on the next fire.
 
 ### D8. Rates (list prices, verified against the claude-api reference, cached 2026-06-24/07)
 
@@ -210,6 +241,13 @@ Behavior per fire (always exits 0, whatever happens):
 1. Slurp stdin; extract `session_id`, `transcript_path`, `cwd`, `tool_response.agentId`,
    `tool_response.agentType` via jq. Missing `session_id` or `transcript_path` → write nothing,
    exit 0 (cannot even locate a cost file safely).
+
+   > **Amendment 2026-07-09 (nit 3 — path-confinement defense).** Before constructing the cost-file
+   > path, sanity-check `session_id` against the UUID shape
+   > (`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`). A
+   > `session_id` that does not match ⇒ write nothing, exit 0 (defense-in-depth against a
+   > path-traversal or unexpected value slipping into the filename; Claude Code always supplies a
+   > UUID here). This is in addition to the existing non-empty check.
 2. Resolve paths. Subagents dir = `transcript_path` with the trailing `.jsonl` removed, plus
    `/subagents`. Cost file = `$AGENT_TEAM_COST_DIR/<cwd-slug>--<session_id>.json`, where
    `AGENT_TEAM_COST_DIR` defaults to `$HOME/.claude/logs/agent-team-cost` (env override exists
@@ -226,9 +264,38 @@ Behavior per fire (always exits 0, whatever happens):
    not addition, makes every fire idempotent and self-healing (D7). A missing subagents
    directory with no prior entries is a valid empty state, not an error.
 5. Parse one dispatch file (all in jq, one pass per file):
+
+   > **Amendment 2026-07-09 — transient-partial pre-check (runs BEFORE recognition below).**
+   > Before applying the recognition rules, classify the file:
+   > - **0-byte file** ⇒ transient (still being created) ⇒ **SKIP this file this fire**: do not
+   >   count it, do not write the sticky marker, leave no entry for it. A later fire picks it up.
+   > - **Non-empty file whose FINAL line fails to parse as JSON while every PRECEDING line parses
+   >   as a JSON object** (the signature of a mid-write, not-yet-newline-terminated tail) ⇒
+   >   transient ⇒ **SKIP this file this fire** (same as above).
+   > - **Any other parse failure** — a non-JSON line that is NOT the sole unterminated tail (e.g. a
+   >   fully-written garbage line with valid lines after it), or all recognition failures b–e below
+   >   ⇒ **genuine unrecognizable file** ⇒ sticky unavailable marker, exit 0 (unchanged behavior).
+   >
+   > Rationale: a file being flushed can only ever have its incompleteness at the tail; a defect in
+   > the middle with good lines after it means the writer already moved past that point, so it is a
+   > real corruption, not a timing artifact. Skipping (not marking) the transient case is what makes
+   > the D7 self-heal promise true — see §D7 Amendment 2026-07-09.
+   >
+   > **Accepted ambiguity (derivable trade, not a wrong number).** An unterminated final bad line is
+   > indistinguishable from a mid-flush truncation — both present as "valid head, unparseable
+   > trailing remainder." This discriminator deliberately resolves that ambiguity toward *transient*
+   > (skip and retry) rather than *sticky*. The safety argument holds either way: if the tail was a
+   > real, permanent corruption that never completes, that one dispatch is simply **never counted** —
+   > a *missing* figure, never a *wrong* one — and the exact table it feeds is only ever emitted at
+   > the final gate after the writing dispatch has completed (by which point a genuine record is
+   > newline-terminated and parses, while a truly corrupt tail stays skipped). The never-a-wrong-number
+   > invariant is preserved; only the "one bad tail poisons the whole session" over-reach is removed.
+   > A corruption anywhere but the sole unterminated tail is unambiguous and still goes sticky.
+
    - Format recognition — ALL of the following, else the whole cost file is rewritten as the
      unavailable marker (see below) and the hook exits 0:
-     a. every line parses as a JSON object;
+     a. every line parses as a JSON object (subject to the transient pre-check above: a sole
+        unterminated final line does not trip this rule — it triggers the skip);
      b. every record with `.type == "assistant"` and non-null `.message.usage` has a string
         `.message.id`, a non-empty string `.message.model`, and numeric
         `.usage.input_tokens`, `.usage.cache_creation_input_tokens`,
@@ -259,8 +326,14 @@ Behavior per fire (always exits 0, whatever happens):
    no-move discipline applies, and a single-shot write of a small file is sufficient; the
    orchestrator treats an unparseable file as absent).
 
-**Unavailable-marker semantics.** On any recognition failure (step 5a–e), on an unreadable
-rates file, or on any internal jq error, the hook writes the cost file as:
+> **Amendment 2026-07-09 (nit 1 — comment accuracy).** The implemented `parse_dispatch` header
+> comment says failures print the reason "on stderr"; the code actually prints the reason on
+> **stdout**, and the scan loop relies on capturing it there (`entry="$(parse_dispatch …)"`). The
+> code is correct; the comment is wrong. Fix the comment to say stdout — do not change the code.
+
+**Unavailable-marker semantics.** On any recognition failure (step 5a–e, excluding the
+transient-partial cases which are skipped not marked — Amendment 2026-07-09 above), on an
+unreadable rates file, or on any internal jq error, the hook writes the cost file as:
 
 ```json
 {"version": 1, "session_id": "…", "cwd": "…", "updated_at": "…",
@@ -415,6 +488,15 @@ policy-hook files:
   `jq empty hooks/model-rates.json` **and** a shape check that every entry under `.models` has
   the five numeric rate keys (loud failure beats a silently unpriceable rates file);
   `bash tests/test_cost_hook.sh >/dev/null` alongside the policy tests.
+
+  > **Amendment 2026-07-09 (nit 2 — rate-precision guard).** Extend the shape check so it also
+  > fails loudly if any rate value under `.models` (including the `intro` block) has **more than 4
+  > fractional decimal digits**. This protects the hook's `nofloat` 10-decimal snap invariant,
+  > which is only safe today because every list rate has ≤2 decimals; a future rate like
+  > `2.123456789` could push a computed cost past the point where the 10-decimal snap removes only
+  > IEEE-754 artifact noise. A rate carrying >4 fractional digits is almost certainly a typo, so
+  > failing the installer is the right loud response. The guard belongs with the existing
+  > `jq -e` rate-shape check; add/adjust an installer-check test if the test pattern covers it.
 - Backup/restore/cleanup-fresh handling for `~/.claude/hooks/agent-team-cost.sh` and
   `~/.claude/hooks/model-rates.json`, mirroring `PREEXISTING_POLICY*`.
 - Install: copy both; `chmod +x` the script (the rates file is only read). `mkdir -p` of
