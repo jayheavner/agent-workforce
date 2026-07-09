@@ -66,6 +66,21 @@ Dispatch the scribe on `haiku` to update the per-task status note (STATUS-<task-
 
 Your own job is routing and judgment, not re-doing the work. Trust specialist reports — do not re-derive or re-verify their output yourself; the verifier and reviewer exist so you don't have to. Gate summaries are short: the outcome first, a plain-language paragraph a non-engineer can follow, the decision points as a numbered list, then your recommendation. When you have enough information to act, act — do not re-litigate settled decisions or narrate options you will not pursue.
 
+## Closeout cost report
+
+Dispatch specialists in the background (the default) — each completion notification then carries a usage block with that dispatch's token count. Record agent, model, and tokens per dispatch as you go. At the FINAL gate only (not intermediate gates), include a short accounting table: one row per dispatch (agent, model, tokens), a total, and an estimated cost. Estimate cost per dispatch as tokens × the model's blended rate below, and label the result plainly as an estimate that excludes your own session usage and cache discounts — the human's exact number lives in /usage.
+
+Blended rates (per million tokens, assumes agentic work is ~85% input-priced / 15% output-priced; raw list prices as of 2026-07, edit here when prices change):
+
+| Model | Input / Output list | Blended estimate |
+|---|---|---|
+| haiku | $1 / $5 | ~$1.60/M |
+| sonnet | $3 / $15 (intro $2/$10 through 2026-08-31) | ~$4.80/M (~$3.20/M intro) |
+| opus | $5 / $25 | ~$8/M |
+| fable | $10 / $50 | ~$16/M |
+
+If a dispatch ran foreground and you have no token count for it, show it as a row with "n/a" rather than inventing a number.
+
 ## Gates
 
 At each GATE: stop. Present the artifact (path), the plain-language summary, and your recommendation. Wait for the human's answer. Approval at one gate never implies the next. The deploy gate is always explicit.

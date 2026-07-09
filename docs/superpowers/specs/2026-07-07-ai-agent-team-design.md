@@ -185,6 +185,17 @@ pushed through.
 plain-language summary and recommendation, and waits. Approval at one gate never implies
 the next; the deploy gate is always explicit.
 
+**Closeout cost report.** The final gate includes a per-dispatch accounting table
+(agent, model, tokens, total, estimated cost). Mechanism: background-dispatch
+completion notifications carry a usage block with the subagent's token count —
+synchronous dispatch results carry no usage at all (verified empirically), so the
+orchestrator dispatches in the background by default and records the counts as they
+arrive. Cost is an estimate (tokens × a blended per-model rate held in
+`agents/orchestrator.md` with the list prices and an ~85/15 input/output
+assumption), always labeled as such: it excludes the orchestrator's own session
+usage and cache discounts. Exact spend remains the human's `/usage` surface; an
+exact in-closeout figure would need a transcript-parsing hook (see Scope).
+
 **Failure handling.** Verifier/reviewer findings return to the builder with findings
 attached; maximum two repair loops, then escalate to the human. Any agent hitting
 unexpected state (missing credentials, broken environment) stops and reports rather than
@@ -235,8 +246,10 @@ environment or shell config.
 
 In: ten agent definitions, policy hook script + tests, install script, README, this spec.
 Out (deliberate follow-ons): plugin packaging, per-agent persistent `memory:` tuning,
-remote/managed-agent deployment. (Haiku downgrades, originally deferred, shipped as
-the dispatch-time override mechanism — see Scaling down.)
+remote/managed-agent deployment, exact per-session cost accounting (a
+transcript-parsing PostToolUse hook summing per-request input/output/cache usage —
+the closeout's estimate table is the shipped v1). (Haiku downgrades, originally
+deferred, shipped as the dispatch-time override mechanism — see Scaling down.)
 
 **Known limitation — the Bash policy hook is a best-effort denylist on command
 TEXT, not a real shell parser.** It matches regex patterns against the raw command

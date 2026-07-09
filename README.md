@@ -107,7 +107,10 @@ gate before anything goes outward-facing (a filed ticket, a sent report, a cloud
 
 At each gate, the orchestrator stops, presents the artifact it produced (a spec, a plan, a
 diff, a deploy plan) together with a plain-language summary and its own recommendation, and
-waits for you. You have three options at any gate:
+waits for you. The final gate additionally includes a per-dispatch accounting table — which
+agent ran on which model with how many tokens, plus an estimated cost clearly labeled as an
+estimate (it excludes the orchestrator's own session usage and cache discounts; your exact
+number is always `/usage`). You have three options at any gate:
 
 - **Approve** — tell the orchestrator to continue; it dispatches the next phase. Approving one
   gate never implies approval of the next gate; the deploy gate in particular always requires
