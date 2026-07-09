@@ -54,11 +54,11 @@ bash install.sh
 Nothing is copied anywhere until every validation check below passes:
 
 - `jq` is present on the machine (the policy hook depends on it to parse tool-call JSON).
-- All three hook files — `hooks/agent-team-policy.sh` (the entry point),
-  `hooks/agent-team-policy-lib.sh` (the shared helpers and per-role policy functions it
-  sources), and `hooks/agent-team-policy-mutations.sh` (the raw-shell-mutation blocklist that
-  the lib file in turn sources) — pass `bash -n` syntax checks.
-- The full policy test suite (`tests/test_policy_hooks.sh`) passes.
+- All hook scripts — the three policy files plus `hooks/agent-team-cost.sh` (the PostToolUse
+  cost-accounting hook) — pass `bash -n` syntax checks, and `hooks/model-rates.json` parses as
+  JSON with the five numeric rate keys on every model.
+- The full policy test suite (`tests/test_policy_hooks.sh`) and the cost-hook test suite
+  (`tests/test_cost_hook.sh`) both pass.
 - Every agent file under `agents/` has YAML frontmatter with the required keys (`name`,
   `description`, `model`), and the `model` value is one of the three pinned team models
   (`claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-5`) — an unpinned or unrecognized model
@@ -109,10 +109,15 @@ gate before anything goes outward-facing (a filed ticket, a sent report, a cloud
 
 At each gate, the orchestrator stops, presents the artifact it produced (a spec, a plan, a
 diff, a deploy plan) together with a plain-language summary and its own recommendation, and
-waits for you. The final gate additionally includes a per-dispatch accounting table — which
-agent ran on which model with how many tokens, plus an estimated cost clearly labeled as an
-estimate (it excludes the orchestrator's own session usage and cache discounts; your exact
-number is always `/usage`). You have three options at any gate:
+waits for you. At the final gate, the orchestrator reports cost. When the per-session cost file
+produced by the cost-accounting hook is present and valid, it reports the EXACT
+per-model figures — input, output, cache-write, and cache-read tokens with cost
+rounded to the cent — read straight from the session transcripts and priced at
+list rates from `hooks/model-rates.json`. When that file is absent or the hook
+marked it unavailable, it falls back to a blended per-dispatch ESTIMATE clearly
+labeled as such. Either way the number excludes the orchestrator's own session
+usage; your exact session-wide number is always `/usage`. Nonzero web-search or
+web-fetch server-tool calls are counted and footnoted, not priced. You have three options at any gate:
 
 - **Approve** — tell the orchestrator to continue; it dispatches the next phase. Approving one
   gate never implies approval of the next gate; the deploy gate in particular always requires
@@ -206,6 +211,25 @@ archive/compression tools, in-place sed, package management, subshell/process-su
 syntax, and the eval/interpreter escape hatches). If you need to change what a role is allowed
 to do, the per-role function you want is in the library file; if you need to change what raw
 shell primitive is blocked for everyone, it is in the mutations file. Neither is the entry point.
+
+## Cost accounting
+
+The orchestrator registers a `PostToolUse` hook, `hooks/agent-team-cost.sh`, that
+fires after each dispatch completes. It reads exact per-request token usage from
+the session's per-dispatch transcript files and writes a per-session cost file to
+`~/.claude/logs/agent-team-cost/<project-slug>--<session-id>.json` (override the
+directory with `AGENT_TEAM_COST_DIR`, and the rates file with `AGENT_TEAM_RATES`,
+mainly for tests). Prices come only from `hooks/model-rates.json` — all list
+prices per million tokens; the script contains no numbers. To change a rate, edit
+that file and re-run `bash install.sh`.
+
+The hook never emits a wrong number: if it cannot recognize a transcript's format,
+or sees a model missing from the rates file, it writes a sticky "unavailable"
+marker for that session and the orchestrator falls back to its blended estimate.
+Cache-write is split into 5-minute and 1-hour tiers (they price differently);
+server web-search/web-fetch calls are counted but not priced. Known limitation:
+two orchestrator sessions running in the same directory at once share the cost-file
+name pattern, and the most recently modified file wins.
 
 ## Shakedown checklist
 
