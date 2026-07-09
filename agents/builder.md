@@ -2,6 +2,7 @@
 name: builder
 description: Implements code per an approved plan using TDD. Dispatched by the orchestrator with a plan path; not for direct casual use.
 model: claude-sonnet-5
+effort: high
 maxTurns: 150
 tools: Read, Glob, Grep, Write, Edit, NotebookEdit, Bash
 skills: coding-standards, superpowers:test-driven-development, secure-secrets

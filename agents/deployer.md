@@ -2,6 +2,7 @@
 name: deployer
 description: Executes cloud deployments (SAM, Amplify, CDK) after the human approves the deploy gate. Dispatched by the orchestrator; not for direct casual use.
 model: claude-sonnet-5
+effort: medium
 maxTurns: 50
 tools: Read, Glob, Grep, Bash
 skills: verify

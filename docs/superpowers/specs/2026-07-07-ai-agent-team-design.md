@@ -24,18 +24,18 @@ into `~/.claude/`; nothing is edited in place there.
 
 ## Roster
 
-| Agent | Model | Role | Mutation rights |
-|---|---|---|---|
-| orchestrator | `claude-fable-5` | Decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
-| architect | `claude-fable-5` | Brainstorm, design, spec, plan | Docs only (specs/plans) |
-| builder | `claude-sonnet-5` | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
-| verifier | `claude-sonnet-5` | Run tests and acceptance checks | None (read + run) |
-| reviewer | `claude-opus-4-8` | Code and security review | None (read only) |
-| deployer | `claude-sonnet-5` | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
-| researcher | `claude-sonnet-5` | Web, Glean, codebase investigation | None |
-| ops | `claude-sonnet-5` | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
-| scribe | `claude-sonnet-5` | Reports, briefs, requirements, postmortems | Docs only |
-| ticketer | `claude-sonnet-5` | Asana write/review/track | Asana via MCP; gated before filing |
+| Agent | Default model | Effort | Role | Mutation rights |
+|---|---|---|---|---|
+| orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
+| architect | `claude-fable-5` | high | Design, spec, plan — frontier reasoning lives here | Docs only (specs/plans) |
+| builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
+| verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
+| reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
+| deployer | `claude-sonnet-5` | medium | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
+| researcher | `claude-sonnet-5` | — | Web, Glean, codebase investigation | None |
+| ops | `claude-sonnet-5` | high | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
+| scribe | `claude-sonnet-5` | — | Reports, briefs, requirements, postmortems, status notes | Docs only |
+| ticketer | `claude-sonnet-5` | — | Asana write/review/track | Asana via MCP; gated before filing |
 
 Model IDs are pinned as full IDs deliberately: model updates are deliberate edits to
 this repo (re-run install), never automatic. `install.sh` warns if the
@@ -44,15 +44,54 @@ every pin in this table.
 
 Model policy: assignments follow `~/.claude/skills/model-picker/approved-models.yaml`
 (`dispatchable_tiers`: frontier = Fable 5 / Opus 4.8; budget = Sonnet 5 / Haiku 4.5).
-Ambiguous or hard-to-check work gets frontier (orchestrator, architect, reviewer);
-structured, reviewable work gets budget. The reviewer deliberately runs a different
-model (Opus) than the builder (Sonnet) so review is not the builder's model grading its
-own output. Haiku is used nowhere in v1; verifier and ticketer are the downgrade
-candidates if cost becomes a concern.
+Ambiguous or hard-to-check work gets frontier; structured, reviewable work gets budget.
+Frontier reasoning is concentrated in the **architect** (Fable 5), the one role whose
+output quality most depends on it. The **orchestrator runs Opus 4.8, not Fable** —
+its work (triage, routing, gate summaries) is structured judgment over specialist
+reports, and the first shakedown proved Fable at default effort catastrophically
+mismatched to it: single orchestrator turns showed 11m and 19m deliberation
+stretches, and the run exhausted the org's monthly spend limit on a trivial CLI
+tool. Opus 4.8 is state-of-the-art at exactly this long-horizon agentic
+coordination, at half Fable's per-token price. The reviewer deliberately runs a
+different model (Opus) than the builder (Sonnet) so review is not the builder's
+model grading its own output.
+
+**Effort** is the reasoning-depth control (`low`/`medium`/`high`/`xhigh`/`max`),
+set per agent in frontmatter. `high` is the sweet spot for judgment work
+(orchestrator, architect, builder, reviewer, ops); `xhigh` is deliberately avoided —
+Fable/Opus at `high` already exceed prior-generation `xhigh`, and the shakedown's
+overthink pattern (a 10-minute, 114k-token plan amendment) is exactly what `xhigh`
+on routine work produces. The deployer runs `medium`: its work is procedural
+(execute recorded commands, capture evidence, roll back on failure), spelled out in
+its prompt. Four agents — verifier, researcher, scribe, ticketer — deliberately set
+**no effort field**: they are the roles the orchestrator may downshift to Haiku 4.5
+per dispatch, and Haiku rejects the effort parameter at the API level (Claude Code's
+handling of a frontmatter effort combined with a Haiku override is undocumented, so
+the pins are omitted rather than gambling a mid-pipeline dispatch failure on it).
+They inherit the session's effort instead.
+
+### Scaling down — dispatch-time model overrides, not duplicate agents
+
+Each agent's frontmatter pins its **default**; the orchestrator's Agent tool carries
+a per-invocation `model` parameter that overrides the pin (documented resolution
+order: `CLAUDE_CODE_SUBAGENT_MODEL` env var > per-invocation parameter > frontmatter
+> session model). This is the scale-down mechanism: one definition per role, tiered
+per task by the orchestrator, which states its picks at triage so the human sees the
+cost/depth plan up front. Effort has no per-invocation override — depth within a
+dispatch is steered by the model tier plus explicit scope in the dispatch prompt.
+The override table (who shifts where, and when) lives in `agents/orchestrator.md`.
+An earlier fix attempt (`architect-lite`, a duplicate agent pinned to Opus) is
+superseded by this mechanism and was removed: it fixed one role by file duplication,
+couldn't generalize to ten roles, and split the architect's identity in two. What it
+got right is preserved differently — the architect now preloads only
+`superpowers:writing-plans` and invokes `superpowers:brainstorming`, `plan-review`,
+and `ux-to-ui-design` situationally via the Skill tool (a UI skill is never again
+loaded for a tool with no UI), and its prompt scales artifact size to the tier the
+orchestrator declares in the dispatch.
 
 ### Skill preloads (frontmatter `skills:`)
 
-- architect: `superpowers:brainstorming`, `superpowers:writing-plans`, `plan-review`, `ux-to-ui-design`
+- architect: `superpowers:writing-plans` (always); invokes `superpowers:brainstorming`, `plan-review`, and `ux-to-ui-design` situationally via the Skill tool per task tier — see Scaling down above
 - builder: `coding-standards`, `superpowers:test-driven-development`, `secure-secrets`
 - verifier: `superpowers:verification-before-completion`, `task-verification`
 - reviewer: `code-review`
@@ -123,10 +162,22 @@ dispatched subagent returns only a final result. Running main-session also makes
 `Agent(role)` allowlist in its frontmatter enforceable. Its `description:` is written
 narrowly so ordinary sessions never auto-delegate to it; the team is opt-in per task.
 
+**Triage.** Before the first dispatch, the orchestrator classifies the task —
+ambiguity, novelty, blast radius, size — into a tier and states the tier, route, and
+per-dispatch model picks in one paragraph the human can override. **Small** (clear
+requirements, established pattern, contained blast radius): one architect dispatch
+on Opus producing a short combined spec+plan, one gate, then build → verify → review
+→ final gate. **Standard**: the full route below with separate spec and plan gates.
+**Large/high-risk**: full route plus a researcher pre-phase for open factual
+questions, architect told to go deep, reviewer optionally upshifted to Fable for
+security-critical surfaces. Mis-triage is corrected by re-tiering mid-task, not
+pushed through.
+
 **Routes.**
 
-- Software: architect (design+spec) → GATE → architect (plan) → GATE → builder (TDD) → verifier → reviewer → GATE → deployer → verifier (smoke). A failed smoke check triggers the deployer's rollback procedure — redeploy the previous known-good version (`sam deploy` of the prior artifact, Amplify redeploy of the prior build) — then escalation to the human with the failure evidence. The deployer records the current known-good identifier before every deploy so rollback has a target.
-- Research/ops/document/ticket: researcher or ops gathers → scribe or ticketer produces → GATE before anything outward-facing (filed ticket, sent report, cloud mutation).
+- Software: architect (design+spec) → GATE → architect (plan) → GATE → builder (TDD) → verifier → reviewer → GATE → deployer → verifier (smoke). Small tier collapses the two design phases and gates into one. A failed smoke check triggers the deployer's rollback procedure — redeploy the previous known-good version (`sam deploy` of the prior artifact, Amplify redeploy of the prior build) — then escalation to the human with the failure evidence. The deployer records the current known-good identifier before every deploy so rollback has a target.
+- Research/ops/document/ticket: researcher or ops gathers → scribe or ticketer produces → GATE before anything outward-facing (filed ticket, sent report, cloud mutation). Scaled the same way: a single-fact lookup is a Haiku researcher dispatch, not an investigation.
+- Amendments (mid-build spec/plan fixes): a delta-only architect dispatch on Sonnet (mechanical) or Opus (judgment) — page-scale in-place edits, never a re-run of the design process. The first shakedown spent 114k Fable tokens and 9 minutes swapping pytest for unittest; this rule exists so that never recurs.
 
 **Gate behavior.** At each GATE the orchestrator stops, presents the artifact with a
 plain-language summary and recommendation, and waits. Approval at one gate never implies
@@ -143,8 +194,10 @@ partial work and the orchestrator escalates rather than re-dispatching blindly.
 
 **Artifacts.** Specs to `docs/superpowers/specs/`, plans to `docs/plans/`. The
 orchestrator has no Write tool by design, so the per-task `STATUS.md`-style handoff
-note is written by the **scribe** at the orchestrator's direction — one scribe dispatch
-per phase transition — so interrupted work resumes cleanly.
+note is written by the **scribe** at the orchestrator's direction — dispatched on
+Haiku, at gates and at completion only (the first shakedown's one-dispatch-per-phase
+cadence produced ten scribe runs for one small task), folding multiple completed
+phases into one update — so interrupted work resumes cleanly.
 
 ## Repository layout
 
@@ -180,7 +233,8 @@ environment or shell config.
 
 In: ten agent definitions, policy hook script + tests, install script, README, this spec.
 Out (deliberate follow-ons): plugin packaging, per-agent persistent `memory:` tuning,
-Haiku downgrades, remote/managed-agent deployment.
+remote/managed-agent deployment. (Haiku downgrades, originally deferred, shipped as
+the dispatch-time override mechanism — see Scaling down.)
 
 **Known limitation — the Bash policy hook is a best-effort denylist on command
 TEXT, not a real shell parser.** It matches regex patterns against the raw command

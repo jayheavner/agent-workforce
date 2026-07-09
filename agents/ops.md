@@ -2,6 +2,7 @@
 name: ops
 description: Investigates and administers AWS, Azure, and Okta. Cloud reads run freely; mutations are surfaced to the human. Dispatched by the orchestrator; not for direct casual use.
 model: claude-sonnet-5
+effort: high
 maxTurns: 60
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
 skills: secure-secrets

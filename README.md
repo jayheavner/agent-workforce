@@ -16,24 +16,32 @@ real work.
 
 ## Roster
 
-| Agent | Model | Role | Mutation rights |
-|---|---|---|---|
-| orchestrator | `claude-fable-5` | Decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
-| architect | `claude-fable-5` | Brainstorm, design, spec, plan | Docs only (specs/plans) |
-| builder | `claude-sonnet-5` | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
-| verifier | `claude-sonnet-5` | Run tests and acceptance checks | None (read + run) |
-| reviewer | `claude-opus-4-8` | Code and security review | None (read only) |
-| deployer | `claude-sonnet-5` | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
-| researcher | `claude-sonnet-5` | Web, Glean, codebase investigation | None |
-| ops | `claude-sonnet-5` | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
-| scribe | `claude-sonnet-5` | Reports, briefs, requirements, postmortems | Docs only |
-| ticketer | `claude-sonnet-5` | Asana write/review/track | Asana via MCP; gated before filing |
+| Agent | Default model | Effort | Role | Mutation rights |
+|---|---|---|---|---|
+| orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
+| architect | `claude-fable-5` | high | Design, spec, plan | Docs only (specs/plans) |
+| builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
+| verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
+| reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
+| deployer | `claude-sonnet-5` | medium | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
+| researcher | `claude-sonnet-5` | — | Web, Glean, codebase investigation | None |
+| ops | `claude-sonnet-5` | high | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
+| scribe | `claude-sonnet-5` | — | Reports, briefs, requirements, postmortems, status notes | Docs only |
+| ticketer | `claude-sonnet-5` | — | Asana write/review/track | Asana via MCP; gated before filing |
 
-Model IDs are pinned as full strings deliberately: a model change is a deliberate edit to the
-agent definitions in this repo, followed by re-running the installer, never an automatic
-upgrade. The reviewer intentionally runs a different model (Opus) than the builder (Sonnet)
-so review is not the builder's own model grading its own work. See the spec for the full
-model-assignment policy and the skill preloads each agent carries.
+These are **defaults, not fixed assignments**: the orchestrator triages every incoming task
+and may downshift a dispatch to a cheaper model (an amendment goes to the architect on
+Sonnet; a status note goes to the scribe on Haiku; a single-fact lookup goes to the
+researcher on Haiku) or upshift a risky one (the reviewer on Fable for a security-critical
+surface) using the Agent tool's per-dispatch model override. It states its picks at triage
+so you see the cost/depth plan before work starts. The four agents with no effort pin are
+the ones eligible for Haiku downshifts — Haiku rejects the effort parameter, so they
+deliberately inherit the session's setting instead. Model IDs are pinned as full strings
+deliberately: a default change is a deliberate edit to the agent definitions in this repo,
+followed by re-running the installer, never an automatic upgrade. The reviewer
+intentionally runs a different model (Opus) than the builder (Sonnet) so review is not the
+builder's own model grading its own work. See the spec for the full model-assignment
+policy and the skill preloads each agent carries.
 
 ## How to install
 
@@ -86,10 +94,14 @@ subagent can only return a final result, not pause mid-task:
 claude --agent orchestrator
 ```
 
-Give the orchestrator a task. It decomposes the work and dispatches the specialist agents in
-sequence — for software work, typically architect (design and spec) → **gate** → architect
+Give the orchestrator a task. It first **triages** — classifying the task's ambiguity,
+novelty, blast radius, and size into a tier, and telling you in one paragraph which route it
+chose and which model each dispatch will run on, all of which you can override. A small,
+well-understood task gets a collapsed route (one combined spec+plan dispatch, one gate); a
+standard task gets the full sequence — architect (design and spec) → **gate** → architect
 (plan) → **gate** → builder → verifier → reviewer → **gate** → deployer → verifier again as a
-smoke check. Research, ops, document, and ticket work follows a shorter route: a researcher or
+smoke check; a large or high-risk task adds a researcher pre-phase and deeper review.
+Research, ops, document, and ticket work follows a shorter route: a researcher or
 ops dispatch gathers information, a scribe or ticketer dispatch produces the artifact, then a
 gate before anything goes outward-facing (a filed ticket, a sent report, a cloud mutation).
 
@@ -111,8 +123,8 @@ escalates to you instead of retrying indefinitely. If any specialist hits its tu
 environment — it stops and reports rather than improvising, and the orchestrator escalates
 rather than blindly re-dispatching. Because the orchestrator itself has no Write tool, the
 per-task status note that lets interrupted work resume cleanly is written by the scribe, at the
-orchestrator's direction, once per phase transition — look for it if you need to pick a task
-back up later.
+orchestrator's direction, at each gate and at completion — look for it if you need to pick a
+task back up later.
 
 ## How to change the team
 

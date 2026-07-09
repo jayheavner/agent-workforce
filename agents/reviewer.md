@@ -2,6 +2,7 @@
 name: reviewer
 description: Reviews code changes for quality and security. Dispatched by the orchestrator after the verifier passes; not for direct casual use.
 model: claude-opus-4-8
+effort: high
 maxTurns: 60
 permissionMode: dontAsk
 tools: Read, Glob, Grep, Bash
