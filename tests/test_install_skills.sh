@@ -33,24 +33,33 @@ if bash "$REPO/install.sh" >/dev/null 2>&1; then ok; else bad "install.sh did no
 for name in coding-standards code-review secure-secrets write-ticket review-ticket \
             task-verification writing-business-requirements audit-requirements-document \
             plan-review ux-to-ui-design; do
-  found="$(cd "$HOME/.claude/skills/$name" 2>/dev/null && ls | grep -x 'SKILL.md')"
+  found="$(cd "$HOME/.claude/skills/$name" 2>/dev/null && ls | grep -Fx 'SKILL.md')"
   [ "$found" = "SKILL.md" ] && ok || bad "skill $name missing exact-name SKILL.md after install"
 done
 # every vendored file arrived at its mapped path
-( cd "$REPO/skills" && find . -type f ) | while read -r rel; do
-  rel="${rel#./}"
-  [ -f "$HOME/.claude/skills/$rel" ] || echo "MISSINGFILE $rel"
-done | grep -q MISSINGFILE && bad "a vendored skills file did not arrive at its mapped path" || ok
+vendored_count="$(cd "$REPO/skills" && find . -type f | wc -l | tr -d ' ')"
+if [ "$vendored_count" -eq 0 ]; then
+  bad "no vendored skills files found under $REPO/skills — cannot verify mapped paths"
+else
+  ( cd "$REPO/skills" && find . -type f ) | while read -r rel; do
+    rel="${rel#./}"
+    [ -f "$HOME/.claude/skills/$rel" ] || echo "MISSINGFILE $rel"
+  done | grep -q MISSINGFILE && bad "a vendored skills file did not arrive at its mapped path" || ok
+fi
 
 # 3) manifest has a skills/... entry with correct hash for every vendored file
 MANIFEST="$HOME/.claude/agent-team-manifest.json"
 miss=0
-( cd "$REPO/skills" && find . -type f ) | while read -r rel; do
-  rel="${rel#./}"; key="skills/$rel"
-  want="$(shasum -a 256 "$REPO/skills/$rel" | awk '{print $1}')"
-  got="$(jq -r --arg k "$key" '.files[$k] // empty' "$MANIFEST")"
-  [ "$got" = "$want" ] || { echo "BADHASH $key"; }
-done | grep -q BADHASH && bad "manifest missing/incorrect hash for a skills file" || ok
+if [ "$vendored_count" -eq 0 ]; then
+  bad "no vendored skills files found under $REPO/skills — cannot verify manifest hashes"
+else
+  ( cd "$REPO/skills" && find . -type f ) | while read -r rel; do
+    rel="${rel#./}"; key="skills/$rel"
+    want="$(shasum -a 256 "$REPO/skills/$rel" | awk '{print $1}')"
+    got="$(jq -r --arg k "$key" '.files[$k] // empty' "$MANIFEST")"
+    [ "$got" = "$want" ] || { echo "BADHASH $key"; }
+  done | grep -q BADHASH && bad "manifest missing/incorrect hash for a skills file" || ok
+fi
 
 # 4) --check exits 0 and prints OK
 out="$(bash "$REPO/install.sh" --check 2>&1)"; rc=$?
