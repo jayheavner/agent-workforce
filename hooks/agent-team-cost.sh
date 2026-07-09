@@ -17,6 +17,13 @@ AGENT_TYPE="$(printf '%s' "$INPUT" | jq -r '.tool_response.agentType // "unknown
 [ -n "$SESSION_ID" ] || exit 0
 [ -n "$TRANSCRIPT" ] || exit 0
 
+# Path-confinement defense (Amendment 2026-07-09): session_id must be a UUID
+# before it is used to build the cost-file name. Claude Code always supplies one.
+case "$SESSION_ID" in
+  [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) : ;;
+  *) exit 0 ;;
+esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RATES="${AGENT_TEAM_RATES:-$HERE/model-rates.json}"
 COST_DIR="${AGENT_TEAM_COST_DIR:-$HOME/.claude/logs/agent-team-cost}"

@@ -30,9 +30,16 @@ bash -n "$REPO/hooks/agent-team-policy-mutations.sh" || fail "policy mutations s
 [ -f "$REPO/hooks/model-rates.json" ] || fail "hooks/model-rates.json is missing from repo"
 bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
 jq empty "$REPO/hooks/model-rates.json" || fail "model-rates.json is not valid JSON"
-jq -e '[.models[] | [.input,.output,.cache_write_5m,.cache_write_1h,.cache_read] | all(type=="number")] | all' \
-  "$REPO/hooks/model-rates.json" >/dev/null \
-  || fail "model-rates.json: every model must carry five numeric rate keys"
+jq -e '
+  def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
+  def entries: [ .models[], ( .models[].intro | select(. != null) ) ];
+  ([ entries[] | rates[] | type == "number" ] | all)
+  and
+  # No rate may carry more than 4 fractional decimal digits: r*10000 must be an
+  # integer. Protects the hook nofloat 10-decimal snap invariant.
+  ([ entries[] | rates[] | (. * 10000) | (. == (. | floor)) ] | all)
+' "$REPO/hooks/model-rates.json" >/dev/null \
+  || fail "model-rates.json: every model needs five numeric rate keys, each with at most 4 fractional decimal digits"
 bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
 bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
 

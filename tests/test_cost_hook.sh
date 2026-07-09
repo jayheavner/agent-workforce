@@ -221,5 +221,13 @@ MIDBAD_CF="$(costfile_for "$MIDBAD_CWD" "$MIDBAD_SLUG" "$SID")"
 run_hook "$(payload "$MIDBAD_CWD" "$MIDBAD/$SID.jsonl" "$SID" 7777mmmm researcher)"
 [ "$(jq -r '.status' "$MIDBAD_CF")" = "unavailable" ] && ok || no "bad line in middle stays genuine -> unavailable"
 
+# --- Task 16: non-UUID session_id is rejected (path confinement) ---
+BADSID_CWD="/fake/badsid"; BADSID_SLUG="-fake-badsid"
+BADSID="../../etc/evil"                       # not a UUID; would escape the dir
+BADSID_CF="$AGENT_TEAM_COST_DIR/$BADSID_SLUG--$BADSID.json"
+run_hook "$(payload "$BADSID_CWD" "$GOOD_TP" "$BADSID" aaaa1111 architect)"
+[ "$RC" -eq 0 ] && ok || no "non-UUID session_id exits 0"
+[ ! -f "$BADSID_CF" ] && ok || no "non-UUID session_id writes nothing"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
