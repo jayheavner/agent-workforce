@@ -62,6 +62,14 @@ for f in "$REPO"/agents/*.md; do
   fi
 done
 
+# Skills the architect invokes situationally via the Skill tool rather than
+# preloading in its skills: frontmatter — invisible to the loop above, but a
+# missing one still breaks the architect at runtime, so the same loud-failure
+# rule applies at install time.
+for s in superpowers:brainstorming plan-review ux-to-ui-design; do
+  resolve_skill "$s" || fail "architect situational skill '$s' does not resolve to an installed skill"
+done
+
 [ -n "${CLAUDE_CODE_SUBAGENT_MODEL:-}" ] \
   && warn "CLAUDE_CODE_SUBAGENT_MODEL is set in this environment; it overrides every model pin"
 for rc in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv"; do

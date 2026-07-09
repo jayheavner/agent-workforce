@@ -131,6 +131,30 @@ per-task status note that lets interrupted work resume cleanly is written by the
 orchestrator's direction, at each gate and at completion — look for it if you need to pick a
 task back up later.
 
+## Deploying to another machine
+
+The repo is the complete source of truth — the agents carry no dependency on any session
+memory, project memory, or the contents of a personal `~/.claude/CLAUDE.md`. All triage,
+model, effort, and permission behavior lives in the agent files this repo installs. What a
+new machine DOES need, and how each is guarded:
+
+1. **Claude Code** signed into an account whose connectors cover the MCP-backed roles —
+   the researcher's Glean access and the ticketer's Asana access ride on claude.ai
+   connectors, which are account-scoped, not machine-scoped.
+2. **`jq`** — the policy hook parses tool-call JSON with it. The installer fails without it.
+3. **The skills the agents preload or invoke** — the superpowers plugin plus the org
+   skills (coding-standards, code-review, secure-secrets, write-ticket, and the rest named
+   in the agent files). The installer resolves every one, including the architect's
+   situationally-invoked skills, and fails loudly on any that are missing rather than
+   installing a team that degrades at runtime.
+4. **Role credentials in the environment** ($OKTA_TOKEN, AWS profiles, the 1Password
+   service-account token) — only needed for the ops/deployer work that uses them, and
+   machine-specific by nature.
+
+So the deployment procedure is: install prerequisites, clone this repo, run
+`bash install.sh`, and treat any validation failure as the dependency list telling you
+what that machine is missing.
+
 ## How to change the team
 
 Edit the agent definitions, hook files, or tests in this repository — never edit files under
