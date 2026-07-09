@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # install.sh — validate, back up, install the agent team into ~/.claude/.
+# install.sh --check — verify the installed team against the last install's
+# manifest and against the repo, without touching anything: detects hand-edits
+# under ~/.claude/, a repo that moved on without a reinstall, and machine-level
+# rot (missing skills, missing jq). Exits nonzero on any drift.
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$CLAUDE_DIR/backups/agent-team-$STAMP"
+MANIFEST="$CLAUDE_DIR/agent-team-manifest.json"
+MODE="install"
+[ "${1:-}" = "--check" ] && MODE="check"
 
-fail() { echo "install: FAIL — $*" >&2; exit 1; }
-warn() { echo "install: WARNING — $*" >&2; }
+fail() { echo "$MODE: FAIL — $*" >&2; exit 1; }
+warn() { echo "$MODE: WARNING — $*" >&2; }
+sha() { shasum -a 256 "$1" | awk '{print $1}'; }
+HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh"
 
 # --- validation (nothing is touched until all of this passes) ---
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -77,6 +86,43 @@ for rc in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv"; do
     && warn "CLAUDE_CODE_SUBAGENT_MODEL appears in $rc; it overrides every model pin"
 done
 
+# --- check mode: compare manifest vs installed vs repo, then stop ---
+if [ "$MODE" = "check" ]; then
+  [ -f "$MANIFEST" ] || fail "no manifest at $MANIFEST — run 'bash install.sh' once first"
+  jq empty "$MANIFEST" 2>/dev/null || fail "manifest at $MANIFEST is not valid JSON — re-run 'bash install.sh'"
+  drift=0
+  while IFS="$(printf '\t')" read -r rel recorded; do
+    [ -n "$rel" ] || continue
+    case "$rel" in
+      agents/*) inst="$CLAUDE_DIR/agents/$(basename "$rel")" ;;
+      hooks/*)  inst="$CLAUDE_DIR/hooks/$(basename "$rel")" ;;
+      *) continue ;;
+    esac
+    if [ ! -f "$inst" ]; then
+      echo "check: MISSING — $inst was installed but is gone"; drift=1
+    elif [ "$(sha "$inst")" != "$recorded" ]; then
+      echo "check: DRIFT — $inst differs from the last install (hand-edited under ~/.claude/?)"; drift=1
+    fi
+    if [ ! -f "$REPO/$rel" ]; then
+      echo "check: REMOVED — $rel is gone from the repo; re-run install to retire it cleanly"; drift=1
+    elif [ "$(sha "$REPO/$rel")" != "$recorded" ]; then
+      echo "check: STALE — repo $rel changed since the last install; re-run install"; drift=1
+    fi
+  done <<EOF
+$(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$MANIFEST")
+EOF
+  for f in "$REPO"/agents/*.md; do
+    rel="agents/$(basename "$f")"
+    jq -e --arg k "$rel" '.files[$k] != null' "$MANIFEST" >/dev/null \
+      || { echo "check: NEW — $rel exists in the repo but was never installed"; drift=1; }
+  done
+  if [ "$drift" -eq 0 ]; then
+    echo "check: OK — installed team matches repo build $(jq -r '.commit' "$MANIFEST") (installed $(jq -r '.installed_at' "$MANIFEST"))"
+    exit 0
+  fi
+  fail "drift detected (lines above). Reconcile any hand edits back into the repo, then re-run 'bash install.sh'"
+fi
+
 # --- backup ---
 mkdir -p "$BACKUP" "$CLAUDE_DIR/agents" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/logs" || fail "cannot create target directories"
 
@@ -141,5 +187,28 @@ if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$CLAUDE_DIR/hooks/"; then 
 # entry point -> lib -> mutations), so they need to be readable, not executable.
 chmod +x "$CLAUDE_DIR/hooks/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
 
-echo "install: OK — 10 agents installed, policy hook installed, backup at $BACKUP"
+# --- manifest: record what this install shipped, so --check can detect drift
+# and the orchestrator can announce its build at session start. Metadata only;
+# a manifest failure does not undo an already-successful install.
+COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+TMP_MANIFEST="$(mktemp)"
+{
+  for f in "$REPO"/agents/*.md; do printf 'agents/%s\t%s\n' "$(basename "$f")" "$(sha "$f")"; done
+  for h in $HOOK_FILES; do printf 'hooks/%s\t%s\n' "$h" "$(sha "$REPO/hooks/$h")"; done
+} | jq -R -n \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg repo "$REPO" \
+    --arg commit "$COMMIT" \
+    '{installed_at: $at, repo: $repo, commit: $commit,
+      files: ([inputs | select(length > 0) | split("\t") | {(.[0]): .[1]}] | add)}' \
+  > "$TMP_MANIFEST"
+if jq empty "$TMP_MANIFEST" 2>/dev/null && cp "$TMP_MANIFEST" "$MANIFEST"; then
+  rm -f "$TMP_MANIFEST"
+else
+  rm -f "$TMP_MANIFEST"
+  warn "manifest write failed — install is fine, but 'install.sh --check' and the orchestrator's build line won't work until a successful re-install"
+fi
+
+echo "install: OK — 10 agents installed, policy hook installed, build $COMMIT recorded, backup at $BACKUP"
+echo "install: verify any time with: bash install.sh --check"
 echo "install: start the team with: claude --agent orchestrator"

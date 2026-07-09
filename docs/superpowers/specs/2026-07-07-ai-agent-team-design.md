@@ -237,9 +237,20 @@ phases into one update — so interrupted work resumes cleanly.
 `install.sh` follows the config-safety rule: validate in a temp location (`bash -n`,
 frontmatter lint), back up any file being replaced, install only after validation, and
 restore the backup on failure. Validation also fails the install if any `skills:` entry
-in any agent file does not resolve to an installed skill (renamed skills must break
-loudly, not degrade silently), and warns if `CLAUDE_CODE_SUBAGENT_MODEL` is set in the
-environment or shell config.
+in any agent file — or any of the architect's situationally-invoked skills — does not
+resolve to an installed skill (renamed skills must break loudly, not degrade silently),
+and warns if `CLAUDE_CODE_SUBAGENT_MODEL` is set in the environment or shell config.
+
+**Drift detection.** The installed copies under `~/.claude/` are a build artifact of
+this repo, and nothing durable may live only in documentation or a personal CLAUDE.md —
+all operative rules are inside the agent definitions themselves. Alignment between repo
+and installed state is enforced by mechanism, not memory: each install writes a manifest
+(`~/.claude/agent-team-manifest.json` — commit, timestamp, per-file checksums);
+`install.sh --check` re-validates the machine and reports DRIFT (installed file
+hand-edited), STALE (repo changed since install), or NEW (repo agent never installed),
+exiting nonzero on any finding; and the orchestrator opens every session by reading the
+manifest and announcing "team build <commit>, installed <date>", so a stale install
+surfaces in the first message of any task on any machine.
 
 ## Testing the team
 

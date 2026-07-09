@@ -155,6 +155,23 @@ So the deployment procedure is: install prerequisites, clone this repo, run
 `bash install.sh`, and treat any validation failure as the dependency list telling you
 what that machine is missing.
 
+## Drift detection — the anti-fog mechanism
+
+Documentation gets forgotten; the installed agents are what actually runs. Three
+mechanisms keep repo and reality aligned without relying on anyone's memory:
+
+- Every install writes a **build manifest** (`~/.claude/agent-team-manifest.json`): the
+  repo commit, install timestamp, and a checksum of every installed file.
+- **`bash install.sh --check`** verifies the installation any time, without touching
+  anything: it re-runs the full validation (skills resolve, jq present, hook tests pass)
+  and compares checksums three ways — an installed file that was hand-edited under
+  `~/.claude/` reports DRIFT, a repo that changed since the last install reports STALE,
+  a repo agent never installed reports NEW. Any finding exits nonzero with the exact file
+  named. Run it on any machine you suspect is behind.
+- The **orchestrator announces its build** ("team build `<commit>`, installed `<date>`")
+  as the first line of every session, read from the manifest — so a stale install is
+  visible in the first message of any task, on any machine, rather than discovered later.
+
 ## How to change the team
 
 Edit the agent definitions, hook files, or tests in this repository — never edit files under
