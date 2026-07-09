@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P1","uuid":"p1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_P1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P2","uuid":"p2","message":{"model":"claude-opus-4-8","id":"msg_P2","usage":{"input_tokens":50,"cache_cre

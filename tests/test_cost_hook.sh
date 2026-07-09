@@ -164,5 +164,62 @@ run_hook "$(payload "$WT_CWD" "$WT/$SID.jsonl" "$SID" ffff6666 researcher)"
 # cost is token-only: (100*5 + 10*25)/1e6 = 750/1e6 = 0.00075, unaffected by web counts
 [ "$(jq -r '.totals.cost_usd' "$WT_CF")" = "0.00075" ] && ok || no "web-tool request cost is token-only 0.00075"
 
+# --- Task 14: transient partial-read is skipped, not sticky (Amendment 2026-07-09) ---
+PART_TP="$FIXROOT/partial/$SID.jsonl"
+PART_CWD="/fake/part"; PART_SLUG="-fake-part"
+PART_CF="$(costfile_for "$PART_CWD" "$PART_SLUG" "$SID")"
+run_hook "$(payload "$PART_CWD" "$PART_TP" "$SID" aaaa1111 architect)"
+[ "$RC" -eq 0 ] && ok || no "partial fire exits 0"
+# The truncated sibling must NOT flip the session to unavailable.
+[ "$(jq -r '.status' "$PART_CF")" = "ok" ] && ok || no "partial sibling does NOT go sticky-unavailable"
+# The good sibling is still priced.
+[ "$(jq -r '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd' "$PART_CF")" = "0.061" ] && ok || no "good sibling still prices to 0.061 despite partial neighbor"
+# The partial sibling contributes NO entry this fire (picked up later once complete).
+[ "$(jq -r '.dispatches | has("9999pppp")' "$PART_CF")" = "false" ] && ok || no "partial sibling has no entry this fire"
+
+# Once the partial file finishes flushing (becomes valid), a LATER fire folds it in.
+GROWP="$SCRATCH/growpart"
+mkdir -p "$GROWP/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$GROWP/$SID.jsonl"
+cp "$FIXROOT/partial/$SID/subagents/agent-aaaa1111.jsonl" "$GROWP/$SID/subagents/"
+# The completed version of 9999pppp: the truncated tail is now a valid, newline-terminated line.
+printf '%s\n%s\n' \
+  '{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P1","uuid":"p1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_P1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}' \
+  '{"type":"assistant","isSidechain":true,"agentId":"9999pppp","requestId":"req_P2","uuid":"p2","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:01.000Z","message":{"model":"claude-opus-4-8","id":"msg_P2","type":"message","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}' \
+  > "$GROWP/$SID/subagents/agent-9999pppp.jsonl"
+GROWP_CF="$(costfile_for "$PART_CWD" "$PART_SLUG" "$SID")"
+run_hook "$(payload "$PART_CWD" "$GROWP/$SID.jsonl" "$SID" 9999pppp researcher)"
+[ "$(jq -r '.status' "$GROWP_CF")" = "ok" ] && ok || no "later fire stays ok after partial completes"
+[ "$(jq -r '.dispatches | has("9999pppp")' "$GROWP_CF")" = "true" ] && ok || no "completed partial IS folded in on later fire (self-heal)"
+# 9999pppp cost = P1 (100*5+10*25)/1e6=0.00075 + P2 (50*5+5*25)/1e6=0.000375 = 0.001125
+[ "$(jq -r '.dispatches."9999pppp".models."claude-opus-4-8".cost_usd' "$GROWP_CF")" = "0.001125" ] && ok || no "completed partial prices to 0.001125"
+
+# 0-byte sibling alongside a good one: skipped, good one still priced, not sticky.
+ZERO="$SCRATCH/zero"
+mkdir -p "$ZERO/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$ZERO/$SID.jsonl"
+cp "$FIXROOT/partial/$SID/subagents/agent-aaaa1111.jsonl" "$ZERO/$SID/subagents/"
+: > "$ZERO/$SID/subagents/agent-0000zzzz.jsonl"   # 0-byte sibling
+ZERO_CWD="/fake/zero"; ZERO_SLUG="-fake-zero"
+ZERO_CF="$(costfile_for "$ZERO_CWD" "$ZERO_SLUG" "$SID")"
+run_hook "$(payload "$ZERO_CWD" "$ZERO/$SID.jsonl" "$SID" aaaa1111 architect)"
+[ "$(jq -r '.status' "$ZERO_CF")" = "ok" ] && ok || no "0-byte sibling does NOT go sticky"
+[ "$(jq -r '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd' "$ZERO_CF")" = "0.061" ] && ok || no "0-byte sibling: good dispatch still priced"
+[ "$(jq -r '.dispatches | has("0000zzzz")' "$ZERO_CF")" = "false" ] && ok || no "0-byte sibling has no entry this fire"
+
+# A bad line in the MIDDLE (good line after it) is genuine corruption -> sticky.
+MIDBAD="$SCRATCH/midbad"
+mkdir -p "$MIDBAD/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$MIDBAD/$SID.jsonl"
+printf '%s\n%s\n%s\n' \
+  '{"type":"assistant","isSidechain":true,"agentId":"7777mmmm","message":{"model":"claude-opus-4-8","id":"m1","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}' \
+  'not json at all {{{' \
+  '{"type":"assistant","isSidechain":true,"agentId":"7777mmmm","message":{"model":"claude-opus-4-8","id":"m2","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}' \
+  > "$MIDBAD/$SID/subagents/agent-7777mmmm.jsonl"
+MIDBAD_CWD="/fake/midbad"; MIDBAD_SLUG="-fake-midbad"
+MIDBAD_CF="$(costfile_for "$MIDBAD_CWD" "$MIDBAD_SLUG" "$SID")"
+run_hook "$(payload "$MIDBAD_CWD" "$MIDBAD/$SID.jsonl" "$SID" 7777mmmm researcher)"
+[ "$(jq -r '.status' "$MIDBAD_CF")" = "unavailable" ] && ok || no "bad line in middle stays genuine -> unavailable"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

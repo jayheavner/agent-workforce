@@ -44,6 +44,36 @@ write_unavailable() {
 # Load rates; unreadable/invalid rates -> unavailable.
 jq empty "$RATES" 2>/dev/null || write_unavailable "rates file $RATES is missing or not JSON"
 
+# is_transient_partial FILE -> exit 0 if the file looks like it is still being
+# written (so it must be SKIPPED this fire and left for a later fire), exit 1
+# otherwise. Two transient signatures (Amendment 2026-07-09, spec Component 1
+# step 5): a 0-byte file; OR a non-empty file whose FINAL line fails to parse as
+# JSON while EVERY preceding line parses as a JSON object (the mid-write tail).
+# Any other parse failure is a genuine unrecognizable file (handled by
+# parse_dispatch -> write_unavailable), not transient.
+is_transient_partial() { # $1 file
+  local file="$1"
+  [ -s "$file" ] || return 0                      # 0-byte -> transient
+  # If the whole file already parses, it is not partial.
+  if jq -e . "$file" >/dev/null 2>&1; then return 1; fi
+  # File has a parse failure somewhere. Transient only if it is confined to an
+  # unterminated final line: all-but-last lines parse AND the last line does not.
+  local total head_ok last_ok
+  total="$(wc -l < "$file" | tr -d ' ')"          # count of NEWLINE chars
+  # An unterminated tail means the byte stream does not end in a newline; the
+  # "extra" trailing content is the (total+1)-th logical line. Validate the
+  # first $total physical lines as a group, then the trailing remainder alone.
+  head_ok=1; last_ok=1
+  if [ "$total" -gt 0 ]; then
+    head -n "$total" "$file" | jq -e . >/dev/null 2>&1 || head_ok=0
+  fi
+  # The trailing remainder after the last newline (empty if file ends in \n).
+  tail -c +"$(( $(head -n "$total" "$file" | wc -c) + 1 ))" "$file" | jq -e . >/dev/null 2>&1 || last_ok=0
+  # Transient iff the head parses cleanly and only the trailing remainder is bad.
+  [ "$head_ok" -eq 1 ] && [ "$last_ok" -eq 0 ] && return 0
+  return 1
+}
+
 # parse_dispatch FILE AGENT_TYPE -> prints the per-dispatch JSON object on
 # stdout on success, or a one-line reason on stderr and a non-zero exit on any
 # recognition failure. One jq program per dispatch file: dedups by
@@ -157,6 +187,7 @@ DISPATCHES='{}'
 if [ -d "$SUBAGENTS_DIR" ]; then
   for f in "$SUBAGENTS_DIR"/agent-*.jsonl; do
     [ -e "$f" ] || continue
+    if is_transient_partial "$f"; then continue; fi   # still being written -> skip this fire
     aid="$(basename "$f")"; aid="${aid#agent-}"; aid="${aid%.jsonl}"
     size="$(wc -c < "$f" | tr -d ' ')"
     prior_size="$(printf '%s' "$PRIOR" | jq -r --arg k "$aid" '.[$k].file_size // "none"')"
