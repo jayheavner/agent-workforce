@@ -118,5 +118,25 @@ run_hook "$(payload "$CWD" "$GROW/$SID.jsonl" "$SID" aaaa1111 architect)"
 [ "$(jq -r '.dispatches.aaaa1111.requests' "$GROW_CF")" = "3" ] && ok || no "growth updates dispatch A requests to 3"
 [ "$(jq -r '.totals.cost_usd' "$GROW_CF")" = "0.124" ] && ok || no "growth updates grand total to 0.124"
 
+# --- Task 6: unavailable marker ---
+MAL_TP="$FIXROOT/malformed/$SID.jsonl"
+MAL_CWD="/fake/mal"; MAL_SLUG="-fake-mal"
+MAL_CF="$(costfile_for "$MAL_CWD" "$MAL_SLUG" "$SID")"
+run_hook "$(payload "$MAL_CWD" "$MAL_TP" "$SID" cccc3333 researcher)"
+[ "$RC" -eq 0 ] && ok || no "malformed fire exits 0"
+[ "$(jq -r '.status' "$MAL_CF")" = "unavailable" ] && ok || no "malformed -> status unavailable"
+[ -n "$(jq -r '.unavailable_reason // empty' "$MAL_CF")" ] && ok || no "malformed -> has a reason"
+
+UNK_TP="$FIXROOT/unknown/$SID.jsonl"
+UNK_CWD="/fake/unk"; UNK_SLUG="-fake-unk"
+UNK_CF="$(costfile_for "$UNK_CWD" "$UNK_SLUG" "$SID")"
+run_hook "$(payload "$UNK_CWD" "$UNK_TP" "$SID" dddd4444 verifier)"
+[ "$RC" -eq 0 ] && ok || no "unknown-model fire exits 0"
+[ "$(jq -r '.status' "$UNK_CF")" = "unavailable" ] && ok || no "unknown-model -> status unavailable"
+
+# Sticky: after malformed, a fire over the GOOD tree at the SAME cost file stays unavailable.
+run_hook "$(payload "$MAL_CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"
+[ "$(jq -r '.status' "$MAL_CF")" = "unavailable" ] && ok || no "unavailable is sticky for the session"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

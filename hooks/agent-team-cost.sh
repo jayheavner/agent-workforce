@@ -26,6 +26,13 @@ COST_FILE="$COST_DIR/$SLUG--$SESSION_ID.json"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "$COST_DIR"
 
+# Sticky unavailable: once a session's totals can't be trusted, they stay that
+# way. A prior non-ok status wins over any later good data — never overwritten
+# by a subsequent fire that happens to see only well-formed files.
+if [ -f "$COST_FILE" ] && jq -e '.status? and (.status != "ok")' "$COST_FILE" >/dev/null 2>&1; then
+  exit 0
+fi
+
 # write_unavailable REASON -> sticky marker, exit 0.
 write_unavailable() {
   printf '%s' "$(jq -n --arg sid "$SESSION_ID" --arg cwd "$CWD" --arg now "$NOW" --arg r "$1" \
