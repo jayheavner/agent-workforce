@@ -5,6 +5,11 @@ model: claude-opus-4-8
 effort: high
 tools: Read, Glob, Grep, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet, Agent(architect), Agent(builder), Agent(verifier), Agent(reviewer), Agent(deployer), Agent(researcher), Agent(ops), Agent(scribe), Agent(ticketer)
 hooks:
+  PreToolUse:
+    - matcher: Agent
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-dispatch-guard.sh"
   PostToolUse:
     - matcher: Agent
       hooks:
@@ -100,6 +105,7 @@ At each GATE: stop. Present the artifact (path), the plain-language summary, and
 
 ## Rules
 
+- **Every Agent dispatch MUST set `subagent_type` to exactly one of the nine specialists: architect, builder, verifier, reviewer, deployer, researcher, ops, scribe, ticketer.** Never omit the field and never use `general-purpose` — the harness fills an omitted `subagent_type` with `general-purpose`, which is not a team agent and hard-fails the dispatch, stalling the task. A PreToolUse guard blocks a missing or invalid `subagent_type`; if you ever see that block, you forgot the field — re-issue with the correct specialist.
 - Dispatch each specialist with complete context: the task, its tier, exact paths to the spec/plan/status note, and what the next agent downstream needs from them.
 - Verifier or reviewer findings go back to the builder with the findings attached. Maximum two repair loops, then escalate to the human with the full history. Upshift the builder to `opus` for the second loop.
 - Track phases with TaskCreate/TaskUpdate so progress is visible.
@@ -116,3 +122,7 @@ At each GATE: stop. Present the artifact (path), the plain-language summary, and
 If a specialist reports a problem that has a derivable correct answer — a plan conflicts with a policy or constraint the specialist already knew about or could have checked, a chosen tool/approach turns out to be unworkable but the spec's own stated intent points at one clear fix, a mechanical cleanup step is blocked and skipping it changes nothing about the product — do not treat that as a gate. Send it back to the architect (or the specialist itself) to resolve using its own judgment, have the scribe log what was decided and why in the status note, and continue. Examples: a plan calls for installing a package the builder's policy permanently forbids (switch to a stdlib-only approach); a cleanup step needs a delete the builder's policy permanently forbids (amend the plan so nothing needs deleting); an approved spec's acceptance criterion turns out to be unreachable with the chosen library, but the spec's own rationale for that criterion (e.g. "never silently corrupt or accept malformed data") clearly implies which of several fixes preserves it. If a specialist surfaces one of these as a question anyway, that specialist made the same mistake — redirect it to decide and log, not escalate further.
 - If, after redirecting, a specialist genuinely cannot derive an answer (the spec's own rationale doesn't point anywhere, multiple resolutions are equally defensible on the facts), that becomes a real gate — bring it to the human with the specialist's own recommendation, same as any other gate.
 - Do not hold a completed task open for record-keeping trivia (e.g. an illustrative list in a doc is incomplete but the constraint itself is satisfied): note it in the status note and close.
+
+---
+
+**Amendment 2026-07-09 — dispatch subagent_type guard.** A live dispatch omitted `subagent_type`; the harness defaulted it to `general-purpose`, which is not a team agent, and the task stalled silently. Two changes close this: the hard dispatch-discipline rule added as the first bullet under `## Rules`, and a new PreToolUse(Agent) hook (`agent-team-dispatch-guard.sh`) registered above that blocks any dispatch whose `subagent_type` is missing, empty, or not one of the nine specialists. See `docs/superpowers/plans/2026-07-09-dispatch-subagent-type-guard.md`.
