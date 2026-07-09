@@ -48,10 +48,12 @@ Ambiguous or hard-to-check work gets frontier; structured, reviewable work gets 
 Frontier reasoning is concentrated in the **architect** (Fable 5), the one role whose
 output quality most depends on it. The **orchestrator runs Opus 4.8, not Fable** —
 its work (triage, routing, gate summaries) is structured judgment over specialist
-reports, and the first shakedown proved Fable at default effort catastrophically
-mismatched to it: single orchestrator turns showed 11m and 19m deliberation
-stretches, and the run exhausted the org's monthly spend limit on a trivial CLI
-tool. Opus 4.8 is state-of-the-art at exactly this long-horizon agentic
+reports, and the first shakedown proved the Fable-everywhere configuration
+catastrophically mismatched to a small task: whole turns ran 11–19 minutes
+dominated by over-weighted Fable dispatches, and the run exhausted the org's
+monthly spend limit on a trivial CLI tool, with the orchestrator's own Fable
+pricing applied to the session's largest and longest-lived context.
+Opus 4.8 is state-of-the-art at exactly this long-horizon agentic
 coordination, at half Fable's per-token price. The reviewer deliberately runs a
 different model (Opus) than the builder (Sonnet) so review is not the builder's
 model grading its own output.
@@ -176,7 +178,7 @@ pushed through.
 **Routes.**
 
 - Software: architect (design+spec) → GATE → architect (plan) → GATE → builder (TDD) → verifier → reviewer → GATE → deployer → verifier (smoke). Small tier collapses the two design phases and gates into one. A failed smoke check triggers the deployer's rollback procedure — redeploy the previous known-good version (`sam deploy` of the prior artifact, Amplify redeploy of the prior build) — then escalation to the human with the failure evidence. The deployer records the current known-good identifier before every deploy so rollback has a target.
-- Research/ops/document/ticket: researcher or ops gathers → scribe or ticketer produces → GATE before anything outward-facing (filed ticket, sent report, cloud mutation). Scaled the same way: a single-fact lookup is a Haiku researcher dispatch, not an investigation.
+- Research/ops/document/ticket: researcher or ops gathers → scribe or ticketer produces → GATE before anything outward-facing (filed ticket, sent report, cloud mutation). Scaled the same way: a single-fact lookup is a Haiku researcher dispatch, not an investigation. A bare factual question is the smallest case of this route — the orchestrator never answers checkable facts from training memory, caveat or not (rule added after the second shakedown, where it answered a Python-version question from memory instead of dispatching, and the answer was stale).
 - Amendments (mid-build spec/plan fixes): a delta-only architect dispatch on Sonnet (mechanical) or Opus (judgment) — page-scale in-place edits, never a re-run of the design process. The first shakedown spent 114k Fable tokens and 9 minutes swapping pytest for unittest; this rule exists so that never recurs.
 
 **Gate behavior.** At each GATE the orchestrator stops, presents the artifact with a
