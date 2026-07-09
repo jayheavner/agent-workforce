@@ -167,12 +167,23 @@ Run this once, in full, after the first install, before trusting the team with r
 
 - [ ] 1. Run `bash tests/test_policy_hooks.sh` — all pass.
 - [ ] 2. Start `claude --agent orchestrator`; give it a disposable task: "Build a CLI tool in a
-      fresh temp project that converts CSV to JSON, through the full pipeline including
-      review; skip deploy."
-- [ ] 3. Confirm: design gate fired before any code; plan gate fired; builder committed
+      fresh temp project named csv2json-2 that converts CSV to JSON, through the full
+      pipeline including review; skip deploy."
+- [ ] 3. Confirm triage fired: before the first dispatch, the orchestrator declared the task
+      **small**, named the collapsed route, and listed a model pick for every planned
+      dispatch (architect on Opus, scribe on Haiku). Triaging this task as standard is a
+      fail — it is the canonical small task.
+- [ ] 4. Confirm the collapsed route ran: ONE combined spec+plan gate (not separate spec and
+      plan gates), then builder → verifier → reviewer → final gate; builder committed
       test-first; verifier reported evidence; reviewer returned a verdict; a STATUS note
       exists and is accurate.
-- [ ] 4. Confirm lane enforcement from the audit log:
+- [ ] 5. Confirm scaling: at the end, ask the orchestrator to list every dispatch with the
+      model it ran on. Expect the architect on Opus (not Fable), the scribe on Haiku with
+      roughly three status updates (not one per phase), and no dispatch whose token count
+      rivals the first shakedown's 85k–114k architect runs.
+- [ ] 6. Confirm the orchestrator stayed light: gate summaries arrived without extended
+      deliberation, and the session never approached a spend-limit event.
+- [ ] 7. Confirm lane enforcement from the audit log:
       `grep decision=block ~/.claude/logs/agent-team-audit.log` shows any attempted
       out-of-lane commands, and no role bypassed its policy.
-- [ ] 5. Only after all four pass, use the team on real work.
+- [ ] 8. Only after all of the above pass, use the team on real work.
