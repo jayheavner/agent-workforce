@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Designs systems, writes specs and implementation plans for the agent team. Dispatched by the orchestrator; not for direct casual use.
-model: claude-fable-5
+model: claude-opus-4-8
 effort: high
 maxTurns: 80
 tools: Read, Glob, Grep, Write, Edit, WebSearch, WebFetch, AskUserQuestion, Skill

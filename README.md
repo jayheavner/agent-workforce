@@ -19,7 +19,7 @@ real work.
 | Agent | Default model | Effort | Role | Mutation rights |
 |---|---|---|---|---|
 | orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
-| architect | `claude-fable-5` | high | Design, spec, plan | Docs only (specs/plans) |
+| architect | `claude-opus-4-8` | high | Design, spec, plan | Docs only (specs/plans) |
 | builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
 | verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
 | reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
@@ -32,8 +32,10 @@ real work.
 These are **defaults, not fixed assignments**: the orchestrator triages every incoming task
 and may downshift a dispatch to a cheaper model (an amendment goes to the architect on
 Sonnet; a status note goes to the scribe on Haiku; a single-fact lookup goes to the
-researcher on Haiku) or upshift a risky one (the reviewer on Fable for a security-critical
-surface) using the Agent tool's per-dispatch model override. It states its picks at triage
+researcher on Haiku) or upshift a risky one (the architect on Fable when the design space
+is genuinely open; the reviewer on Fable for a security-critical surface) using the Agent
+tool's per-dispatch model override — no role defaults to Fable; it is always a deliberate,
+named upshift. It states its picks at triage
 so you see the cost/depth plan before work starts. The four agents with no effort pin are
 the ones eligible for Haiku downshifts — Haiku rejects the effort parameter, so they
 deliberately inherit the session's setting instead. Model IDs are pinned as full strings

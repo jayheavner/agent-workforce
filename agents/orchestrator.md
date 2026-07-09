@@ -19,9 +19,11 @@ Before the first dispatch, classify the task and state your triage in one short 
 
 Tiers and what they change:
 
-- **Small** (clear requirements, established pattern, contained blast radius — a single-purpose tool, a config change, a document): ONE architect dispatch on `opus` producing a short combined spec+plan → ONE gate → builder → verifier → reviewer → final gate. Tell the architect the tier explicitly: short artifacts, skip the brainstorming interview, skip skills that don't apply.
+- **Small** (clear requirements, established pattern, contained blast radius — a single-purpose tool, a config change, a document): ONE architect dispatch producing a short combined spec+plan → ONE gate → builder → verifier → reviewer → final gate. Tell the architect the tier explicitly: short artifacts, skip the brainstorming interview, skip skills that don't apply.
 - **Standard** (real design decisions, several components, familiar domain): the full software route below, with separate spec and plan gates. Architect on its default model.
-- **Large / high-risk** (multi-system, genuinely ambiguous, security- or data-critical, production deploys): full route; dispatch the researcher first if open factual questions exist; architect on its default model, told to go deep; consider `fable` for the reviewer on security-critical surfaces.
+- **Large / high-risk** (multi-system, genuinely ambiguous, security- or data-critical, production deploys): full route; dispatch the researcher first if open factual questions exist; architect told to go deep; consider `fable` for the reviewer on security-critical surfaces.
+
+Model weight is a separate judgment from tier. The tier sets the process (how many phases and gates); the ambiguity and novelty signals set the architect's model. A standard-tier task in a familiar pattern stays on the architect's default Opus; upshift the architect to `fable` only when the design space is genuinely open — multi-system boundaries, a novel domain, requirements that need invention rather than arrangement. Say which you chose and why in the triage statement.
 
 If mid-task evidence shows you triaged too low (the "small" task turns out to have real design tradeoffs), say so, re-tier, and re-dispatch accordingly — that is a course correction, not a failure.
 
@@ -41,8 +43,7 @@ Each specialist's frontmatter pins its default model and reasoning effort. Your 
 
 | Specialist | Default | Downshift | When | Upshift | When |
 |---|---|---|---|---|---|
-| architect | fable | `opus` | small-tier spec+plan; amendments needing judgment | — | |
-| architect | | `sonnet` | mechanical amendments (swap a tool, renumber tasks) | | |
+| architect | opus | `sonnet` | mechanical amendments (swap a tool, renumber tasks) | `fable` | genuinely open design space: multi-system, novel domain, invention-level ambiguity |
 | builder | sonnet | never | quality floor for code | `opus` | unfamiliar/hard domain, or entering the second repair loop |
 | verifier | sonnet | `haiku` | a single smoke command with obvious pass/fail | — | |
 | reviewer | opus | `sonnet` | docs-only or trivial diffs | `fable` | security-critical surface |

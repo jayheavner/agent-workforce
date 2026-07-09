@@ -27,7 +27,7 @@ into `~/.claude/`; nothing is edited in place there.
 | Agent | Default model | Effort | Role | Mutation rights |
 |---|---|---|---|---|
 | orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
-| architect | `claude-fable-5` | high | Design, spec, plan — frontier reasoning lives here | Docs only (specs/plans) |
+| architect | `claude-opus-4-8` | high | Design, spec, plan | Docs only (specs/plans) |
 | builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
 | verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
 | reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
@@ -45,8 +45,16 @@ every pin in this table.
 Model policy: assignments follow `~/.claude/skills/model-picker/approved-models.yaml`
 (`dispatchable_tiers`: frontier = Fable 5 / Opus 4.8; budget = Sonnet 5 / Haiku 4.5).
 Ambiguous or hard-to-check work gets frontier; structured, reviewable work gets budget.
-Frontier reasoning is concentrated in the **architect** (Fable 5), the one role whose
-output quality most depends on it. The **orchestrator runs Opus 4.8, not Fable** —
+**No role defaults to Fable 5.** Fable is a per-dispatch upshift the orchestrator
+names at triage — the architect for genuinely open design spaces (multi-system
+boundaries, novel domains, invention-level ambiguity), the reviewer for
+security-critical surfaces. Process weight and model weight are separate judgments:
+a task can need the full two-gate route while its design work is well within Opus.
+Two shakedowns never produced a task where default-Fable earned its price over
+Opus 4.8, and defaulting the architect to Opus flips the failure mode — a
+forgotten override now costs nothing, and reaching for Fable is a deliberate,
+human-visible pick rather than silent background spend. The **orchestrator runs
+Opus 4.8, not Fable** —
 its work (triage, routing, gate summaries) is structured judgment over specialist
 reports, and the first shakedown proved the Fable-everywhere configuration
 catastrophically mismatched to a small task: whole turns ran 11–19 minutes
