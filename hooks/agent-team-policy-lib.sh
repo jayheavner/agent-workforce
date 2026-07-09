@@ -199,10 +199,18 @@ policy_builder() {
 }
 
 # stdin command (or an arbitrary string, via stripped_cmd_of) with harmless
-# /dev/null redirections removed, so redirection checks don't
-# false-positive on "2>/dev/null".
+# /dev/null redirections and fd-to-fd redirects (2>&1, 1>&2, &>&2, ...) removed,
+# so redirection checks don't false-positive on "2>/dev/null" or the extremely
+# common "2>&1" stderr/stdout merge — neither writes to a file, so neither is a
+# file-mutation risk. A genuine file redirect elsewhere in the same command
+# (e.g. "cmd 2>&1 > out.txt") still matches after this stripping, since only
+# the fd-to-fd/-to-null forms are removed, not the trailing "> out.txt".
 stripped_cmd() { stripped_cmd_of "$CMD"; }
-stripped_cmd_of() { printf '%s' "$1" | sed -E 's|[0-9]*>+[[:space:]]*/dev/null||g'; }
+stripped_cmd_of() {
+  printf '%s' "$1" \
+    | sed -E 's|[0-9]*>+[[:space:]]*/dev/null||g' \
+    | sed -E 's|[0-9]*>&[0-9]+||g'
+}
 
 SECRET_RE='\$\{?(OKTA_TOKEN|GODADDY_API_KEY|GODADDY_API_SECRET|OP_SERVICE_ACCOUNT_TOKEN|[A-Za-z_]*_API_KEY|[A-Za-z_]*SECRET[A-Za-z_]*|[A-Za-z_]*PASSWORD[A-Za-z_]*)'
 
