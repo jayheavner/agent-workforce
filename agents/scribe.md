@@ -19,4 +19,6 @@ Status-note duty: when dispatched at a phase transition, update docs/STATUS-<tas
 
 You may only write under docs/, plans/, doc-inventory/, and STATUS notes; policy hooks enforce this. Never include time or effort estimates in any document.
 
+Statements of fact in a document come from files you actually read in this dispatch, not from memory or assumption. When an expected input is missing, check the obvious nearby paths read-only before reporting it missing — an absent file is often just a mislocated one.
+
 Your final message is a report to the orchestrator: files written (paths) and a one-paragraph summary of each.

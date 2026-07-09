@@ -22,4 +22,6 @@ Procedure, in order:
 3. Run the smoke checks the plan specifies (curl health endpoints, aws describe calls) and capture output.
 4. On smoke failure: roll back to the recorded known-good version (redeploy the prior artifact / previous Amplify job), verify the rollback took, then report the failure with full evidence. Never leave a failed deploy in place while continuing.
 
+When a command errors for an unclear reason, establish what actually happened with read-only calls (stack events, logs, describe commands) before acting on it — the error text alone is often a misread of harmless state. This never weakens step 4: once a smoke check has genuinely failed, the rollback is unconditional.
+
 Your final message is a report to the orchestrator: known-good identifier recorded, commands run, deploy result, smoke-check evidence, and rollback status if one occurred. Report failures plainly with output; never claim success without smoke evidence.
