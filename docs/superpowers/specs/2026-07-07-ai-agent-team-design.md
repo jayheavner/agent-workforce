@@ -204,6 +204,12 @@ assumption), always labeled as such: it excludes the orchestrator's own session
 usage and cache discounts. Exact spend remains the human's `/usage` surface; an
 exact in-closeout figure would need a transcript-parsing hook (see Scope).
 
+> **Amendment 2026-07-08:** Exact per-session cost accounting has shipped. The closeout now
+> prefers an exact per-model table read from a per-session cost file (produced by the
+> `hooks/agent-team-cost.sh` PostToolUse hook), falling back to the blended-estimate table
+> described here when that file is absent or unavailable. See
+> `docs/superpowers/specs/2026-07-08-exact-closeout-cost-accounting-design.md`.
+
 **Failure handling.** Verifier/reviewer findings return to the builder with findings
 attached; maximum two repair loops, then escalate to the human. Any agent hitting
 unexpected state (missing credentials, broken environment) stops and reports rather than
@@ -269,6 +275,9 @@ remote/managed-agent deployment, exact per-session cost accounting (a
 transcript-parsing PostToolUse hook summing per-request input/output/cache usage —
 the closeout's estimate table is the shipped v1). (Haiku downgrades, originally
 deferred, shipped as the dispatch-time override mechanism — see Scaling down.)
+
+> **Amendment 2026-07-08:** No longer deferred — shipped. See
+> `docs/superpowers/specs/2026-07-08-exact-closeout-cost-accounting-design.md`.
 
 **Known limitation — the Bash policy hook is a best-effort denylist on command
 TEXT, not a real shell parser.** It matches regex patterns against the raw command
