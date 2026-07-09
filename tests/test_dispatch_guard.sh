@@ -46,5 +46,20 @@ expect_block "$(agent_json 'build')" "substring 'build' blocks"
 # A non-Agent tool passes through untouched.
 expect_allow "$(jq -cn '{tool_name:"Bash",tool_input:{command:"ls"}}')" "non-Agent tool passes"
 
+# Valid JSON but tool_name is not "Agent" must still pass through, even with
+# an odd/absent subagent_type — only Agent dispatches are policed.
+expect_allow "$(jq -cn '{tool_name:"Read",tool_input:{file_path:"/tmp/x"}}')" "valid JSON, non-Agent tool_name passes"
+
+# Finding 1: malformed / non-JSON / empty stdin must BLOCK (fail closed),
+# not be silently coerced to empty tool_name and allowed.
+expect_block "not json at all" "malformed stdin blocks"
+expect_block "" "empty stdin blocks"
+expect_block "{" "truncated JSON blocks"
+
+# Finding 2: compound value spanning two valid tokens must not bypass via
+# substring containment against the space-padded VALID list.
+expect_block "$(agent_json 'architect builder')" "compound 'architect builder' blocks"
+expect_block "$(agent_json ' architect ')" "padded exact-looking value blocks"
+
 echo "dispatch-guard tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
