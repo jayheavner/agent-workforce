@@ -17,7 +17,7 @@ MODE="install"
 fail() { echo "$MODE: FAIL — $*" >&2; exit 1; }
 warn() { echo "$MODE: WARNING — $*" >&2; }
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
-HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh model-rates.json"
+HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh agent-team-dispatch-guard.sh model-rates.json"
 
 # --- validation (nothing is touched until all of this passes) ---
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -29,6 +29,8 @@ bash -n "$REPO/hooks/agent-team-policy-mutations.sh" || fail "policy mutations s
 [ -f "$REPO/hooks/agent-team-cost.sh" ] || fail "hooks/agent-team-cost.sh is missing from repo"
 [ -f "$REPO/hooks/model-rates.json" ] || fail "hooks/model-rates.json is missing from repo"
 bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
+[ -f "$REPO/hooks/agent-team-dispatch-guard.sh" ] || fail "hooks/agent-team-dispatch-guard.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-dispatch-guard.sh" || fail "dispatch guard failed bash -n"
 jq empty "$REPO/hooks/model-rates.json" || fail "model-rates.json is not valid JSON"
 jq -e '
   def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
@@ -42,6 +44,7 @@ jq -e '
   || fail "model-rates.json: every model needs five numeric rate keys, each with at most 4 fractional decimal digits"
 bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
 bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
+bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
 
 # Built-in skills ship with the Claude Code client itself and have no
 # SKILL.md on disk anywhere (not under ~/.claude/skills/, not in the plugin
@@ -161,8 +164,10 @@ PREEXISTING_POLICY_MUT=0
 [ -f "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh" "$BACKUP/"; PREEXISTING_POLICY_MUT=1; }
 PREEXISTING_COST=0
 PREEXISTING_RATES=0
+PREEXISTING_GUARD=0
 [ -f "$CLAUDE_DIR/hooks/agent-team-cost.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$CLAUDE_DIR/hooks/model-rates.json" ] && { cp "$CLAUDE_DIR/hooks/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
+[ -f "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 
 restore() {
   echo "install: restoring backup from $BACKUP" >&2
@@ -173,6 +178,7 @@ restore() {
       agent-team-policy-lib.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       agent-team-policy-mutations.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       agent-team-cost.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
+      agent-team-dispatch-guard.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       model-rates.json) cp "$b" "$CLAUDE_DIR/hooks/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
@@ -197,6 +203,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_POLICY_MUT" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh"
   [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-cost.sh"
   [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/model-rates.json"
+  [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh"
 }
 
 # --- install ---
@@ -205,6 +212,7 @@ if ! cp "$REPO/hooks/agent-team-policy.sh" "$CLAUDE_DIR/hooks/"; then restore; c
 if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook lib copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook mutations copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 # Only the entry point is ever executed directly (agent frontmatter and the
 # shell invoke it by path); agent-team-policy-lib.sh and
@@ -212,6 +220,7 @@ if ! cp "$REPO/hooks/model-rates.json" "$CLAUDE_DIR/hooks/"; then restore; clean
 # entry point -> lib -> mutations), so they need to be readable, not executable.
 chmod +x "$CLAUDE_DIR/hooks/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
 chmod +x "$CLAUDE_DIR/hooks/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
+chmod +x "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
 
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;
