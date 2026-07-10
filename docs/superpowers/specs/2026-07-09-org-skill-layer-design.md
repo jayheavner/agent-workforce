@@ -104,7 +104,7 @@ agent-runnable command) — it is the discipline the repair loop needs most.
 
 | Skill | Now | Target | Notes |
 |---|---|---|---|
-| `coding-standards` | 132 | ~80 | Keeps all numeric mandates as `[ORG POLICY]`; two flagged for ruling (Section 9) |
+| `coding-standards` | 132 | ~80 | Numeric mandates kept as `[ORG POLICY]` per the Section 9 rulings: coverage tier-scoped, spec-first moved out of builder preload |
 | `secure-secrets` | 516 | ~120 | Long tool/pattern lists → `references/` |
 | `reviewing` (was `code-review`) | 347 | ~150 | Renamed; reviewer frontmatter updated same commit |
 | `plan-review` | 95 | ~80 | Already close to right-sized; checklist form kept |
@@ -214,16 +214,20 @@ Each phase leaves `install.sh --check` green and no agent referencing a nonexist
   role** (a ticket drafted, a document written, a criterion verified — not just the builder
   path); plugin absent; `--check` green.
 
-### 9. Policy decision queue (initial)
+### 9. Policy decision queue
 
-Rulings happen at plan review, not during distillation:
+Rulings happen at plan review, not during distillation. Flags found during Phase 3 are
+appended here with the distiller's recommendation.
 
-1. **Blanket ≥90% test coverage** (`coding-standards`) — keep, scope by tier, or drop?
-2. **Spec-first for every change** (`coding-standards`) — duplicates the orchestrator's
-   routing (architect specs before builder dispatch). Keep for non-team use, or drop as
-   redundant in the team context?
+**Ruled 2026-07-09:**
 
-Flags found during Phase 3 are appended here with the distiller's recommendation.
+1. **Test coverage — scoped by tier.** `[ORG POLICY]` becomes: ≥90% coverage for
+   standard/large-tier work; trivial/small-tier work requires TDD (test-first at agreed
+   seams) but no numeric threshold. The builder reads the tier from its dispatch.
+2. **Spec-first — scoped to non-team use.** The rule leaves the builder's preload (the
+   architect → gate → builder route guarantees it structurally); it stays stated in
+   `docs/skill-style.md` for anyone using these skills outside the team, where no
+   orchestrator enforces sequencing.
 
 ### 10. Risks
 
