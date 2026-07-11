@@ -13,6 +13,9 @@ export AGENT_TEAM_SKIP_INSTALL_TEST=1
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT          # test-harness cleanup, authored via Write, run by the test
 export HOME="$SANDBOX"
+# install.sh honors CLAUDE_CONFIG_DIR; unset it so this sandbox targets
+# $HOME/.claude and cannot leak into the caller's real config dir.
+unset CLAUDE_CONFIG_DIR
 mkdir -p "$HOME/.claude/skills"
 
 # Stub the plugin cache so superpowers:* refs in agent frontmatter and the
