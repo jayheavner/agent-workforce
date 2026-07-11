@@ -7,7 +7,10 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_DIR="$HOME/.claude"
+# Honor CLAUDE_CONFIG_DIR (how Claude Code itself picks its config dir) so the
+# team installs where the running client actually reads from; fall back to
+# ~/.claude when it is unset.
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$CLAUDE_DIR/backups/agent-team-$STAMP"
 MANIFEST="$CLAUDE_DIR/agent-team-manifest.json"
@@ -76,13 +79,13 @@ resolve_skill() { # $1 skill ref (bare or ns:name) -> 0 if found
   case "$1" in
     *:*)
       ns="${1%%:*}"; sk="${1#*:}"
-      ls "$HOME/.claude/plugins/cache/"*/"$ns"/*/skills/"$sk"/SKILL.md >/dev/null 2>&1
+      ls "$CLAUDE_DIR/plugins/cache/"*/"$ns"/*/skills/"$sk"/SKILL.md >/dev/null 2>&1
       ;;
     *)
       case "$BUILTIN_SKILLS" in
         *" $1 "*) return 0 ;;
       esac
-      [ -f "$REPO/skills/$1/SKILL.md" ] || [ -f "$HOME/.claude/skills/$1/SKILL.md" ]
+      [ -f "$REPO/skills/$1/SKILL.md" ] || [ -f "$CLAUDE_DIR/skills/$1/SKILL.md" ]
       ;;
   esac
 }
