@@ -8,7 +8,10 @@ authoring standard), `2026-07-10-decision-discipline-design.md` (two-questions b
 critic), `PARKING-LOT.md` (the promotion-trigger pattern this design reuses).
 **Review:** spec panel convened 2026-07-12 (discussion mode, full spec roster). All eight
 prioritized recommendations are incorporated; the panel's keep-or-cut question on the
-charter-misfit flag is decided, with reasoning, in §2.
+charter-misfit flag is decided, with reasoning, in §2. A second panel (debate mode, same
+roster, 2026-07-12) stress-tested the revised spec: its recommendations 1–8 and 10 are
+applied throughout, and its contested point on §5's process depth is resolved as
+*provisional process* — written now, expected to be revised by first use (see §5).
 
 ## Goal
 
@@ -70,14 +73,18 @@ through the existing software route.
 
 ## 1. Domain sensor (architect)
 
-Add to the architect's "Investigate before you design" section (normative text, ~7 lines):
+Add to the architect's "Investigate before you design" section (normative text, ~13 lines):
 
-> As part of investigation, ask whether correctness in this task is judged by the norms
-> of a specialized field — accounting, tax, payroll, legal, medical, insurance, any
-> regulated or professionalized domain — rather than by the spec alone. If yes, Glob the
-> installed skills for a `domain-<field>` skill covering it. If one exists, invoke it and
-> carry its constraints into the spec and plan explicitly — the builder cannot load
-> skills, so **the plan is the carrier** of domain constraints. If none exists, declare
+> As part of investigation, apply the **practitioner test**: would a practitioner of some
+> field reject output that merely satisfies this spec? If yes, correctness here is judged
+> by that field's norms, not by the spec alone — true of accounting, tax, payroll, legal,
+> medical, and insurance work, and equally of unlicensed fields with hard norms
+> (logistics, actuarial pricing, manufacturing tolerances). When the test fires, Glob the
+> installed skills for a `domain-<field>` skill. If one exists, invoke it and carry its
+> constraints into the spec and plan explicitly — the builder cannot load skills, so
+> **the plan is the carrier** of domain constraints, and every domain-constrained plan
+> must state: domain questions this plan does not answer are stop-and-report to the
+> orchestrator, never the builder's own judgment call. If no skill exists, declare
 > `DOMAIN GAP: <field>` in your report, name the norms you believe are load-bearing (even
 > approximately — "there are matching and cutoff conventions I don't know"), and do not
 > write the spec until the orchestrator supplies researcher-gathered domain input. Label
@@ -99,18 +106,22 @@ orchestrator.
 **Decision: cut the planned nine-file shared `MISFIT:` block.** What replaces it:
 
 - The specialists' existing stop-and-report rules remain the raw signal — unchanged.
-- The **gate `gaps:` line** (§3) is the sensor: at every gate the orchestrator must
-  review the task's accumulated friction and either write `gaps: none` or name the gap.
-  This runs at the right moments (post-friction, evidence in context), costs nothing new,
-  and avoids training nine agents toward false-positive flagging — the documented
-  besetting risk of this team.
+- The **gate `gaps:` line** (§3) is an acknowledgment and a prompt, not a guaranteed
+  sensor: at every gate the orchestrator must review the task's accumulated friction and
+  either write `gaps: none` or name the gap. It runs at the right moments (post-friction,
+  evidence in context) and costs nothing new — but a mandatory recited field habituates
+  (the same principle this team's decision discipline already records against recited
+  caveats), so fit-gap detection is honestly **best-effort**. The domain sensor (§1) is
+  the primary sensor of this design; the gaps line raises the odds that fit friction gets
+  noticed while avoiding what a nine-file flag would have risked: training every agent
+  toward false-positive flagging, the documented besetting risk of this team.
 
 This also removes the need to extend the drift test (no new shared block exists) and cuts
 the new-instruction budget roughly in half.
 
 ## 3. Orchestrator gap handling
 
-Add a "Gap flags" section to the orchestrator (normative text, ~14 lines):
+Add a "Gap flags" section to the orchestrator (normative text, ~16 lines):
 
 > **Gap flags.** Two signals name a capability gap: an architect `DOMAIN GAP`, or your own
 > gate-time review of task friction (repeated policy blocks, work no specialist fits,
@@ -122,9 +133,11 @@ Add a "Gap flags" section to the orchestrator (normative text, ~14 lines):
 >    *uncertified*, and attach it to the architect/builder dispatch context. For fit
 >    friction, re-route to the closest specialist and make the reviewer pass mandatory
 >    regardless of tier.
-> 2. **Record.** Dispatch the scribe on `haiku`: read `<repo>/docs/gaps/README.md` (repo
->    path from the manifest) and write one gap record per its schema. If the manifest is
->    missing or stale, have the scribe write a best-effort record — kind, task, gap,
+> 2. **Record.** Assign the record's identity yourself — `<kind>-<slug>`, slug at field
+>    granularity (`payroll`, never `payroll-withholding`) — then dispatch the scribe on
+>    `haiku`: read `<repo>/docs/gaps/README.md` (repo path from the manifest) and write
+>    one gap record per its schema under the identity you assigned. If the manifest is
+>    missing or unreadable, have the scribe write a best-effort record — kind, task, gap,
 >    fallback — to the current project's `docs/gaps/` instead, and disclose the degraded
 >    path at the gate.
 > 3. **Disclose.** Every gate summary carries a mandatory line: `gaps: none` or
@@ -137,6 +150,12 @@ Add a "Gap flags" section to the orchestrator (normative text, ~14 lines):
 The `gaps:` line is deliberately mandatory even when empty — a dropped flag becomes a
 visible protocol violation rather than a silent loss, the same pattern as the manifest
 build line at session start.
+
+The session-start manifest ritual itself extends by one clause (~3 lines): after the
+build line, Glob the current project's `docs/gaps/` and, if any records exist there,
+report "`N` gap records in this project await upstreaming." Degraded-path strays stay
+visible every session until a human moves them; records count toward promotion only once
+they are in the canonical repository's main (§4).
 
 ## 4. Gap records — `docs/gaps/`
 
@@ -161,15 +180,21 @@ survives schema evolution (each file states its schema version).
 
 Semantics:
 
-- **Identity:** same `<kind>-<slug>` = same gap. The scribe lists the directory before
-  writing and reuses the slug when the gap matches an existing record.
+- **Identity:** same `<kind>-<slug>` = same gap. The orchestrator assigns the slug in
+  the scribe's dispatch, at field granularity (`payroll`, not `payroll-withholding`) —
+  coarse slugs err toward over-linking, which is the safe direction for a promotion
+  trigger. The scribe lists the directory and links `recurrence:` to existing records
+  under the same identity.
 - **Evidence, not workflow.** A record freezes when its status leaves `open`: `promoted`
   records point at the spec or ticket where the work is tracked (Asana per org
   discipline, via the ticketer, when the human wants it tracked); `declined` records keep
   the reason. The gap directory never becomes a second ticket system.
 - **Flow-back across installs:** a coworker's install writes records into their own clone
   (their manifest points there); their human opens an ordinary PR to this repository.
-  Promotion decisions happen only against canonical main.
+  Promotion decisions happen only against canonical main, and **a record not in canonical
+  main does not exist for promotion purposes** — local and degraded-path records count
+  for nothing until merged, which is why the session-start ritual (§3) keeps strays
+  visible.
 - **Relation to `PARKING-LOT.md`:** the parking lot stays human-curated deferred *ideas*;
   `docs/gaps/` holds machine-written observed *evidence*. An idea may cite gap records as
   its promotion trigger.
@@ -193,7 +218,12 @@ Semantics:
 
 Domain skills encode what is true in a field (reconciliation norms, matching rules,
 controls), not how to work. They get class-specific acceptance criteria, on top of the
-house authoring standard:
+house authoring standard.
+
+**This process is provisional pending first use.** The first real promotion is expected
+to revise this subsection, and doing so is an amendment, not a violation. It is written
+down now so that expert involvement cannot silently degrade into approval theater — not
+because the details are settled ahead of any instance.
 
 1. **Examples first.** Before the skill is built, the named domain expert supplies
    concrete worked examples — real edge cases, relayed by the human from a short
@@ -204,11 +234,19 @@ house authoring standard:
 3. **Sign-off = example verification.** The expert (via the human) confirms their own
    examples are correctly encoded — a review an expert can actually perform reliably,
    unlike reading a skill document cold. Recorded in the skill:
-   `validated-by: <name>, <date>, examples-verified`.
-4. **Citations mandatory** for every normative claim not covered by an expert example.
-5. **Consumption is situational via the plan.** Domain skills are never preloaded. The
+   `validated-by: <name>, <date>, examples-verified, review-by: <date>`. The `review-by`
+   date exists because domain norms change (tax law, annually); a skill past its
+   `review-by` date is consumed as unvalidated until re-verified.
+4. **No expert reachable:** the skill may still ship, labeled
+   `validated-by: none — citations only`. The label is restated wherever the skill is
+   consumed (spec, plan, gate summaries), and the gap record stays `open` rather than
+   closing — an unvalidated skill *mitigates* a gap; it does not *close* one.
+5. **Citations mandatory** for every normative claim not covered by an expert example.
+6. **Consumption is situational via the plan.** Domain skills are never preloaded. The
    architect (which holds the Skill tool) invokes them at design time; the plan carries
-   the constraints to the Skill-less builder as explicit tasks and acceptance checks.
+   the constraints to the Skill-less builder as explicit tasks and acceptance checks —
+   and states that domain questions the plan does not answer are stop-and-report, never
+   the builder's own judgment call (§1).
 
 A domain skill is memoized research: the researcher can answer per-task, but that pays
 the cost every task and the answer evaporates. The skill is that research cached, curated
@@ -220,7 +258,10 @@ No new drift test is needed (§2 removed the only shared block). `install.sh` is
 untouched — `docs/gaps/` is repo content, and both agent-file changes ride the existing
 checksum/manifest machinery.
 
-Add five scenarios to the manual behavioral-validation procedure:
+Add five scenarios to the manual behavioral-validation procedure. They are ranked, not
+equal: **scenario 3 is load-bearing** — it tests the discriminator, the highest-risk
+behavior in the design, and should re-run after any change to the orchestrator's Gap
+flags text. Scenarios 1–2 matter at first domain contact; 4–5 are documentation-grade.
 
 1. **Domain-positive:** a payroll-withholding-calculator task → the architect declares
    `DOMAIN GAP: payroll` *before* writing a spec; researcher backfill runs; the gate
@@ -228,8 +269,8 @@ Add five scenarios to the manual behavioral-validation procedure:
 2. **Domain-negative:** the same task with a `domain-payroll` skill installed → no gap
    declared; the skill's constraints appear in the plan.
 3. **Hard-but-in-charter negative:** a genuinely difficult refactor entirely inside the
-   team's competence → no gap anywhere; every gate says `gaps: none`. This is the
-   discriminator's test — the highest-risk behavior in the design.
+   team's competence. Objective pass condition: every gate summary line reads exactly
+   `gaps: none` and no `GAP-*.md` file exists anywhere after the run.
 4. **Declined promotion:** the human declines a recorded gap → the record freezes as
    `declined` with the reason; no capability work starts.
 5. **Degraded logging path:** manifest absent → the record lands in the project's
@@ -237,8 +278,10 @@ Add five scenarios to the manual behavioral-validation procedure:
 
 ## 7. Size audit
 
-New installed instruction text: ~7 lines (architect) + ~14 lines (orchestrator) ≈ 21
-lines, against the ~40-line ceiling this design set for itself. New repo content:
+New installed instruction text: ~13 lines (architect) + ~19 lines (orchestrator,
+including the session-start ritual clause) ≈ 32 lines, against the ~40-line ceiling this
+design set for itself — the second panel's amendments spent most of the remaining slack,
+which is itself a signal to hold the line here. New repo content:
 `docs/gaps/README.md` (schema) and this spec. New agents: zero. New routes: zero. New
 hooks: zero. Every prior amendment to this team was incident-driven; this is the first
 speculative one, which is why it ships at minimum viable size — the loop's own gap
