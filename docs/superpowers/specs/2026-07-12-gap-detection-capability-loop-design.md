@@ -189,6 +189,12 @@ Semantics:
   records point at the spec or ticket where the work is tracked (Asana per org
   discipline, via the ticketer, when the human wants it tracked); `declined` records keep
   the reason. The gap directory never becomes a second ticket system.
+- **Declined is not terminal — the reason carries forward.** A new detection with a
+  previously-declined identity is still logged (detection and decision are separate
+  concerns), links the declined record in `recurrence:`, and is presented at the gate
+  with the decline attached: `gaps: GAP-<date>-<id> — note: declined <date>, reason:
+  <reason>`. It re-opens the question only when the human says the stated reason no
+  longer holds; the declined record itself is never edited or deleted.
 - **Flow-back across installs:** a coworker's install writes records into their own clone
   (their manifest points there); their human opens an ordinary PR to this repository.
   Promotion decisions happen only against canonical main, and **a record not in canonical
