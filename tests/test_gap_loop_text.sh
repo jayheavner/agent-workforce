@@ -53,6 +53,8 @@ expect_grep agents/orchestrator.md "await upstreaming" \
   "orchestrator session-start reports stray records"
 expect_grep agents/orchestrator.md "Amendment 2026-07-12 — gap detection" \
   "orchestrator amendment note recorded"
+expect_grep agents/orchestrator.md '<repo>/docs/gaps/README.md' \
+  "orchestrator points the scribe at the schema"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
