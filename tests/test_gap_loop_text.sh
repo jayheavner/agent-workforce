@@ -42,5 +42,17 @@ expect_grep agents/architect.md "domain-uncertified" \
 expect_grep agents/architect.md "stop-and-report to the orchestrator, never the builder" \
   "architect plans forbid builder domain improvisation"
 
+# --- Task 3: orchestrator gap handling ---
+expect_grep agents/orchestrator.md "## Gap flags" \
+  "orchestrator has the Gap flags section"
+expect_grep agents/orchestrator.md "hard is never a gap" \
+  "orchestrator carries the discriminator"
+expect_grep agents/orchestrator.md '`gaps: none`' \
+  "orchestrator requires the gate gaps line"
+expect_grep agents/orchestrator.md "await upstreaming" \
+  "orchestrator session-start reports stray records"
+expect_grep agents/orchestrator.md "Amendment 2026-07-12 — gap detection" \
+  "orchestrator amendment note recorded"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
