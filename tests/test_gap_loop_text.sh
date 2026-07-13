@@ -30,5 +30,17 @@ expect_grep docs/gaps/README.md "Declined is not terminal" \
 expect_grep docs/gaps/README.md "GAP-<YYYYMMDD>-<kind>-<slug>.md" \
   "gap README defines the record filename"
 
+# --- Task 2: architect domain sensor ---
+expect_grep agents/architect.md "practitioner test" \
+  "architect carries the practitioner test"
+expect_grep agents/architect.md "DOMAIN GAP: <field>" \
+  "architect declares DOMAIN GAP in reports"
+expect_grep agents/architect.md "the plan is the carrier" \
+  "architect states plan-as-carrier"
+expect_grep agents/architect.md "domain-uncertified" \
+  "architect labels uncertified criteria"
+expect_grep agents/architect.md "stop-and-report to the orchestrator, never the builder" \
+  "architect plans forbid builder domain improvisation"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
