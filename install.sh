@@ -137,6 +137,8 @@ bash -n "$REPO/hooks/agent-team-policy-mutations.sh" || fail "policy mutations s
 bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
 [ -f "$REPO/hooks/agent-team-dispatch-guard.sh" ] || fail "hooks/agent-team-dispatch-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-dispatch-guard.sh" || fail "dispatch guard failed bash -n"
+[ -f "$REPO/hooks/agent-team-plugin-router.sh" ] || fail "hooks/agent-team-plugin-router.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed bash -n"
 jq empty "$REPO/hooks/model-rates.json" || fail "model-rates.json is not valid JSON"
 jq -e '
   def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
@@ -155,6 +157,7 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
+  bash "$REPO/tests/test_plugin_mode.sh" >/dev/null || fail "plugin-mode tests failed — run tests/test_plugin_mode.sh to see which"
   bash "$REPO/tests/test_decision_discipline_drift.sh" >/dev/null || fail "decision-discipline drift test failed — run tests/test_decision_discipline_drift.sh to see which"
 fi
 [ -f "$POLICY_KEYS" ] || fail "policy/KEYS.md is missing from repo"
