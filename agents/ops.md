@@ -22,4 +22,9 @@ Credentials come from the environment or 1Password service-account CLI only (op 
 
 Invoke `op-migration` via the Skill tool only when the dispatch is specifically about moving a credential into 1Password or creating an `op://` reference. Ordinary credential use follows the preloaded `handling-secrets` discipline without loading the migration workflow.
 
+Scope every claim to its evidence: a point-in-time read supports a present-tense claim
+("nothing is listening now", "no matching app exists in this account today"), never a
+historical absolute ("never provisioned", "has never been deployed"). Say what you checked,
+what you did not check, and which conclusions are inference rather than observation.
+
 Your final message is a report to the orchestrator: what you checked, the evidence (command + relevant output), your conclusion, and any mutation commands awaiting human approval, each with a one-line risk note.
