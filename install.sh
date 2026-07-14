@@ -1,16 +1,109 @@
 #!/usr/bin/env bash
-# install.sh — validate, back up, install the agent team into ~/.claude/.
-# install.sh --check — verify the installed team against the last install's
-# manifest and against the repo, without touching anything: detects hand-edits
-# under ~/.claude/, a repo that moved on without a reinstall, and machine-level
-# rot (missing skills, missing jq). Exits nonzero on any drift.
+# install.sh — validate, back up, and install the agent team into one Claude
+# profile. Use --list-profiles before installation when a machine may have more
+# than one profile; use --profile DIR to select one explicitly.
+# install.sh --check [--profile DIR] verifies that profile against the last
+# install's manifest and the repo without touching anything.
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-# Honor CLAUDE_CONFIG_DIR (how Claude Code itself picks its config dir) so the
-# team installs where the running client actually reads from; fall back to
-# ~/.claude when it is unset.
-CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MODE="install"
+PROFILE_ARG=""
+LIST_PROFILES=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bash install.sh [--profile DIR]
+  bash install.sh --check [--profile DIR]
+  bash install.sh --list-profiles
+
+An explicit --profile takes precedence over CLAUDE_CONFIG_DIR. When neither is
+set, the installer discovers profile-shaped $HOME/.claude* directories and
+refuses an ambiguous multi-profile install.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check) MODE="check"; shift ;;
+    --profile)
+      [ "$#" -ge 2 ] || { echo "install: FAIL — --profile requires a directory" >&2; usage >&2; exit 1; }
+      PROFILE_ARG="$2"; shift 2
+      ;;
+    --list-profiles) LIST_PROFILES=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "install: FAIL — unknown argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+PROFILE_DIRS=()
+add_profile() {
+  local candidate="$1" existing
+  [ -n "$candidate" ] || return 0
+  if [ -d "$candidate" ]; then
+    candidate="$(cd "$candidate" && pwd -P)"
+  fi
+  for existing in "${PROFILE_DIRS[@]}"; do
+    [ "$existing" = "$candidate" ] && return 0
+  done
+  PROFILE_DIRS+=("$candidate")
+}
+is_profile_dir() {
+  [ -d "$1" ] && {
+    [ -f "$1/.credentials.json" ] ||
+    [ -d "$1/projects" ] ||
+    [ -f "$1/agent-team-manifest.json" ]
+  }
+}
+
+# The default profile remains a candidate even on a fresh machine where it has
+# not been created yet. Alternate conventional profile roots are counted only
+# when they carry Claude profile state, so unrelated directories such as
+# ~/.claude-mem and ~/.claude-code-gui are not false positives.
+add_profile "$HOME/.claude"
+for candidate in "$HOME"/.claude-*; do
+  is_profile_dir "$candidate" && add_profile "$candidate"
+done
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  add_profile "$CLAUDE_CONFIG_DIR"
+fi
+# Non-conventional profile paths cannot be inferred safely. A caller can make
+# them visible to --list-profiles and ambiguity checks as a colon-separated list.
+if [ -n "${AGENT_TEAM_PROFILE_DIRS:-}" ]; then
+  old_ifs="$IFS"; IFS=':'
+  for candidate in $AGENT_TEAM_PROFILE_DIRS; do add_profile "$candidate"; done
+  IFS="$old_ifs"
+fi
+
+if [ "$LIST_PROFILES" -eq 1 ]; then
+  echo "profiles: ${#PROFILE_DIRS[@]} detected"
+  for candidate in "${PROFILE_DIRS[@]}"; do
+    marker=""
+    [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ "$candidate" = "$CLAUDE_CONFIG_DIR" ] && marker=" (CLAUDE_CONFIG_DIR)"
+    echo "  $candidate$marker"
+  done
+  exit 0
+fi
+
+if [ -n "$PROFILE_ARG" ]; then
+  CLAUDE_DIR="$PROFILE_ARG"
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  CLAUDE_DIR="$CLAUDE_CONFIG_DIR"
+elif [ "${#PROFILE_DIRS[@]}" -gt 1 ]; then
+  echo "$MODE: FAIL — multiple Claude profiles detected; select one explicitly:" >&2
+  for candidate in "${PROFILE_DIRS[@]}"; do
+    if [ "$MODE" = "check" ]; then
+      echo "  bash install.sh --check --profile \"$candidate\"" >&2
+    else
+      echo "  bash install.sh --profile \"$candidate\"" >&2
+    fi
+  done
+  exit 1
+else
+  CLAUDE_DIR="${PROFILE_DIRS[0]}"
+fi
+
 # Hooks are referenced by an absolute "$HOME/.claude/hooks/..." path baked into
 # agent frontmatter, and Claude Code does NOT reliably export CLAUDE_CONFIG_DIR
 # to hook subprocesses — so hooks must live at that fixed location regardless of
@@ -21,13 +114,16 @@ HOOKS_DIR="$HOME/.claude/hooks"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$CLAUDE_DIR/backups/agent-team-$STAMP"
 MANIFEST="$CLAUDE_DIR/agent-team-manifest.json"
-MODE="install"
-[ "${1:-}" = "--check" ] && MODE="check"
 
 fail() { echo "$MODE: FAIL — $*" >&2; exit 1; }
 warn() { echo "$MODE: WARNING — $*" >&2; }
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
+frontmatter_value() { # $1 file, $2 key
+  awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
+}
 HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh agent-team-dispatch-guard.sh model-rates.json"
+POLICY_KEYS="$REPO/policy/KEYS.md"
+FRAMEWORK_PIN="$REPO/SKILLS-FRAMEWORK"
 
 # --- validation (nothing is touched until all of this passes) ---
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -52,10 +148,20 @@ jq -e '
   ([ entries[] | rates[] | (. * 10000) | (. == (. | floor)) ] | all)
 ' "$REPO/hooks/model-rates.json" >/dev/null \
   || fail "model-rates.json: every model needs five numeric rate keys, each with at most 4 fractional decimal digits"
-bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
-bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
-bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
-bash "$REPO/tests/test_decision_discipline_drift.sh" >/dev/null || fail "decision-discipline drift test failed — run tests/test_decision_discipline_drift.sh to see which"
+# The outer installer runs these once. Sandbox installs launched by
+# test_install_skills.sh inherit AGENT_TEAM_SKIP_INSTALL_TEST=1 so they exercise
+# skill/install behavior without multiplying the unrelated hook suites.
+if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
+  bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
+  bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
+  bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
+  bash "$REPO/tests/test_decision_discipline_drift.sh" >/dev/null || fail "decision-discipline drift test failed — run tests/test_decision_discipline_drift.sh to see which"
+fi
+[ -f "$POLICY_KEYS" ] || fail "policy/KEYS.md is missing from repo"
+[ -f "$FRAMEWORK_PIN" ] || fail "SKILLS-FRAMEWORK is missing from repo"
+FRAMEWORK_REVISION="$(sed -n 's/^revision:[[:space:]]*//p' "$FRAMEWORK_PIN")"
+printf '%s' "$FRAMEWORK_REVISION" | grep -qE '^[a-f0-9]{40}$' \
+  || fail "SKILLS-FRAMEWORK: revision must be a full 40-character commit SHA"
 
 # --- vendored skills validation (before anything is copied) ---
 for d in "$REPO"/skills/*/; do
@@ -67,20 +173,39 @@ for d in "$REPO"/skills/*/; do
   printf '%s\n' "$fm" | grep -qE '^description:' || fail "skills/$name/SKILL.md: missing frontmatter 'description:'"
   smname="$(printf '%s\n' "$fm" | sed -n 's/^name:[[:space:]]*//p')"
   [ "$smname" = "$name" ] || fail "skills/$name/SKILL.md: name '$smname' != directory '$name'"
+  printf '%s' "$name" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$' \
+    || fail "skills/$name: name violates Agent Skills naming rules"
+  [ "${#name}" -le 64 ] || fail "skills/$name: name exceeds 64 characters"
+  description="$(frontmatter_value "$sm" description)"
+  [ "${#description}" -le 1024 ] || fail "skills/$name: description exceeds 1024 characters"
+
+  while IFS= read -r link; do
+    [ -n "$link" ] || continue
+    case "$link" in http*|mailto:*|/*) continue ;; esac
+    [ -f "$d$link" ] || fail "skills/$name/SKILL.md: dangling relative link '$link'"
+  done <<EOF
+$(grep -oE '\]\([^)#][^)]*\)' "$sm" | sed 's/^](//; s/)$//' || true)
+EOF
 done
-# the three coding-standards.md copies must be hash-identical (DRY guard, 3.11)
-cs_a="$REPO/skills/coding-standards/references/coding-standards.md"
-cs_b="$REPO/skills/code-review/references/coding-standards.md"
-cs_c="$REPO/skills/plan-review/references/coding-standards.md"
-h_a="$(sha "$cs_a")"; h_b="$(sha "$cs_b")"; h_c="$(sha "$cs_c")"
-[ "$h_a" = "$h_b" ] || fail "coding-standards.md differs: code-review copy diverged from coding-standards"
-[ "$h_a" = "$h_c" ] || fail "coding-standards.md differs: plan-review copy diverged from coding-standards"
+
+# The consumer-owned project-policy instance must cover every active registry
+# key. A missing value would make behavior depend on an invisible judgment
+# fallback even though this workforce ships an explicit organization policy.
+PROJECT_POLICY="$REPO/skills/project-policy/SKILL.md"
+[ -f "$PROJECT_POLICY" ] || fail "skills/project-policy/SKILL.md is missing"
+while IFS= read -r key; do
+  [ -n "$key" ] || continue
+  grep -qE "^\\*\\*$key( \\(inherited\\))?\\*\\*" "$PROJECT_POLICY" \
+    || fail "project-policy is missing registered key '$key'"
+done <<EOF
+$(grep -oE '^- [a-z-]+' "$POLICY_KEYS" | sed 's/^- //' || true)
+EOF
 
 # Built-in skills ship with the Claude Code client itself and have no
 # SKILL.md on disk anywhere (not under ~/.claude/skills/, not in the plugin
 # cache) — "verify" is one of these. Listed explicitly so the check below
 # stays a real resolution check rather than a rubber stamp.
-BUILTIN_SKILLS=" verify run init review security-review update-config keybindings-help "
+BUILTIN_SKILLS=" verify run init review security-review code-review update-config keybindings-help "
 
 resolve_skill() { # $1 skill ref (bare or ns:name) -> 0 if found
   case "$1" in
@@ -96,6 +221,27 @@ resolve_skill() { # $1 skill ref (bare or ns:name) -> 0 if found
       ;;
   esac
 }
+
+# Framework dependency and policy contracts are validated independently of
+# which agents happen to preload a skill. This prevents a seemingly-unused
+# skill from shipping with a broken requires: edge or an unknown policy key.
+for d in "$REPO"/skills/*/; do
+  name="$(basename "$d")"
+  sm="$d/SKILL.md"
+  requires="$(frontmatter_value "$sm" requires | tr -d '[],')"
+  for required in $requires; do
+    resolve_skill "$required" \
+      || fail "skills/$name/SKILL.md: requires '$required' but it does not resolve"
+  done
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    key="${token#policy:}"
+    grep -qE "^- $key " "$POLICY_KEYS" \
+      || fail "skills/$name/SKILL.md: unregistered policy key '$key'"
+  done <<EOF
+$(grep -ohE 'policy:[a-z-]+' "$sm" | sort -u || true)
+EOF
+done
 
 for f in "$REPO"/agents/*.md; do
   head -1 "$f" | grep -q '^---$' || fail "$f: no frontmatter"
@@ -119,12 +265,10 @@ for f in "$REPO"/agents/*.md; do
   fi
 done
 
-# Skills the architect invokes situationally via the Skill tool rather than
-# preloading in its skills: frontmatter — invisible to the loop above, but a
-# missing one still breaks the architect at runtime, so the same loud-failure
-# rule applies at install time.
-for s in superpowers:brainstorming plan-review ux-to-ui-design; do
-  resolve_skill "$s" || fail "architect situational skill '$s' does not resolve to an installed skill"
+# Skills invoked situationally via the Skill tool rather than preloaded in an
+# agent's frontmatter are invisible to the loop above, so validate them here.
+for s in interviewing convene-panel ux-to-ui-design op-migration; do
+  resolve_skill "$s" || fail "situational skill '$s' does not resolve to an installed skill"
 done
 
 # The sandbox install-skills test itself invokes install.sh against its own
@@ -146,6 +290,11 @@ if [ "$MODE" = "check" ]; then
   [ -f "$MANIFEST" ] || fail "no manifest at $MANIFEST — run 'bash install.sh' once first"
   jq empty "$MANIFEST" 2>/dev/null || fail "manifest at $MANIFEST is not valid JSON — re-run 'bash install.sh'"
   drift=0
+  recorded_framework="$(jq -r '.skills_framework_revision // empty' "$MANIFEST")"
+  if [ "$recorded_framework" != "$FRAMEWORK_REVISION" ]; then
+    echo "check: STALE — skills framework pin changed since the last install; re-run install"
+    drift=1
+  fi
   while IFS="$(printf '\t')" read -r rel recorded; do
     [ -n "$rel" ] || continue
     case "$rel" in
@@ -231,6 +380,28 @@ done <<EOF
 $(cd "$REPO/skills" && find . -type f)
 EOF
 
+# Files managed by the previous manifest but removed from the current vendored
+# tree are retired on this install. Back them up with the rest so a later copy
+# failure can restore the exact previous installation.
+RETIRED_SKILLS=""
+if [ -f "$MANIFEST" ] && jq empty "$MANIFEST" 2>/dev/null; then
+  while IFS= read -r managed; do
+    case "$managed" in
+      skills/*)
+        rel="${managed#skills/}"
+        inst="$CLAUDE_DIR/skills/$rel"
+        if [ ! -f "$REPO/skills/$rel" ] && [ -f "$inst" ]; then
+          mkdir -p "$BACKUP/skills/$(dirname "$rel")"
+          cp "$inst" "$BACKUP/skills/$rel"
+          RETIRED_SKILLS="$RETIRED_SKILLS $rel"
+        fi
+        ;;
+    esac
+  done <<EOF
+$(jq -r '.files | keys[]' "$MANIFEST")
+EOF
+fi
+
 restore() {
   echo "install: restoring backup from $BACKUP" >&2
   for b in "$BACKUP"/*; do
@@ -294,6 +465,9 @@ if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$HOOKS_DIR/"; then restore
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
+for rel in $RETIRED_SKILLS; do
+  if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
+done
 while IFS= read -r rel; do
   rel="${rel#./}"
   mkdir -p "$CLAUDE_DIR/skills/$(dirname "$rel")" || { restore; cleanup_fresh; fail "cannot create skills target dir for $rel; rolled back"; }
@@ -324,7 +498,9 @@ EOF
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg repo "$REPO" \
     --arg commit "$COMMIT" \
+    --arg skills_framework_revision "$FRAMEWORK_REVISION" \
     '{installed_at: $at, repo: $repo, commit: $commit,
+      skills_framework_revision: $skills_framework_revision,
       files: ([inputs | select(length > 0) | split("\t") | {(.[0]): .[1]}] | add)}' \
   > "$TMP_MANIFEST"
 if jq empty "$TMP_MANIFEST" 2>/dev/null && cp "$TMP_MANIFEST" "$MANIFEST"; then
@@ -334,6 +510,12 @@ else
   warn "manifest write failed — install is fine, but 'install.sh --check' and the orchestrator's build line won't work until a successful re-install"
 fi
 
-echo "install: OK — 10 agents + 10 skills installed, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
-echo "install: verify any time with: bash install.sh --check"
-echo "install: start the team with: claude --agent orchestrator"
+AGENT_COUNT="$(find "$REPO/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')"
+SKILL_COUNT="$(find "$REPO/skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l | tr -d ' ')"
+echo "install: OK — $AGENT_COUNT agents + $SKILL_COUNT skills installed into profile $CLAUDE_DIR, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
+echo "install: verify any time with: bash install.sh --check --profile \"$CLAUDE_DIR\""
+if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then
+  echo "install: start the team with: claude --agent orchestrator"
+else
+  echo "install: start the team with: CLAUDE_CONFIG_DIR=\"$CLAUDE_DIR\" claude --agent orchestrator"
+fi
