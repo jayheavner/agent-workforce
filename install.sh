@@ -27,7 +27,7 @@ MODE="install"
 fail() { echo "$MODE: FAIL — $*" >&2; exit 1; }
 warn() { echo "$MODE: WARNING — $*" >&2; }
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
-HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh agent-team-dispatch-guard.sh model-rates.json"
+HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh agent-team-dispatch-guard.sh model-rates.json agent-model-defaults.json"
 
 # --- validation (nothing is touched until all of this passes) ---
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -52,6 +52,26 @@ jq -e '
   ([ entries[] | rates[] | (. * 10000) | (. == (. | floor)) ] | all)
 ' "$REPO/hooks/model-rates.json" >/dev/null \
   || fail "model-rates.json: every model needs five numeric rate keys, each with at most 4 fractional decimal digits"
+# Telemetry (2026-07-13 spec, D2 resolution): the committed role->pin map must
+# exactly match what agents/*.md frontmatter says, so it can never silently
+# diverge — same drift-test pattern as the hash-identical coding-standards copies.
+[ -f "$REPO/hooks/agent-model-defaults.json" ] || fail "hooks/agent-model-defaults.json is missing from repo"
+jq empty "$REPO/hooks/agent-model-defaults.json" || fail "agent-model-defaults.json is not valid JSON"
+EXPECTED_DEFAULTS="$(for f in "$REPO"/agents/*.md; do
+  n="$(awk '/^---$/{n++; next} n==1' "$f" | sed -n 's/^name:[[:space:]]*//p')"
+  m="$(awk '/^---$/{n++; next} n==1' "$f" | sed -n 's/^model:[[:space:]]*//p')"
+  printf '%s\t%s\n' "$n" "$m"
+done | jq -R -n '[inputs | select(length > 0) | split("\t") | {(.[0]): .[1]}] | add')"
+COMMITTED_DEFAULTS="$(jq -S '.roles' "$REPO/hooks/agent-model-defaults.json")"
+[ "$(printf '%s' "$EXPECTED_DEFAULTS" | jq -S .)" = "$COMMITTED_DEFAULTS" ] \
+  || fail "agent-model-defaults.json .roles does not match agents/*.md frontmatter pins — regenerate it"
+jq -e --argjson roles "$COMMITTED_DEFAULTS" '
+  .models as $M | [$roles[] | in($M)] | all
+' "$REPO/hooks/model-rates.json" >/dev/null \
+  || fail "agent-model-defaults.json: every pin must exist in model-rates.json"
+[ -f "$REPO/tools/agent-team-scoreboard.sh" ] || fail "tools/agent-team-scoreboard.sh is missing from repo"
+bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed bash -n"
+bash "$REPO/tests/test_scoreboard.sh" >/dev/null || fail "scoreboard tests failed — run tests/test_scoreboard.sh to see which"
 bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
 bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
 bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
@@ -210,9 +230,11 @@ PREEXISTING_POLICY_MUT=0
 PREEXISTING_COST=0
 PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
+PREEXISTING_DEFAULTS=0
 [ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
+[ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -242,6 +264,7 @@ restore() {
       agent-team-cost.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
+      agent-model-defaults.json) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -275,6 +298,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-cost.sh"
   [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$HOOKS_DIR/model-rates.json"
   [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-guard.sh"
+  [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -294,6 +318,7 @@ if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$HOOKS_DIR/"; then restore
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
 while IFS= read -r rel; do
   rel="${rel#./}"
   mkdir -p "$CLAUDE_DIR/skills/$(dirname "$rel")" || { restore; cleanup_fresh; fail "cannot create skills target dir for $rel; rolled back"; }

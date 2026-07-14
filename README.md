@@ -257,6 +257,38 @@ server web-search/web-fetch calls are counted but not priced. Known limitation:
 two orchestrator sessions running in the same directory at once share the cost-file
 name pattern, and the most recently modified file wins.
 
+### Dispatch telemetry
+
+Every routed task also leaves dispatch outcome records — evidence for recalibrating the
+orchestrator's model routing table and for catching silent model overrides (spec:
+`docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`). The cost hook stamps
+each dispatch's requested model override; at the final gate the scribe joins those
+mechanical facts to the orchestrator's verdicts (first-try pass/fail, repair loops) and
+writes one JSONL record per dispatch to the project's `docs/telemetry/` (schema in
+`docs/telemetry/README.md`). Records count for calibration only once merged to canonical
+main, like gap records. Telemetry is best-effort and never blocks a dispatch, changes a
+cost figure, or fails a gate.
+
+Read the evidence with the scoreboard (per role × actually-ran model × tier —
+first-try pass rate is the routing signal):
+
+```
+bash tools/agent-team-scoreboard.sh path/to/project/docs/telemetry
+```
+
+or ad hoc with jq:
+
+```
+jq -s 'group_by([.role,.resolved_model,.tier]) | map({key:(.[0].role+"/"+.[0].resolved_model+"/"+.[0].tier),
+  n:length, first_try:(map(select(.sequence=="first" and .verdict=="pass"))|length)})' docs/telemetry/*.jsonl
+```
+
+A drifted dispatch (harness ran a different model than was pinned or requested — e.g. a
+stray `CLAUDE_CODE_SUBAGENT_MODEL` in the environment) is bucketed under the model that
+actually ran and counted in the scoreboard's drift column, never credited to the model
+that was asked for. Role pins live in the committed `hooks/agent-model-defaults.json`,
+which `install.sh` verifies against `agents/*.md` frontmatter on every run.
+
 ## Shakedown checklist
 
 Run this once, in full, after the first install, before trusting the team with real work:
@@ -308,3 +340,19 @@ documentation-grade.
 - [ ] 5. **Degraded logging path:** with the manifest absent, expect the record in the
       project's own `docs/gaps/` and the gate disclosing the degraded path; at the next
       session start, expect "1 gap records in this project await upstreaming."
+
+### Telemetry shakedown
+
+Run after installing the dispatch-telemetry amendment (spec:
+`docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`):
+
+- [ ] 1. Run a small task end to end. At the final gate, expect a `telemetry: <n> records`
+      line, and confirm `docs/telemetry/<project-slug>--<session-id>.jsonl` exists with one
+      record per dispatch: the builder row shows `sequence: "first"` and its real verdict,
+      support-role rows show `n/a`, and each `resolved_model` matches the model the
+      orchestrator's closeout table says actually ran. This scenario is also the live
+      confirmation that the hook captures `tool_input.model` on an overridden dispatch
+      (`requested_override` non-null in the session cost file for any dispatch the
+      orchestrator downshifted).
+- [ ] 2. Run `bash tools/agent-team-scoreboard.sh docs/telemetry` in that project — expect
+      one row per (role, model, tier) group and no `unattributed` line.

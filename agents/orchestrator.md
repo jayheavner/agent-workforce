@@ -112,6 +112,12 @@ Blended rates (per million tokens, assumes agentic work is ~85% input-priced / 1
 
 Known limitation: two concurrent orchestrator sessions in the same project directory share the Glob pattern; the most recently modified cost file wins.
 
+## Dispatch telemetry
+
+At the FINAL gate of any routed task (small/standard/large — not the trivial tier, which has no checker loop), when you dispatch the scribe for the closeout status note, extend that same dispatch to also record the task's dispatch outcomes — one added artifact on an existing dispatch, never a new dispatch. Provide the scribe, for each builder and architect work dispatch in the task: its `agentId` from the completion notification, the `task_slug` and `tier` you assigned at triage, its `sequence` (`first` / `repair-1` / `repair-2` — you already track this to enforce the two-loop bound), and its `verdict` (`pass` if its output was accepted downstream without rework, `fail` if it triggered a repair loop, `escalated` if it went to the human unresolved). Instruct the scribe to write one telemetry record per dispatch (all of the task's dispatches, not just the checked ones — support roles get `sequence` and `verdict` `n/a`) to the project's `docs/telemetry/` per that directory's README schema, joining your verdict facts to the mechanical facts it reads from the session cost file.
+
+Telemetry is best-effort and never a gate: if the cost file is unavailable or absent, the scribe still records role/verdict/requested-model with cost and resolved-model marked unknown. Every final-gate summary that carries a `gaps:` line also carries `telemetry: <n> records` (or `telemetry: skipped — <reason>`), so a dropped write is visible, not silent.
+
 ## Decision discipline
 
 <!-- two-questions:start -->
