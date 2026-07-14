@@ -40,6 +40,17 @@ if [ -z "$TYPE" ]; then
   exit 2
 fi
 
+# Direct plugin loading namespaces component names. Accept this plugin's own
+# namespace and normalize it for the exact specialist allowlist below; no
+# other namespace is trusted.
+case "$TYPE" in
+  agent-workforce:*) TYPE="${TYPE#agent-workforce:}" ;;
+  *:*)
+    printf 'agent-team dispatch guard: subagent_type belongs to an unrecognized plugin namespace. Use an agent-workforce specialist.\n' >&2
+    exit 2
+    ;;
+esac
+
 # Exact equality against each of the nine names only — no substring/containment
 # matching, so a compound value like "architect builder" cannot bypass by
 # matching two adjacent tokens in a space-padded list.
