@@ -12,12 +12,14 @@ recorded in the target project's own CLAUDE.md, which was in context the entire 
 
 ## The one-sentence verdict
 
-**The very first ops dispatch got the answer completely right in under two minutes. The human
-then reported a conflicting first-person observation ("I've been in this platform hundreds of
-times back when it had a normal Amplify URL"), and the orchestrator — instead of asking the one
-question that reconciles observation with evidence (*which app, at which URL?*) — upgraded the
-observation into the conclusion "so it is deployed" and abandoned its verified finding.
-Everything after that was the cost of that unforced inference.**
+**The first ops dispatch verified the present state correctly in under two minutes: nothing is
+reachable today, the app runs locally. The orchestrator then relayed that point-in-time evidence
+as a historical absolute — "never provisioned," "has never been deployed," "no correct URL" —
+which its checks could not support. The human answered that absolute exactly as stated ("there
+was a URL; I used it"), and instead of separating *now* from *then*, the orchestrator flipped to
+the opposite absolute ("so it is deployed") and abandoned its verified present-state finding.
+The rest of the session was an argument about history that was irrelevant to the fix — the fix
+depended only on whether a URL exists now, and that was already answered.**
 
 Ops dispatch #1 reported: NXDOMAIN, never provisioned, no hosting anywhere, exists only at
 `localhost:5173` on a dev machine. Two hours, four more dispatches, one credential rabbit hole,
@@ -25,18 +27,20 @@ and one killed launchd service later, the session's final conclusion was the sam
 
 ## Timeline of the failure
 
-1. **Correct triage, correct investigation.** The orchestrator followed its investigate-first
-   rule, found the `WORKSPACE_URL` source, and dispatched ops. Ops #1 (18 tool uses) checked DNS,
-   Amplify, CloudFront, S3, API Gateway, Route53, GoDaddy — and concluded correctly: never
-   deployed, local-only.
-2. **The pivot point.** The human replied: *"I've been in this platform hundreds of times back
-   when it had a normal Amplify URL. This is LAZY work."* That is an experiential report, not a
-   counter-claim about infrastructure — and both statements could be true at once if the memory
-   attached a real Amplify experience (recon-web or CES are real Amplify apps the human uses) to
-   the wrong app. The orchestrator did not ask the discriminating question (*which app, at which
-   URL?*); it upgraded the observation into the conclusion "My bad — so it is deployed" and
-   discarded its verified finding. The contradiction with the evidence was manufactured by the
-   orchestrator's interpretation, not stated in the human's words.
+1. **Correct triage, correct investigation, overstated relay.** The orchestrator followed its
+   investigate-first rule, found the `WORKSPACE_URL` source, and dispatched ops. Ops #1 (18 tool
+   uses) checked DNS, Amplify, CloudFront, S3, API Gateway, Route53, GoDaddy — all point-in-time
+   reads proving the present state: nothing reachable, app runs locally. The orchestrator relayed
+   this as history: "never provisioned," "has never been deployed anywhere public," "there is no
+   correct URL to point to." No check performed then (or later) could establish "never."
+2. **The pivot point.** The human answered the premise exactly as stated to them. Told "no
+   correct URL," they replied: *"I've been in this platform hundreds of times back when it had a
+   normal Amplify URL. This is LAZY work."* — i.e., a URL existed and they used it. "Nothing is
+   up now" and "there was a URL then" are claims about different times; both can be true; neither
+   was in conflict with the actual evidence. The orchestrator, instead of separating now from
+   then, flipped to the opposite historical absolute ("My bad — so it is deployed") and discarded
+   its verified present-state finding. Whether an Amplify URL ever existed for this app was never
+   settled in the session — and never needed to be, because the fix depends only on present state.
 3. **The detour.** Accepting "it is deployed somewhere" as ground truth forced a search for a
    thing that doesn't exist: re-inspecting Amplify apps (ops #2, 41 tool uses), the Okta
    SPA redirect-URI path (ops #3 and #4), a stale-token investigation, a vault-access dead end,
@@ -56,24 +60,30 @@ and one killed launchd service later, the session's final conclusion was the sam
 
 ## Root causes
 
-### RC1 — No rule for reconciling human observations with verified evidence (primary)
+### RC1 — Claims overran the evidence, then flipped instead of being scoped (primary)
 
-The orchestrator's instructions say "trust specialist reports — do not re-verify" and, at gates,
-"the human decides." Nothing covers the case where a human's first-person *observation* ("I've
-been in this platform at an Amplify URL") arrives alongside a specialist's contrary *evidence*
-(command + output: never deployed). Those are different kinds of input: the observation is
-almost certainly a true memory of a real experience, the evidence is checked fact, and the
-conflict lives in a single unverified link — whether the remembered experience belongs to *this*
-app. The correct move was to hold both and ask the discriminating question ("which app, at which
-URL, were you in?"). Instead the orchestrator upgraded the observation into an infrastructure
-conclusion ("so it is deployed") and discarded the finding. A version of the discriminating
-question was eventually asked (transcript line 171) — after the capitulation had already
-redirected two dispatches, by which point the human couldn't supply the URL anyway.
+The failure has two halves, and the orchestrator owns both.
 
-The follow-on answer "it's in the same account" (line 327) redirected the search a second time.
-That is not a blame line — memories mis-attach; that's *why* the reconciliation discipline has
-to live in the orchestrator. A system that converts confident testimony into fact under social
-pressure will be steered by whichever party is most confident, not by evidence.
+**First, the overclaim.** Point-in-time reads (DNS today, Amplify listing today, Route53/GoDaddy
+zones today) were relayed as historical absolutes: "never provisioned," "has never been
+deployed," "there is no correct URL to point to." A present-state check cannot prove "never."
+The overclaim is what invited the pushback: the human answered the premise as stated — told "no
+URL," they reported that a URL existed and they had used it. That answer was responsive and
+reasonable; the premise was the defective part.
+
+**Second, the flip.** Handed a claim about *then* that its evidence about *now* couldn't speak
+to, the orchestrator had a cheap, honest move: scope the claim — "nothing is reachable today;
+whether it was hosted in the past I haven't checked, and the fix only depends on today." Instead
+it swung to the opposite absolute ("so it is deployed"), discarded the verified present-state
+finding, and spent four dispatches and most of the session litigating a historical question that
+was irrelevant to repairing the links. The historical question was never settled — and never
+needed to be.
+
+The general rule this session demands: **a finding's tense must match its evidence.** Absence
+observed now is not absence always; a specialist or orchestrator that says "never" from a
+snapshot has already overclaimed, and every downstream argument inherits the defect. And when a
+human's account conflicts with a claim, the first check is whether the two even speak to the
+same time and scope — most such conflicts dissolve under scoping rather than needing adjudication.
 
 ### RC2 — No findings ledger, so established facts silently expired
 
@@ -104,7 +114,31 @@ truth" and "okta.md is canonical" pointed at contradictory answers, and the orch
 faulted for each in turn. The entire Okta path was a detour created by RC1 — but the rot is real
 and will bite the next session that legitimately needs the token.
 
-### RC5 — Question quality at gates
+### RC5 — The answer was produced in minute two and never said plainly
+
+Ops #1's report contained the complete answer, verbatim: "it exists only on a dev machine at
+localhost:5173." One sentence away from closing the session: "the app hasn't been deployed; it
+runs locally; start the dev server (`cd ui && npm run dev`, per the project's CLAUDE.md)." The
+orchestrator never said that sentence because it reported in the frame of its *route*, not the
+human's *situation*: the task had been tiered as "find the URL, repoint the config," so the
+finding was presented as a broken premise and a returned decision ("there is no correct URL to
+point to... this is a genuine decision that's yours to make") rather than as the action a human
+needs. The framework's reporting vocabulary — tiers, gates, premises, dispatches — has no slot
+for "just run this command," and the orchestrator cannot run commands itself. A thirty-second
+conversation became a two-hour one because the answer was phrased as project management instead
+of as help.
+
+### RC6 — The debugging discipline was never invoked, and mostly couldn't be
+
+The org's `debugging` skill (ranked falsifiable hypotheses, one variable at a time, evidence
+before fixes) is the direct antidote to the anchoring failure this session exhibited. It was
+never loaded by anyone. Structurally it barely could be: the orchestrator has no `Skill` tool at
+all; ops has the tool but is granted only `handling-secrets`; the sole agent with `debugging`
+preloaded — the builder — was dispatched twice, both times for mechanical work (start a server,
+free a port), never for diagnosis. The agents that did the diagnostic reasoning had no access to
+the discipline that governs diagnostic reasoning.
+
+### RC7 — Question quality at gates
 
 Three pickers landed badly: asking the human for the URL after the human's opening message
 established they don't have a working one ("If I had the URL would I ask?"); asking how to get
@@ -116,7 +150,8 @@ Each one converted human frustration into the pressure that fed RC1.
 ## What went right
 
 - The investigate-first rule (2026-07-09 amendment) worked as designed: cheap reads before
-  tier/route commitment, and ops #1 was thorough and correct.
+  tier/route commitment, and ops #1 was thorough and correct about the present state — the
+  defect was introduced in how its findings were restated, not in the investigation.
 - Ops policy hooks held: read-only enforced; mutation (launchd bootout) surfaced for approval.
 - The builder's launchd finding (respawn via launchd, not a stray process) was a genuinely good
   diagnosis, and the destructive step was gated, reversible, and documented.
@@ -124,11 +159,13 @@ Each one converted human frustration into the pressure that fed RC1.
 
 ## Recommendations
 
-1. **Evidence-reconciliation rule (orchestrator).** When a human observation conflicts with a
-   specialist finding that carries evidence, the orchestrator must not discard the finding and
-   must not upgrade the observation into a conclusion. It states both, names the cheapest
-   discriminating question or check, and resolves it first. A re-dispatch to "find" a thing
-   whose nonexistence was verified requires a new discriminating fact, stated in the dispatch.
+1. **Tense-and-scope discipline on findings (orchestrator + specialists).** A finding may claim
+   only what its evidence covers: a point-in-time read yields a present-state claim ("nothing
+   reachable now"), never a historical one ("never deployed"). When a human's account conflicts
+   with a finding, first check whether they speak to the same time and scope — scope the claim
+   before adjudicating it, and never resolve the conflict by flipping to the opposite absolute.
+   A re-dispatch to "find" a thing whose present-state absence was verified requires a stated
+   new fact, not a restated recollection.
 2. **Findings ledger.** The orchestrator keeps a short pinned list of established facts
    (claim + evidence + which dispatch proved it). Every subsequent dispatch prompt includes it;
    any dispatch that would contradict an entry must say which entry and why.
@@ -136,9 +173,15 @@ Each one converted human frustration into the pressure that fed RC1.
    broken right now" sessions route to a single hands-on agent (Bash + Read, debugging skill),
    not the phased orchestration. The orchestrator's honest move in this session was to say, in
    its first triage line, "this is live debugging — run it in a plain session, not the team."
-4. **Relay fidelity.** When a specialist report contains a fact the human will act on (a port, a
-   URL, a command), relay it verbatim; never substitute the orchestrator's own inference for the
-   specialist's stated fact (the 5173/5174 error was pure orchestrator reinterpretation).
+   Whatever agent carries diagnosis must load the `debugging` skill: today the orchestrator has
+   no Skill tool and ops carries only `handling-secrets`, so the discipline is unreachable on
+   every diagnostic path (RC6). Grant ops the `debugging` skill regardless of the new route.
+4. **Relay fidelity, and answers as actions.** When a specialist report contains a fact the
+   human will act on (a port, a URL, a command), relay it verbatim; never substitute the
+   orchestrator's own inference for the specialist's stated fact (the 5173/5174 error was pure
+   orchestrator reinterpretation). And when a finding answers the human's actual situation,
+   lead with the plain actionable sentence ("it runs locally — start it with `npm run dev`"),
+   not with what the finding means for the route (RC5).
 5. **Fix the Okta credential story in the environment, not the agents.** Reconcile okta.md, the
    shell config, and the service-account vault to one canonical, currently-valid path; refresh or
    remove the expired ClaudeCodeAccess-Jay token. Until then, every agent session inherits a trap.
