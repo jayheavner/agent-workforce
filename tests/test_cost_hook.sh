@@ -45,6 +45,11 @@ payload() { # $1 cwd, $2 transcript_path, $3 sid, $4 agentId, $5 agentType
     '{session_id:$sid, transcript_path:$tp, cwd:$cwd, hook_event_name:"PostToolUse",
       tool_name:"Agent", tool_response:{agentId:$aid, agentType:$at}}'
 }
+payload_m() { # payload() plus a tool_input.model override: $6 model
+  jq -cn --arg cwd "$1" --arg tp "$2" --arg sid "$3" --arg aid "$4" --arg at "$5" --arg m "$6" \
+    '{session_id:$sid, transcript_path:$tp, cwd:$cwd, hook_event_name:"PostToolUse",
+      tool_name:"Agent", tool_input:{model:$m}, tool_response:{agentId:$aid, agentType:$at}}'
+}
 run_hook() { set +e; printf '%s' "$1" | bash "$HOOK" >/dev/null 2>&1; RC=$?; set -u; }
 costfile_for() { printf '%s/%s--%s.json' "$AGENT_TEAM_COST_DIR" "$2" "$3"; }  # $2 slug, $3 sid
 ok() { PASS=$((PASS+1)); }
@@ -91,6 +96,27 @@ j() { jq -r "$1" "$CF"; }   # read a path out of the cost file
 [ "$(j '.totals.models."claude-opus-4-8".cost_usd')" = "0.061" ] && ok || no "total opus cost"
 [ "$(j '.totals.models."claude-sonnet-5".cost_usd')" = "0.0555" ] && ok || no "total sonnet cost"
 [ "$(j '.totals.cost_usd')" = "0.1165" ] && ok || no "grand cost 0.1165"
+
+# --- Telemetry (2026-07-13 dispatch-telemetry spec §2): requested_override ---
+# A fire without tool_input.model leaves requested_override null on every entry.
+[ "$(j '.dispatches.aaaa1111.requested_override')" = "null" ] && ok || no "no override in payload -> requested_override null"
+# A fire WITH tool_input.model stamps ONLY the fired dispatch; siblings stay null.
+TEL_CWD="/fake/telem"; TEL_SLUG="-fake-telem"
+TEL_CF="$(costfile_for "$TEL_CWD" "$TEL_SLUG" "$SID")"
+run_hook "$(payload_m "$TEL_CWD" "$GOOD_TP" "$SID" aaaa1111 architect claude-fable-5)"
+[ "$RC" -eq 0 ] && ok || no "override fire exits 0"
+jt() { jq -r "$1" "$TEL_CF"; }
+[ "$(jt '.dispatches.aaaa1111.requested_override')" = "claude-fable-5" ] && ok || no "fired dispatch stamped requested_override"
+[ "$(jt '.dispatches.bbbb2222.requested_override')" = "null" ] && ok || no "non-fired sibling requested_override null"
+# Cost math is byte-identical to the spec'd truth: additive field, nothing else moves.
+[ "$(jt '.dispatches.aaaa1111.models."claude-opus-4-8".cost_usd')" = "0.061" ] && ok || no "override fire: A opus cost still 0.061"
+[ "$(jt '.dispatches.bbbb2222.models."claude-sonnet-5".cost_usd')" = "0.0555" ] && ok || no "override fire: B sonnet cost still 0.0555"
+[ "$(jt '.totals.cost_usd')" = "0.1165" ] && ok || no "override fire: grand cost still 0.1165"
+[ "$(jt '.totals.models | keys | sort | join(",")')" = "claude-opus-4-8,claude-sonnet-5" ] && ok || no "override fire: resolved model keys unchanged"
+# A later fire for the OTHER dispatch (no override) preserves the earlier stamp.
+run_hook "$(payload "$TEL_CWD" "$GOOD_TP" "$SID" bbbb2222 researcher)"
+[ "$(jt '.dispatches.aaaa1111.requested_override')" = "claude-fable-5" ] && ok || no "prior stamp preserved across later fires"
+[ "$(jt '.dispatches.bbbb2222.requested_override')" = "null" ] && ok || no "later no-override fire stamps null on its own dispatch"
 
 # --- Task 5: idempotent + incremental ---
 run_hook "$(payload "$CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"

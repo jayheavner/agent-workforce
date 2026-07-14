@@ -12,6 +12,10 @@ TRANSCRIPT="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty')"
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty')"
 AGENT_ID="$(printf '%s' "$INPUT" | jq -r '.tool_response.agentId // empty')"
 AGENT_TYPE="$(printf '%s' "$INPUT" | jq -r '.tool_response.agentType // "unknown"')"
+# Telemetry (2026-07-13 spec §2): the dispatch's per-call model override, when
+# the orchestrator passed one. Stored raw on the fired dispatch's entry only;
+# absent/garbage -> null. Additive bookkeeping — no pricing rule reads it.
+REQ_MODEL="$(printf '%s' "$INPUT" | jq -r '.tool_input.model // empty')"
 
 # Cannot even locate a cost file safely -> write nothing, exit 0.
 [ -n "$SESSION_ID" ] || exit 0
@@ -206,6 +210,15 @@ if [ -d "$SUBAGENTS_DIR" ]; then
       if printf '%s' "$entry" | jq -e '.error' >/dev/null 2>&1; then
         write_unavailable "$(basename "$f"): $(printf '%s' "$entry" | jq -r .error)"
       fi
+    fi
+    # requested_override: the fired dispatch takes this fire's value; every
+    # other entry keeps whatever an earlier fire recorded (null when none).
+    if [ "$aid" = "$AGENT_ID" ]; then
+      entry="$(printf '%s' "$entry" | jq -c --arg m "$REQ_MODEL" \
+        '. + {requested_override: (if $m == "" then null else $m end)}')"
+    else
+      prior_ov="$(printf '%s' "$PRIOR" | jq -c --arg k "$aid" '.[$k].requested_override // null')"
+      entry="$(printf '%s' "$entry" | jq -c --argjson ov "$prior_ov" '. + {requested_override: $ov}')"
     fi
     DISPATCHES="$(jq -n --argjson d "$DISPATCHES" --arg k "$aid" --argjson v "$entry" '$d + {($k):$v}')"
   done
