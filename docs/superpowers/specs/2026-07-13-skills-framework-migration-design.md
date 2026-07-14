@@ -1,7 +1,7 @@
 # Skills Framework Migration — Design
 
 **Date:** 2026-07-13  
-**Status:** Implemented locally; installation pending final test results  
+**Status:** Integrated with upstream workforce changes and validated  
 **Upstream:** `jayheavner/skills` at `e8f0bee8ca8aed807cf0e9d092e46cb2fa366498`
 
 ## Purpose
@@ -81,5 +81,5 @@ up first so partial-install rollback remains complete.
 3. Dependency and policy-registry defects fail before copying.
 4. Drift, missing-file, upstream-pin, and retired-file behavior is tested.
 5. Policy, dispatch, cost, and installer suites pass.
-6. `git diff --check` is clean and the working tree contains only this migration.
-
+6. The migration remains compatible with the workforce decision-discipline,
+   gap-loop, config-directory, and fixed-hook-location changes added upstream.

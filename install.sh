@@ -7,7 +7,17 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_DIR="$HOME/.claude"
+# Honor CLAUDE_CONFIG_DIR (how Claude Code itself picks its config dir) so the
+# team installs where the running client actually reads from; fall back to
+# ~/.claude when it is unset.
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# Hooks are referenced by an absolute "$HOME/.claude/hooks/..." path baked into
+# agent frontmatter, and Claude Code does NOT reliably export CLAUDE_CONFIG_DIR
+# to hook subprocesses — so hooks must live at that fixed location regardless of
+# which config dir the agents install into, or a non-default CLAUDE_CONFIG_DIR
+# install would point agents at hooks that aren't there. Agents/skills/manifest
+# follow CLAUDE_DIR; hooks are pinned here.
+HOOKS_DIR="$HOME/.claude/hooks"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$CLAUDE_DIR/backups/agent-team-$STAMP"
 MANIFEST="$CLAUDE_DIR/agent-team-manifest.json"
@@ -54,6 +64,7 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
+  bash "$REPO/tests/test_decision_discipline_drift.sh" >/dev/null || fail "decision-discipline drift test failed — run tests/test_decision_discipline_drift.sh to see which"
 fi
 [ -f "$POLICY_KEYS" ] || fail "policy/KEYS.md is missing from repo"
 [ -f "$FRAMEWORK_PIN" ] || fail "SKILLS-FRAMEWORK is missing from repo"
@@ -109,13 +120,13 @@ resolve_skill() { # $1 skill ref (bare or ns:name) -> 0 if found
   case "$1" in
     *:*)
       ns="${1%%:*}"; sk="${1#*:}"
-      ls "$HOME/.claude/plugins/cache/"*/"$ns"/*/skills/"$sk"/SKILL.md >/dev/null 2>&1
+      ls "$CLAUDE_DIR/plugins/cache/"*/"$ns"/*/skills/"$sk"/SKILL.md >/dev/null 2>&1
       ;;
     *)
       case "$BUILTIN_SKILLS" in
         *" $1 "*) return 0 ;;
       esac
-      [ -f "$REPO/skills/$1/SKILL.md" ] || [ -f "$HOME/.claude/skills/$1/SKILL.md" ]
+      [ -f "$REPO/skills/$1/SKILL.md" ] || [ -f "$CLAUDE_DIR/skills/$1/SKILL.md" ]
       ;;
   esac
 }
@@ -197,7 +208,7 @@ if [ "$MODE" = "check" ]; then
     [ -n "$rel" ] || continue
     case "$rel" in
       agents/*) inst="$CLAUDE_DIR/agents/$(basename "$rel")" ;;
-      hooks/*)  inst="$CLAUDE_DIR/hooks/$(basename "$rel")" ;;
+      hooks/*)  inst="$HOOKS_DIR/$(basename "$rel")" ;;
       skills/*) inst="$CLAUDE_DIR/skills/${rel#skills/}" ;;
       *) continue ;;
     esac
@@ -234,7 +245,7 @@ EOF
 fi
 
 # --- backup ---
-mkdir -p "$BACKUP" "$CLAUDE_DIR/agents" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/logs" || fail "cannot create target directories"
+mkdir -p "$BACKUP" "$CLAUDE_DIR/agents" "$HOOKS_DIR" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/logs" || fail "cannot create target directories"
 
 # Track which of the files this installer manages were pre-existing (i.e. got
 # a backup copy) vs. not, so a failure partway through install can tell "roll
@@ -251,15 +262,15 @@ done
 PREEXISTING_POLICY=0
 PREEXISTING_POLICY_LIB=0
 PREEXISTING_POLICY_MUT=0
-[ -f "$CLAUDE_DIR/hooks/agent-team-policy.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy.sh" "$BACKUP/"; PREEXISTING_POLICY=1; }
-[ -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh" "$BACKUP/"; PREEXISTING_POLICY_LIB=1; }
-[ -f "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh" "$BACKUP/"; PREEXISTING_POLICY_MUT=1; }
+[ -f "$HOOKS_DIR/agent-team-policy.sh" ] && { cp "$HOOKS_DIR/agent-team-policy.sh" "$BACKUP/"; PREEXISTING_POLICY=1; }
+[ -f "$HOOKS_DIR/agent-team-policy-lib.sh" ] && { cp "$HOOKS_DIR/agent-team-policy-lib.sh" "$BACKUP/"; PREEXISTING_POLICY_LIB=1; }
+[ -f "$HOOKS_DIR/agent-team-policy-mutations.sh" ] && { cp "$HOOKS_DIR/agent-team-policy-mutations.sh" "$BACKUP/"; PREEXISTING_POLICY_MUT=1; }
 PREEXISTING_COST=0
 PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
-[ -f "$CLAUDE_DIR/hooks/agent-team-cost.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
-[ -f "$CLAUDE_DIR/hooks/model-rates.json" ] && { cp "$CLAUDE_DIR/hooks/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
-[ -f "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" ] && { cp "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
+[ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
+[ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
+[ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -305,12 +316,12 @@ restore() {
   for b in "$BACKUP"/*; do
     [ -f "$b" ] || continue
     case "$(basename "$b")" in
-      agent-team-policy.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
-      agent-team-policy-lib.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
-      agent-team-policy-mutations.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
-      agent-team-cost.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
-      agent-team-dispatch-guard.sh) cp "$b" "$CLAUDE_DIR/hooks/" ;;
-      model-rates.json) cp "$b" "$CLAUDE_DIR/hooks/" ;;
+      agent-team-policy.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-policy-lib.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-policy-mutations.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-cost.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -329,7 +340,7 @@ EOF
 # roll back to, so a failed fresh install reverts to "nothing installed"
 # instead of leaving a partial (and potentially broken) install behind.
 # Only ever touches the exact files this installer manages — never anything
-# else that happens to live in $CLAUDE_DIR/agents or $CLAUDE_DIR/hooks.
+# else that happens to live in $CLAUDE_DIR/agents or $HOOKS_DIR.
 cleanup_fresh() {
   for f in "$REPO"/agents/*.md; do
     bn="$(basename "$f")"
@@ -338,12 +349,12 @@ cleanup_fresh() {
       *) rm -f "$CLAUDE_DIR/agents/$bn" ;;
     esac
   done
-  [ "$PREEXISTING_POLICY" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy.sh"
-  [ "$PREEXISTING_POLICY_LIB" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy-lib.sh"
-  [ "$PREEXISTING_POLICY_MUT" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-policy-mutations.sh"
-  [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-cost.sh"
-  [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/model-rates.json"
-  [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh"
+  [ "$PREEXISTING_POLICY" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-policy.sh"
+  [ "$PREEXISTING_POLICY_LIB" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-policy-lib.sh"
+  [ "$PREEXISTING_POLICY_MUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-policy-mutations.sh"
+  [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-cost.sh"
+  [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$HOOKS_DIR/model-rates.json"
+  [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-guard.sh"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -357,12 +368,12 @@ EOF
 
 # --- install ---
 if ! cp "$REPO"/agents/*.md "$CLAUDE_DIR/agents/"; then restore; cleanup_fresh; fail "agent copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-policy.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook lib copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "hook mutations copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-cost.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/model-rates.json" "$CLAUDE_DIR/hooks/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-policy.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook lib copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook mutations copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done
@@ -377,9 +388,9 @@ EOF
 # shell invoke it by path); agent-team-policy-lib.sh and
 # agent-team-policy-mutations.sh are only ever `source`d (a two-level chain:
 # entry point -> lib -> mutations), so they need to be readable, not executable.
-chmod +x "$CLAUDE_DIR/hooks/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
-chmod +x "$CLAUDE_DIR/hooks/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
-chmod +x "$CLAUDE_DIR/hooks/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
 
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;

@@ -54,6 +54,42 @@ upstream revision, updating the pin, and running this repository's tests and sha
 
 ## How to install
 
+Prerequisites are Git, a working Claude Code installation, and `jq`. Confirm them before
+installing:
+
+```bash
+git --version
+claude --version
+jq --version
+```
+
+On a new machine, clone this repository and run the installer from its root:
+
+```bash
+git clone https://github.com/jayheavner/agent-workforce.git
+cd agent-workforce
+bash install.sh
+bash install.sh --check
+claude --agent orchestrator
+```
+
+For an existing clean checkout, update and reinstall with:
+
+```bash
+git pull --ff-only
+bash install.sh
+bash install.sh --check
+```
+
+`install.sh` is the only supported installation entry point. It installs the agents and
+vendored skills into `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` and installs the hooks into
+`$HOME/.claude/hooks`, matching the absolute hook paths used by the agent definitions. Do not
+run the standalone `jayheavner/skills` installer over this installation; this repository owns
+and validates its pinned skill copies. Every successful install creates a timestamped backup
+before replacing managed files.
+
+The minimum install command is:
+
 ```bash
 bash install.sh
 ```
@@ -287,3 +323,28 @@ Run this once, in full, after the first install, before trusting the team with r
       `grep decision=block ~/.claude/logs/agent-team-audit.log` shows any attempted
       out-of-lane commands, and no role bypassed its policy.
 - [ ] 8. Only after all of the above pass, use the team on real work.
+
+### Gap-loop shakedown
+
+Run after installing the gap-detection amendment (spec:
+`docs/superpowers/specs/2026-07-12-gap-detection-capability-loop-design.md`). Scenarios
+are ranked, not equal: **scenario 3 is load-bearing** — it tests the
+hard-is-never-a-gap discriminator and should re-run after any change to the
+orchestrator's Gap flags text. Scenarios 1–2 matter at first domain contact; 4–5 are
+documentation-grade.
+
+- [ ] 1. **Domain-positive:** give the team a payroll-withholding-calculator task. Expect
+      the architect to declare `DOMAIN GAP: payroll` before writing a spec; researcher
+      backfill runs; each gate discloses uncertified input and recommends criteria
+      review; a `GAP-*-domain-payroll.md` record appears.
+- [ ] 2. **Domain-negative:** the same task with a `domain-payroll` skill installed.
+      Expect no gap declared and the skill's constraints visible in the plan.
+- [ ] 3. **Hard-but-in-charter negative:** a genuinely difficult refactor entirely inside
+      the team's competence. Objective pass condition: every gate summary line reads
+      exactly `gaps: none` and no `GAP-*.md` file exists anywhere after the run.
+- [ ] 4. **Declined promotion:** decline a recorded gap. Expect the record frozen as
+      `declined — <reason>`, and a later same-identity detection presented at the gate
+      with that reason attached.
+- [ ] 5. **Degraded logging path:** with the manifest absent, expect the record in the
+      project's own `docs/gaps/` and the gate disclosing the degraded path; at the next
+      session start, expect "1 gap records in this project await upstreaming."
