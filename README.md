@@ -1,11 +1,11 @@
 # AI Agent Team
 
-This repository is the source of truth for a team of ten scoped Claude Code subagents that
+This repository is the source of truth for a team of eleven scoped Claude Code subagents that
 cover the full range of software and operations work: design, specification, implementation,
-testing, code review, cloud deployment, research, cloud/identity operations, document writing,
-and Asana ticket handling. Each agent has a fixed role, a pinned model, and enforced
-permissions, so the same agent always behaves the same way regardless of which task it is
-given. One of the ten, the orchestrator, is not dispatched like the others — it runs as the
+diagnosis, testing, code review, cloud deployment, research, cloud/identity operations,
+document writing, and Asana ticket handling. Each agent has a fixed role, a pinned model, and
+enforced permissions, so the same agent always behaves the same way regardless of which task
+it is given. One of the eleven, the orchestrator, is not dispatched like the others — it runs as the
 main Claude Code session itself, decomposing incoming work, dispatching the other ten
 specialists one phase at a time, and stopping at human approval gates between phases. The
 full design rationale — why the orchestrator runs as the main session, why permissions are
@@ -22,6 +22,7 @@ real work.
 | orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
 | architect | `claude-opus-4-8` | high | Design, spec, plan | Docs only (specs/plans) |
 | builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
+| debugger | `claude-sonnet-5` | high | Diagnose symptoms, return root cause with evidence | None (read + run) |
 | verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
 | reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
 | deployer | `claude-sonnet-5` | medium | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
