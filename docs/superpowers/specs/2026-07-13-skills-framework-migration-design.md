@@ -15,10 +15,11 @@ truth, while generic skill authorship and evaluation live upstream.
 
 `SKILLS-FRAMEWORK` records the exact upstream revision. The upstream repository
 had no Git tag when this migration was made, so the full commit SHA is the pin.
-The workforce installer owns the corresponding files under
-`~/.claude/skills/`; the standalone framework installer must not overwrite the
-same installed tree. An upgrade is an explicit re-vendor, reviewed diff, pin
-change, installer test, and workforce shakedown.
+The source checkout is needed only on the authoring machine that performs an
+upgrade. Target machines install the corresponding files from this repository
+into each selected Claude profile; they do not need a separate skills checkout.
+An upgrade is an explicit re-vendor, reviewed diff, pin change, installer test,
+and workforce shakedown.
 
 The framework core and all four packs are flattened into the existing
 `skills/<name>/` layout. `policy/KEYS.md` is copied from upstream. The
@@ -60,8 +61,9 @@ handoff, verification paths, cleanup, policy tests, and shakedown together.
 
 ## Installer contract
 
-Before touching `~/.claude`, `install.sh` now validates:
+Before touching any installed files, `install.sh` now validates:
 
+- the intended Claude profile is unambiguous or selected explicitly;
 - the pinned revision is a full commit SHA;
 - Agent Skills-compatible names and descriptions;
 - relative links inside each skill;
@@ -83,3 +85,5 @@ up first so partial-install rollback remains complete.
 5. Policy, dispatch, cost, and installer suites pass.
 6. The migration remains compatible with the workforce decision-discipline,
    gap-loop, config-directory, and fixed-hook-location changes added upstream.
+7. A machine with multiple Claude profiles fails closed until the caller selects
+   a profile, and each selected profile can be installed and checked independently.

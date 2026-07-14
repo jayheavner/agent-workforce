@@ -132,5 +132,32 @@ else
   bad "install failed during legacy retirement test"
 fi
 
+# 11) profile discovery distinguishes real Claude profiles from unrelated
+# ~/.claude-* application data, refuses an ambiguous implicit target, and lets
+# each profile be installed and checked explicitly.
+mkdir -p "$HOME/.claude-work/projects" "$HOME/.claude-mem"
+printf '{}\n' > "$HOME/.claude-mem/settings.json"
+out="$(bash "$REPO/install.sh" --list-profiles 2>&1)"; rc=$?
+{ [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "$HOME/.claude"; } \
+  && ok || bad "--list-profiles omitted the default Claude profile"
+printf '%s\n' "$out" | grep -qF "$HOME/.claude-work" \
+  && ok || bad "--list-profiles omitted a profile-shaped alternate Claude profile"
+if printf '%s\n' "$out" | grep -qF "$HOME/.claude-mem"; then
+  bad "--list-profiles treated unrelated .claude-mem application data as a profile"
+else ok; fi
+
+out="$(bash "$REPO/install.sh" 2>&1)"; rc=$?
+{ [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'multiple Claude profiles detected'; } \
+  && ok || bad "implicit install did not fail closed when multiple profiles exist"
+
+if bash "$REPO/install.sh" --profile "$HOME/.claude-work" >/dev/null 2>&1 \
+   && bash "$REPO/install.sh" --check --profile "$HOME/.claude-work" >/dev/null 2>&1 \
+   && [ -f "$HOME/.claude-work/agents/orchestrator.md" ] \
+   && [ -f "$HOME/.claude-work/skills/project-policy/SKILL.md" ]; then
+  ok
+else
+  bad "explicit alternate-profile install/check did not succeed"
+fi
+
 echo "install-skills tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1,16 +1,109 @@
 #!/usr/bin/env bash
-# install.sh — validate, back up, install the agent team into ~/.claude/.
-# install.sh --check — verify the installed team against the last install's
-# manifest and against the repo, without touching anything: detects hand-edits
-# under ~/.claude/, a repo that moved on without a reinstall, and machine-level
-# rot (missing skills, missing jq). Exits nonzero on any drift.
+# install.sh — validate, back up, and install the agent team into one Claude
+# profile. Use --list-profiles before installation when a machine may have more
+# than one profile; use --profile DIR to select one explicitly.
+# install.sh --check [--profile DIR] verifies that profile against the last
+# install's manifest and the repo without touching anything.
 set -u
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-# Honor CLAUDE_CONFIG_DIR (how Claude Code itself picks its config dir) so the
-# team installs where the running client actually reads from; fall back to
-# ~/.claude when it is unset.
-CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MODE="install"
+PROFILE_ARG=""
+LIST_PROFILES=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bash install.sh [--profile DIR]
+  bash install.sh --check [--profile DIR]
+  bash install.sh --list-profiles
+
+An explicit --profile takes precedence over CLAUDE_CONFIG_DIR. When neither is
+set, the installer discovers profile-shaped $HOME/.claude* directories and
+refuses an ambiguous multi-profile install.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check) MODE="check"; shift ;;
+    --profile)
+      [ "$#" -ge 2 ] || { echo "install: FAIL — --profile requires a directory" >&2; usage >&2; exit 1; }
+      PROFILE_ARG="$2"; shift 2
+      ;;
+    --list-profiles) LIST_PROFILES=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "install: FAIL — unknown argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+PROFILE_DIRS=()
+add_profile() {
+  local candidate="$1" existing
+  [ -n "$candidate" ] || return 0
+  if [ -d "$candidate" ]; then
+    candidate="$(cd "$candidate" && pwd -P)"
+  fi
+  for existing in "${PROFILE_DIRS[@]}"; do
+    [ "$existing" = "$candidate" ] && return 0
+  done
+  PROFILE_DIRS+=("$candidate")
+}
+is_profile_dir() {
+  [ -d "$1" ] && {
+    [ -f "$1/.credentials.json" ] ||
+    [ -d "$1/projects" ] ||
+    [ -f "$1/agent-team-manifest.json" ]
+  }
+}
+
+# The default profile remains a candidate even on a fresh machine where it has
+# not been created yet. Alternate conventional profile roots are counted only
+# when they carry Claude profile state, so unrelated directories such as
+# ~/.claude-mem and ~/.claude-code-gui are not false positives.
+add_profile "$HOME/.claude"
+for candidate in "$HOME"/.claude-*; do
+  is_profile_dir "$candidate" && add_profile "$candidate"
+done
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  add_profile "$CLAUDE_CONFIG_DIR"
+fi
+# Non-conventional profile paths cannot be inferred safely. A caller can make
+# them visible to --list-profiles and ambiguity checks as a colon-separated list.
+if [ -n "${AGENT_TEAM_PROFILE_DIRS:-}" ]; then
+  old_ifs="$IFS"; IFS=':'
+  for candidate in $AGENT_TEAM_PROFILE_DIRS; do add_profile "$candidate"; done
+  IFS="$old_ifs"
+fi
+
+if [ "$LIST_PROFILES" -eq 1 ]; then
+  echo "profiles: ${#PROFILE_DIRS[@]} detected"
+  for candidate in "${PROFILE_DIRS[@]}"; do
+    marker=""
+    [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ "$candidate" = "$CLAUDE_CONFIG_DIR" ] && marker=" (CLAUDE_CONFIG_DIR)"
+    echo "  $candidate$marker"
+  done
+  exit 0
+fi
+
+if [ -n "$PROFILE_ARG" ]; then
+  CLAUDE_DIR="$PROFILE_ARG"
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  CLAUDE_DIR="$CLAUDE_CONFIG_DIR"
+elif [ "${#PROFILE_DIRS[@]}" -gt 1 ]; then
+  echo "$MODE: FAIL — multiple Claude profiles detected; select one explicitly:" >&2
+  for candidate in "${PROFILE_DIRS[@]}"; do
+    if [ "$MODE" = "check" ]; then
+      echo "  bash install.sh --check --profile \"$candidate\"" >&2
+    else
+      echo "  bash install.sh --profile \"$candidate\"" >&2
+    fi
+  done
+  exit 1
+else
+  CLAUDE_DIR="${PROFILE_DIRS[0]}"
+fi
+
 # Hooks are referenced by an absolute "$HOME/.claude/hooks/..." path baked into
 # agent frontmatter, and Claude Code does NOT reliably export CLAUDE_CONFIG_DIR
 # to hook subprocesses — so hooks must live at that fixed location regardless of
@@ -21,8 +114,6 @@ HOOKS_DIR="$HOME/.claude/hooks"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$CLAUDE_DIR/backups/agent-team-$STAMP"
 MANIFEST="$CLAUDE_DIR/agent-team-manifest.json"
-MODE="install"
-[ "${1:-}" = "--check" ] && MODE="check"
 
 fail() { echo "$MODE: FAIL — $*" >&2; exit 1; }
 warn() { echo "$MODE: WARNING — $*" >&2; }
@@ -421,6 +512,10 @@ fi
 
 AGENT_COUNT="$(find "$REPO/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')"
 SKILL_COUNT="$(find "$REPO/skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l | tr -d ' ')"
-echo "install: OK — $AGENT_COUNT agents + $SKILL_COUNT skills installed, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
-echo "install: verify any time with: bash install.sh --check"
-echo "install: start the team with: claude --agent orchestrator"
+echo "install: OK — $AGENT_COUNT agents + $SKILL_COUNT skills installed into profile $CLAUDE_DIR, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
+echo "install: verify any time with: bash install.sh --check --profile \"$CLAUDE_DIR\""
+if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then
+  echo "install: start the team with: claude --agent orchestrator"
+else
+  echo "install: start the team with: CLAUDE_CONFIG_DIR=\"$CLAUDE_DIR\" claude --agent orchestrator"
+fi

@@ -48,9 +48,10 @@ policy and the skill preloads each agent carries.
 
 The reusable disciplines are vendored from
 [`jayheavner/skills`](https://github.com/jayheavner/skills) at the exact commit recorded in
-`SKILLS-FRAMEWORK`. The workforce owns the installed copies: do not run the standalone skills
-framework installer over the same `~/.claude/skills/` tree. Upgrade by re-vendoring a reviewed
-upstream revision, updating the pin, and running this repository's tests and shakedown.
+`SKILLS-FRAMEWORK`. A checkout of that source repository is an authoring-machine concern, not
+an installation dependency: every target machine gets the pinned copies from this repository.
+Upgrade by re-vendoring a reviewed upstream revision, updating the pin, and running this
+repository's tests and shakedown.
 
 ## How to install
 
@@ -68,6 +69,7 @@ On a new machine, clone this repository and run the installer from its root:
 ```bash
 git clone https://github.com/jayheavner/agent-workforce.git
 cd agent-workforce
+bash install.sh --list-profiles
 bash install.sh
 bash install.sh --check
 claude --agent orchestrator
@@ -77,16 +79,34 @@ For an existing clean checkout, update and reinstall with:
 
 ```bash
 git pull --ff-only
+bash install.sh --list-profiles
 bash install.sh
 bash install.sh --check
 ```
 
-`install.sh` is the only supported installation entry point. It installs the agents and
-vendored skills into `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` and installs the hooks into
-`$HOME/.claude/hooks`, matching the absolute hook paths used by the agent definitions. Do not
-run the standalone `jayheavner/skills` installer over this installation; this repository owns
-and validates its pinned skill copies. Every successful install creates a timestamped backup
-before replacing managed files.
+`install.sh` installs one Claude profile at a time. Before installing on a machine, run
+`bash install.sh --list-profiles`. The discovery check includes the default `~/.claude`, the
+active `CLAUDE_CONFIG_DIR`, and profile-shaped `$HOME/.claude-*` directories; unrelated
+application data such as `.claude-mem` is ignored. Non-conventional profile paths can be added
+to discovery with the colon-separated `AGENT_TEAM_PROFILE_DIRS` environment variable.
+
+If more than one profile is detected and neither `--profile` nor `CLAUDE_CONFIG_DIR` selects
+one, installation and drift checks fail before touching anything. Install and verify every
+profile that should have the workforce explicitly:
+
+```bash
+bash install.sh --profile "$HOME/.claude"
+bash install.sh --check --profile "$HOME/.claude"
+
+bash install.sh --profile "$HOME/.claude-work"
+bash install.sh --check --profile "$HOME/.claude-work"
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude --agent orchestrator
+```
+
+Agents, skills, backups, and the manifest live under the selected profile. Hooks and their
+runtime audit/cost logs remain under `$HOME/.claude/` because the agent definitions use fixed
+absolute hook paths; those machine-level files are shared by every profile. Every successful
+profile install creates a timestamped backup before replacing managed files.
 
 The minimum install command is:
 
@@ -108,7 +128,7 @@ Nothing is copied anywhere until every validation check below passes:
   fails the install rather than installing silently.
 - Every `skills:` entry in every agent file resolves to an actually-installed skill. Namespaced
   entries (`plugin:skill`) are checked against the plugin cache; bare entries are checked
-  against `~/.claude/skills/<name>/SKILL.md`, except for a short whitelist of built-in skills
+  against the selected profile's `skills/<name>/SKILL.md`, except for a short whitelist of built-in skills
   that ship inside the Claude Code client itself and have no `SKILL.md` on disk anywhere
   (currently `verify`, `run`, `init`, `review`, `security-review`, `code-review`, `update-config`,
   `keybindings-help`) — those are recognized by name instead of by file lookup. A renamed or
@@ -128,11 +148,11 @@ Nothing is copied anywhere until every validation check below passes:
   installed file. It also proves missing dependencies and unregistered policy keys fail closed,
   and that a later install retires files removed from the vendored framework.
 
-Only after all of that passes does the installer touch `~/.claude/`. Any agent file already
-installed under `~/.claude/agents/` that this run is about to replace is copied first into a
-timestamped backup directory, `~/.claude/backups/agent-team-<timestamp>/`; the same applies to
+Only after all of that passes does the installer touch the selected profile. Any agent file
+that this run is about to replace is copied first into the profile's timestamped backup
+directory, `<profile>/backups/agent-team-<timestamp>/`; the same applies to
 `~/.claude/hooks/agent-team-policy.sh`, `~/.claude/hooks/agent-team-policy-lib.sh`,
-`~/.claude/hooks/agent-team-policy-mutations.sh`, and every file under `~/.claude/skills/` that
+`~/.claude/hooks/agent-team-policy-mutations.sh`, and every file under `<profile>/skills/` that
 a vendored skill is about to replace, if they already exist. If any copy step fails partway
 through — an agent file, the policy script, the policy library, the mutations blocklist, or a
 skill file — the installer restores every file it just backed up (skills files by their full
@@ -206,32 +226,34 @@ new machine DOES need, and how each is guarded:
 3. **The Claude Code built-in skills** — the framework no longer depends on the superpowers
    plugin. Nineteen pinned skills are vendored under `skills/`: the framework core, the
    requirements, Asana ticketing, 1Password, and UX packs, plus this consumer's
-   `project-policy` instance. `install.sh` copies them into `~/.claude/skills/` and fails
+   `project-policy` instance. `install.sh` copies them into each selected profile's `skills/`
+   directory and fails
    loudly if an agent preload, situational skill, dependency edge, or policy key is missing.
 4. **Role credentials in the environment** ($OKTA_TOKEN, AWS profiles, the 1Password
    service-account token) — only needed for the ops/deployer work that uses them, and
    machine-specific by nature.
 
 So the deployment procedure is: install prerequisites, clone this repo, run
-`bash install.sh`, and treat any validation failure as the dependency list telling you
-what that machine is missing.
+`bash install.sh --list-profiles`, then install and check every profile that should carry the
+workforce. Treat any validation failure as the dependency list telling you what that machine
+or profile is missing.
 
 ## Drift detection — the anti-fog mechanism
 
 Documentation gets forgotten; the installed agents, hooks, and skills are what actually runs.
 Three mechanisms keep repo and reality aligned without relying on anyone's memory:
 
-- Every install writes a **build manifest** (`~/.claude/agent-team-manifest.json`): the
+- Every install writes a **build manifest** (`<profile>/agent-team-manifest.json`): the
   repo commit, install timestamp, and a checksum of every installed file — agents, hooks,
   the pinned skills-framework revision, and every vendored skill file, each tracked under its
   own manifest key (skill files use the key `skills/<name>/<relpath>`, so nested references are
   tracked individually).
-- **`bash install.sh --check`** verifies the installation any time, without touching
+- **`bash install.sh --check [--profile <dir>]`** verifies one profile any time, without touching
   anything: it re-runs the full validation (skill resolution and the vendored-skills
   checks above, `jq` present, hook and install-skills tests pass) and compares checksums
   the same way for agents, hooks, and skills alike — an installed file hand-edited under
-  `~/.claude/` (including a skill file edited or deleted directly under
-  `~/.claude/skills/`) reports DRIFT or MISSING, a repo file changed since the last
+  the selected profile (including a skill file edited or deleted directly under its
+  `skills/` directory) reports DRIFT or MISSING, a repo file changed since the last
   install reports STALE, a repo file never installed reports NEW, and a file the manifest
   still lists but the repo no longer has reports REMOVED. Any finding exits nonzero with
   the exact file named. Run it on any machine you suspect is behind.
@@ -242,7 +264,7 @@ Three mechanisms keep repo and reality aligned without relying on anyone's memor
 ## How to change the team
 
 Edit the agent definitions, hook files, consumer `project-policy`, or tests in this repository — never edit files
-under `~/.claude/agents/`, `~/.claude/hooks/`, or `~/.claude/skills/` directly, since those are
+under a profile's `agents/` or `skills/` directories, or under `~/.claude/hooks/`, directly, since those are
 install targets that get overwritten the next time `install.sh` runs, and a direct edit there
 will silently vanish (or, if you leave it in place, `bash install.sh --check` will flag it as
 DRIFT). Generic framework-skill edits belong in `jayheavner/skills`; re-vendor them here at a
