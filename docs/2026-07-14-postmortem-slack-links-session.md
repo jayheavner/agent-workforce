@@ -199,8 +199,9 @@ Each one converted human frustration into the pressure that fed RC1.
   ops granted the debugging skill. **Done.**
 - Rec 4 (relay fidelity / answers as actions): orchestrator rule in d088c01; debugger report
   format in a02d457. **Done.**
-- Rec 5 (Okta credential reconciliation): **open — environment work requiring the human** (the
-  live token lives in the Employee vault, unreachable by the agents' service account).
+- Rec 5 (Okta credential reconciliation): **out of scope for this repo** — environment work,
+  human-owned. The session's token-validity finding is disputed by the human and is not
+  resolved here; this repo's only stake is that agents scope such claims to their evidence.
 - Rec 6 (fact-shaped questions): orchestrator rule in d088c01. **Done.**
 - Found along the way: install.sh died on macOS bash 3.2 (empty-array expansion under set -u),
   failing 31 install-test checks — fixed in c0c1c57; suite 36/36. Build c0c1c57 installed to
