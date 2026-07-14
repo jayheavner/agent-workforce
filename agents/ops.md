@@ -5,7 +5,7 @@ model: claude-sonnet-5
 effort: high
 maxTurns: 60
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch, Skill
-skills: handling-secrets
+skills: handling-secrets, debugging
 hooks:
   PreToolUse:
     - matcher: Bash

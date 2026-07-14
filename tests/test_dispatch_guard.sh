@@ -29,7 +29,7 @@ expect_allow() { expect 0 "$1" "$2"; }
 expect_block() { expect 2 "$1" "$2"; }
 
 # All nine valid specialists allow.
-for a in architect builder verifier reviewer deployer researcher ops scribe ticketer; do
+for a in architect builder debugger verifier reviewer deployer researcher ops scribe ticketer; do
   expect_allow "$(agent_json "$a")" "valid: $a allows"
 done
 
