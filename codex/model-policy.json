@@ -1,0 +1,263 @@
+{
+  "schema_version": 1,
+  "orchestrator": {
+    "model": "gpt-5.6-sol",
+    "effort": "high",
+    "enforcement": "selected on the parent task because plugins cannot set the parent composer model"
+  },
+  "profiles": [
+    {
+      "name": "agent_workforce_architect",
+      "role": "architect",
+      "variant": "default",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Design systems and produce specs and plans for standard work."
+    },
+    {
+      "name": "agent_workforce_architect_fast",
+      "role": "architect",
+      "variant": "downshift",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Handle mechanical amendments without rerunning the design process."
+    },
+    {
+      "name": "agent_workforce_architect_deep",
+      "role": "architect",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "max",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Design novel, ambiguous, or multi-system work at maximum depth."
+    },
+    {
+      "name": "agent_workforce_builder",
+      "role": "builder",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "on-request",
+      "web_search": "disabled",
+      "description": "Implement an approved plan with TDD and focused commits."
+    },
+    {
+      "name": "agent_workforce_builder_deep",
+      "role": "builder",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "on-request",
+      "web_search": "disabled",
+      "description": "Handle unfamiliar implementation work or the second repair loop."
+    },
+    {
+      "name": "agent_workforce_debugger",
+      "role": "debugger",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Diagnose symptoms and return evidence without applying a fix."
+    },
+    {
+      "name": "agent_workforce_debugger_deep",
+      "role": "debugger",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Perform a second diagnosis of the same symptom or diagnose a cross-system failure."
+    },
+    {
+      "name": "agent_workforce_verifier",
+      "role": "verifier",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Run acceptance checks and report evidence without repairing code."
+    },
+    {
+      "name": "agent_workforce_verifier_fast",
+      "role": "verifier",
+      "variant": "downshift",
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Run one clear smoke check with an obvious pass or fail."
+    },
+    {
+      "name": "agent_workforce_reviewer",
+      "role": "reviewer",
+      "variant": "default",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Review implementation quality, correctness, security, and test coverage."
+    },
+    {
+      "name": "agent_workforce_reviewer_fast",
+      "role": "reviewer",
+      "variant": "downshift",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Review documentation-only or trivial changes."
+    },
+    {
+      "name": "agent_workforce_reviewer_deep",
+      "role": "reviewer",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "max",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Review security-critical work at maximum depth."
+    },
+    {
+      "name": "agent_workforce_spec_critic",
+      "role": "reviewer",
+      "variant": "spec-critic-distinct",
+      "model": "gpt-5.6-terra",
+      "effort": "max",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Critique a Sol-authored specification on a distinct model."
+    },
+    {
+      "name": "agent_workforce_deployer",
+      "role": "deployer",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "on-request",
+      "web_search": "disabled",
+      "description": "Execute an explicitly approved deployment and verify or roll it back."
+    },
+    {
+      "name": "agent_workforce_researcher",
+      "role": "researcher",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Investigate current facts and return cited evidence."
+    },
+    {
+      "name": "agent_workforce_researcher_fast",
+      "role": "researcher",
+      "variant": "downshift",
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Verify one current fact from a primary source."
+    },
+    {
+      "name": "agent_workforce_researcher_deep",
+      "role": "researcher",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "sandbox_mode": "read-only",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Perform deep multi-source or high-stakes research synthesis."
+    },
+    {
+      "name": "agent_workforce_ops",
+      "role": "ops",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "on-request",
+      "web_search": "live",
+      "description": "Investigate AWS, Azure, Okta, and identity state before proposing changes."
+    },
+    {
+      "name": "agent_workforce_ops_deep",
+      "role": "ops",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "on-request",
+      "web_search": "live",
+      "description": "Diagnose incidents or unfamiliar operational failure modes."
+    },
+    {
+      "name": "agent_workforce_scribe",
+      "role": "scribe",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "never",
+      "web_search": "live",
+      "description": "Write reports, requirements, postmortems, handoffs, and status notes."
+    },
+    {
+      "name": "agent_workforce_scribe_fast",
+      "role": "scribe",
+      "variant": "downshift",
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Update a concise status note from supplied facts."
+    },
+    {
+      "name": "agent_workforce_ticketer",
+      "role": "ticketer",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "sandbox_mode": "read-only",
+      "approval_policy": "on-request",
+      "web_search": "disabled",
+      "description": "Draft, review, and close tickets with evidence and explicit write gates."
+    },
+    {
+      "name": "agent_workforce_ticketer_fast",
+      "role": "ticketer",
+      "variant": "downshift",
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "sandbox_mode": "read-only",
+      "approval_policy": "on-request",
+      "web_search": "disabled",
+      "description": "Write a ticket comment or status update after approval."
+    }
+  ]
+}

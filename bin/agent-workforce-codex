@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Start a Codex CLI session with the Agent Workforce orchestrator model pinned.
+set -u
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+POLICY="$REPO/codex/model-policy.json"
+
+if [ -n "${CODEX_BIN:-}" ]; then
+  CODEX="$CODEX_BIN"
+elif [ -x /Applications/ChatGPT.app/Contents/Resources/codex ]; then
+  CODEX=/Applications/ChatGPT.app/Contents/Resources/codex
+elif command -v codex >/dev/null 2>&1; then
+  CODEX="$(command -v codex)"
+else
+  printf 'agent-workforce-codex: Codex CLI was not found\n' >&2
+  exit 1
+fi
+
+CODEX_HOME="$CODEX_DIR" bash "$REPO/install-codex.sh" --check >/dev/null \
+  || {
+    printf 'agent-workforce-codex: profiles are not installed or are stale; run bash "%s/install-codex.sh"\n' "$REPO" >&2
+    exit 1
+  }
+
+if [ "${1:-}" = "--agent" ]; then
+  [ "$#" -ge 2 ] || {
+    printf 'agent-workforce-codex: --agent requires a profile name\n' >&2
+    exit 1
+  }
+  agent="$2"
+  shift 2
+  jq -e --arg agent "$agent" '.profiles[] | select(.name == $agent)' "$POLICY" >/dev/null \
+    || {
+      printf 'agent-workforce-codex: unknown agent profile: %s\n' "$agent" >&2
+      exit 1
+    }
+  if [ "$#" -eq 0 ]; then
+    exec "$CODEX" --profile "$agent" "Introduce yourself with your role, pinned model, and effort, then ask what outcome I want."
+  fi
+  exec "$CODEX" --profile "$agent" "$@"
+fi
+
+if [ "$#" -eq 0 ]; then
+  exec "$CODEX" --profile agent-workforce 'Use $agent-workforce. Ask me what outcome I want, then triage it before dispatching specialists.'
+fi
+
+exec "$CODEX" --profile agent-workforce "$@"

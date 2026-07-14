@@ -1,0 +1,99 @@
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+
+[agents]
+max_threads = 6
+max_depth = 1
+interrupt_message = true
+
+[agents.agent_workforce_architect]
+description = "Design systems and produce specs and plans for standard work."
+config_file = "./agents/agent_workforce_architect.toml"
+
+[agents.agent_workforce_architect_fast]
+description = "Handle mechanical amendments without rerunning the design process."
+config_file = "./agents/agent_workforce_architect_fast.toml"
+
+[agents.agent_workforce_architect_deep]
+description = "Design novel, ambiguous, or multi-system work at maximum depth."
+config_file = "./agents/agent_workforce_architect_deep.toml"
+
+[agents.agent_workforce_builder]
+description = "Implement an approved plan with TDD and focused commits."
+config_file = "./agents/agent_workforce_builder.toml"
+
+[agents.agent_workforce_builder_deep]
+description = "Handle unfamiliar implementation work or the second repair loop."
+config_file = "./agents/agent_workforce_builder_deep.toml"
+
+[agents.agent_workforce_debugger]
+description = "Diagnose symptoms and return evidence without applying a fix."
+config_file = "./agents/agent_workforce_debugger.toml"
+
+[agents.agent_workforce_debugger_deep]
+description = "Perform a second diagnosis of the same symptom or diagnose a cross-system failure."
+config_file = "./agents/agent_workforce_debugger_deep.toml"
+
+[agents.agent_workforce_verifier]
+description = "Run acceptance checks and report evidence without repairing code."
+config_file = "./agents/agent_workforce_verifier.toml"
+
+[agents.agent_workforce_verifier_fast]
+description = "Run one clear smoke check with an obvious pass or fail."
+config_file = "./agents/agent_workforce_verifier_fast.toml"
+
+[agents.agent_workforce_reviewer]
+description = "Review implementation quality, correctness, security, and test coverage."
+config_file = "./agents/agent_workforce_reviewer.toml"
+
+[agents.agent_workforce_reviewer_fast]
+description = "Review documentation-only or trivial changes."
+config_file = "./agents/agent_workforce_reviewer_fast.toml"
+
+[agents.agent_workforce_reviewer_deep]
+description = "Review security-critical work at maximum depth."
+config_file = "./agents/agent_workforce_reviewer_deep.toml"
+
+[agents.agent_workforce_spec_critic]
+description = "Critique a Sol-authored specification on a distinct model."
+config_file = "./agents/agent_workforce_spec_critic.toml"
+
+[agents.agent_workforce_deployer]
+description = "Execute an explicitly approved deployment and verify or roll it back."
+config_file = "./agents/agent_workforce_deployer.toml"
+
+[agents.agent_workforce_researcher]
+description = "Investigate current facts and return cited evidence."
+config_file = "./agents/agent_workforce_researcher.toml"
+
+[agents.agent_workforce_researcher_fast]
+description = "Verify one current fact from a primary source."
+config_file = "./agents/agent_workforce_researcher_fast.toml"
+
+[agents.agent_workforce_researcher_deep]
+description = "Perform deep multi-source or high-stakes research synthesis."
+config_file = "./agents/agent_workforce_researcher_deep.toml"
+
+[agents.agent_workforce_ops]
+description = "Investigate AWS, Azure, Okta, and identity state before proposing changes."
+config_file = "./agents/agent_workforce_ops.toml"
+
+[agents.agent_workforce_ops_deep]
+description = "Diagnose incidents or unfamiliar operational failure modes."
+config_file = "./agents/agent_workforce_ops_deep.toml"
+
+[agents.agent_workforce_scribe]
+description = "Write reports, requirements, postmortems, handoffs, and status notes."
+config_file = "./agents/agent_workforce_scribe.toml"
+
+[agents.agent_workforce_scribe_fast]
+description = "Update a concise status note from supplied facts."
+config_file = "./agents/agent_workforce_scribe_fast.toml"
+
+[agents.agent_workforce_ticketer]
+description = "Draft, review, and close tickets with evidence and explicit write gates."
+config_file = "./agents/agent_workforce_ticketer.toml"
+
+[agents.agent_workforce_ticketer_fast]
+description = "Write a ticket comment or status update after approval."
+config_file = "./agents/agent_workforce_ticketer_fast.toml"

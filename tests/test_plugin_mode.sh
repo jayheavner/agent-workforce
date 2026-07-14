@@ -47,7 +47,10 @@ else
 fi
 
 if command -v claude >/dev/null 2>&1; then
-  claude plugin validate --strict "$REPO" >/dev/null 2>&1 \
+  # The repo also carries .claude-plugin/marketplace.json for ChatGPT's
+  # legacy-compatible marketplace discovery. Validate the Claude plugin
+  # manifest explicitly so the CLI does not choose the marketplace file.
+  claude plugin validate --strict "$REPO/.claude-plugin/plugin.json" >/dev/null 2>&1 \
     && ok || bad "claude plugin validate --strict failed"
 fi
 

@@ -1,14 +1,16 @@
 # AI Agent Team
 
-This repository is the source of truth for a team of eleven scoped Claude Code subagents that
-cover the full range of software and operations work: design, specification, implementation,
-diagnosis, testing, code review, cloud deployment, research, cloud/identity operations,
-document writing, and Asana ticket handling. Each agent has a fixed role, a pinned model, and
-enforced permissions, so the same agent always behaves the same way regardless of which task
-it is given. One of the eleven, the orchestrator, is not dispatched like the others — it runs as the
-main Claude Code session itself, decomposing incoming work, dispatching the other ten
-specialists one phase at a time, and stopping at human approval gates between phases. The
-full design rationale — why the orchestrator runs as the main session, why permissions are
+This repository is the cross-platform source of truth for an eleven-role AI workforce covering
+design, specification, implementation, diagnosis, testing, code review, cloud deployment,
+research, cloud/identity operations, document writing, and Asana ticket handling. Claude Code
+uses native subagent definitions. Local Codex uses a two-part installation: the ChatGPT/Codex
+plugin plus companion custom-agent profiles. That local integration pins specialist models and
+reasoning efforts, carries the full role contracts, and runs hard-veto policy hooks after the user
+trusts them. Hosted ChatGPT Work cannot load those local profiles or hooks and is explicitly a
+reduced, non-parity surface. One of the eleven roles, the orchestrator, always stays in the main
+session, decomposing incoming work, dispatching or running the other ten specialist phases one
+at a time, and stopping at human approval gates between phases. The full design rationale — why
+the orchestrator runs as the main session, why permissions are
 layered the way they are, and why each model was assigned to each role — is written up in
 `docs/superpowers/specs/2026-07-07-ai-agent-team-design.md`; the current skill integration is
 recorded in `docs/superpowers/specs/2026-07-13-skills-framework-migration-design.md`. This README covers installation,
@@ -16,6 +18,9 @@ day-to-day use, and the one-time shakedown that should happen before trusting th
 real work.
 
 ## Roster
+
+The first table describes Claude Code. The second gives the default local Codex mapping; the
+complete downshift and upshift matrix lives in `codex/model-policy.json`.
 
 | Agent | Default model | Effort | Role | Mutation rights |
 |---|---|---|---|---|
@@ -30,6 +35,20 @@ real work.
 | ops | `claude-sonnet-5` | high | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
 | scribe | `claude-sonnet-5` | — | Reports, briefs, requirements, postmortems, status notes | Docs only |
 | ticketer | `claude-sonnet-5` | — | Asana write/review/track | Asana via MCP; gated before filing |
+
+| Agent | Local Codex default | Effort | Enforcement |
+|---|---|---|---|
+| orchestrator | `gpt-5.6-sol` | high | CLI launcher pins it; desktop composer selection is manual |
+| architect | `gpt-5.6-sol` | high | Named profile + documentation-write hook |
+| builder | `gpt-5.6-terra` | high | Named profile + builder command policy |
+| debugger | `gpt-5.6-terra` | high | Named read-only profile + command and patch policy |
+| verifier | `gpt-5.6-terra` | medium | Named read-only profile + command policy |
+| reviewer | `gpt-5.6-sol` | high | Named read-only profile, distinct from builder |
+| deployer | `gpt-5.6-terra` | medium | Named profile + deployment allowlist |
+| researcher | `gpt-5.6-terra` | medium | Named read-only profile; live search enabled |
+| ops | `gpt-5.6-terra` | high | Named profile + read-first cloud policy |
+| scribe | `gpt-5.6-terra` | medium | Named profile + documentation-write hook |
+| ticketer | `gpt-5.6-terra` | medium | Named read-only profile + outward-write gates |
 
 These are **defaults, not fixed assignments**: the orchestrator triages every incoming task
 and may downshift a dispatch to a cheaper model (an amendment goes to the architect on
@@ -54,6 +73,87 @@ The reusable disciplines are vendored from
 an installation dependency: every target machine gets the pinned copies from this repository.
 Upgrade by re-vendoring a reviewed upstream revision, updating the pin, and running this
 repository's tests and shakedown.
+
+The additional `agent-workforce` skill is owned by this repository. It is the orchestration
+layer used by ChatGPT and Codex and is safe to load alongside the Claude integration.
+
+## Install in ChatGPT or Codex
+
+The repo includes a Codex plugin manifest at `.codex-plugin/plugin.json` and a marketplace at
+`.claude-plugin/marketplace.json`. The marketplace uses the legacy-compatible repo location
+that ChatGPT desktop explicitly supports, so the existing Claude plugin layout and the new
+ChatGPT distribution can coexist.
+
+Validate the package and the generated custom-agent profiles from a checkout:
+
+```bash
+bash tests/test_chatgpt_plugin.sh
+bash tests/test_codex_profiles.sh
+```
+
+Add the GitHub repo as a marketplace and install it from Codex CLI:
+
+```bash
+codex plugin marketplace add jayheavner/agent-workforce
+codex plugin add agent-workforce@agent-workforce
+```
+
+Install the local model/effort profiles and policy runtime on every machine that will run the
+workforce:
+
+```bash
+bash install-codex.sh
+```
+
+In Codex CLI, start the pinned orchestrator directly:
+
+```bash
+./bin/agent-workforce-codex
+```
+
+Start a conversation directly with one pinned specialist:
+
+```bash
+./bin/agent-workforce-codex --agent agent_workforce_researcher_fast
+```
+
+Run one pinned specialist phase non-interactively (the workforce skill uses this companion route when the current collaboration API cannot select custom profiles):
+
+```bash
+./bin/agent-workforce-dispatch agent_workforce_reviewer "Review the current diff."
+```
+
+In the ChatGPT desktop Codex surface, choose **GPT-5.6 Sol** and **High** before starting a new
+task, then invoke `$agent-workforce`. Open `/hooks` once and trust the Agent Workforce role-policy
+hooks. In ChatGPT Work, invoke `@agent-workforce`, but expect it to stop and disclose that full
+parity is unavailable unless you explicitly accept reduced hosted behavior.
+
+For ChatGPT desktop, restart the app after adding the marketplace, open **Plugins**, choose
+**AI Agent Workforce**, and install the plugin. Sharing the plugin does not share files under
+`~/.codex/agents`; every local Codex machine must run `install-codex.sh` separately.
+
+### Remaining parity boundaries
+
+Codex plugins do not distribute user-scoped custom-agent profiles, so the explicit companion
+installer is required. The desktop plugin also cannot change the parent task's composer model;
+the CLI launcher pins Sol/High, while desktop users select it before the task starts. Parent task
+permission overrides may tighten or replace a child profile's sandbox defaults, but the trusted
+role hook still vetoes prohibited commands.
+
+On the ChatGPT desktop/Codex v2 runtime tested on 2026-07-14, the in-thread collaboration tool
+accepts a task name but no custom-profile selector. Live child transcripts showed
+`agent_role: null` and parent-model inheritance even when the task name matched an installed
+profile. The integration therefore uses separate top-level Codex tasks for pinned specialist
+phases. This preserves model, effort, role instructions, sandbox, and hooks, but not the native
+child-task bubble or shared child conversation. See `docs/chatgpt-codex-parity.md` for the evidence
+and remaining platform gaps.
+
+Codex hook payloads expose the active model and tool call, so model mismatches and role-policy
+violations can fail closed. They do not expose stable per-dispatch reasoning-effort, token, or
+credit totals, and Codex documents transcript files as an unstable hook interface. Therefore the
+local integration provides an exact dispatch/model/effort audit from its pinned profiles, but it
+does not claim Claude's exact per-dispatch dollar-cost report. Hosted ChatGPT Work additionally
+lacks the local profiles and policy hooks; it is not full parity.
 
 ## Install and run (live plugin mode, recommended)
 
@@ -310,7 +410,8 @@ name pattern, and the most recently modified file wins.
 
 Run this once, in full, after the first setup, before trusting the team with real work:
 
-- [ ] 1. Run `bash tests/test_policy_hooks.sh` and `bash tests/test_plugin_mode.sh` — all pass.
+- [ ] 1. Run `bash tests/test_policy_hooks.sh`, `bash tests/test_plugin_mode.sh`, and
+      `bash tests/test_chatgpt_plugin.sh` — all pass.
 - [ ] 2. Start `./bin/agent-workforce`; give it a disposable task: "Build a CLI tool in a
       fresh temp project named csv2json-2 that converts CSV to JSON, through the full
       pipeline including review; skip deploy."

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Run one Agent Workforce specialist as an independent, pinned Codex task.
+set -u
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+POLICY="$REPO/codex/model-policy.json"
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bin/agent-workforce-dispatch PROFILE PROMPT...
+  printf '%s' "PROMPT" | bin/agent-workforce-dispatch PROFILE
+
+Runs a non-interactive specialist task with the installed model, effort,
+instructions, sandbox, and policy hook for PROFILE. The task fails if its final
+message omits the exact WORKFORCE_PROFILE marker.
+EOF
+}
+
+[ "$#" -ge 1 ] || { usage >&2; exit 1; }
+PROFILE="$1"
+shift
+
+if [ -n "${CODEX_BIN:-}" ]; then
+  CODEX="$CODEX_BIN"
+elif [ -x /Applications/ChatGPT.app/Contents/Resources/codex ]; then
+  CODEX=/Applications/ChatGPT.app/Contents/Resources/codex
+elif command -v codex >/dev/null 2>&1; then
+  CODEX="$(command -v codex)"
+else
+  printf 'agent-workforce-dispatch: Codex CLI was not found\n' >&2
+  exit 1
+fi
+
+row="$(jq -r --arg profile "$PROFILE" '
+  .profiles[] | select(.name == $profile) | [.role, .model, .effort] | @tsv
+' "$POLICY")"
+[ -n "$row" ] || {
+  printf 'agent-workforce-dispatch: unknown profile: %s\n' "$PROFILE" >&2
+  exit 1
+}
+ROLE="${row%%	*}"
+rest="${row#*	}"
+MODEL="${rest%%	*}"
+EFFORT="${rest#*	}"
+MARKER="WORKFORCE_PROFILE: $PROFILE | $MODEL | $EFFORT"
+
+CODEX_HOME="$CODEX_DIR" bash "$REPO/install-codex.sh" --check >/dev/null || {
+  printf 'agent-workforce-dispatch: installed profiles are missing or stale; run bash "%s/install-codex.sh"\n' "$REPO" >&2
+  exit 1
+}
+
+if [ "$#" -gt 0 ]; then
+  PROMPT="$*"
+else
+  PROMPT="$(cat)"
+fi
+[ -n "$PROMPT" ] || {
+  printf 'agent-workforce-dispatch: prompt is empty\n' >&2
+  exit 1
+}
+
+RESULT="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-dispatch.XXXXXX")"
+PREFLIGHT_RESULT="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-preflight-result.XXXXXX")"
+PREFLIGHT_AUDIT="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-preflight-audit.XXXXXX")"
+PREFLIGHT_LOG="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-preflight-log.XXXXXX")"
+trap 'rm -f "$RESULT" "$PREFLIGHT_RESULT" "$PREFLIGHT_AUDIT" "$PREFLIGHT_LOG"' EXIT
+
+# Codex currently skips untrusted hooks without making `exec` fail. Run a
+# non-mutating startup first and require its SessionStart audit before giving
+# the profile the real task. This costs one small model turn but prevents a
+# mutating phase from running with silently skipped role enforcement.
+AGENT_WORKFORCE_DISPATCH_AUDIT="$PREFLIGHT_AUDIT" \
+  "$CODEX" exec --profile "$PROFILE" -C "$PWD" \
+  --output-last-message "$PREFLIGHT_RESULT" \
+  "Agent Workforce policy preflight only. Do not use tools or mutate anything. Reply with your mandatory WORKFORCE_PROFILE marker and nothing else." \
+  >"$PREFLIGHT_LOG" 2>&1
+preflight_rc=$?
+if [ "$preflight_rc" -ne 0 ]; then
+  printf 'agent-workforce-dispatch: policy preflight failed\n' >&2
+  tail -20 "$PREFLIGHT_LOG" >&2
+  exit "$preflight_rc"
+fi
+
+grep -qF "$MARKER" "$PREFLIGHT_RESULT" || {
+  printf 'agent-workforce-dispatch: policy preflight loaded the wrong profile; expected:\n%s\n' "$MARKER" >&2
+  exit 1
+}
+grep -q "role=$ROLE tool= decision=allow" "$PREFLIGHT_AUDIT" || {
+  printf 'PARITY BLOCKED: role policy hook inactive or untrusted for %s\n' "$PROFILE" >&2
+  printf 'Start: bin/agent-workforce-codex --agent %s\n' "$PROFILE" >&2
+  printf 'Then run /hooks, trust the reviewed Agent Workforce hooks, exit, and retry.\n' >&2
+  exit 1
+}
+
+"$CODEX" exec --profile "$PROFILE" -C "$PWD" --output-last-message "$RESULT" "$PROMPT"
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+
+grep -qF "$MARKER" "$RESULT" || {
+  printf 'agent-workforce-dispatch: profile marker missing or mismatched; expected:\n%s\n' "$MARKER" >&2
+  exit 1
+}

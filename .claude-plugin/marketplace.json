@@ -1,0 +1,24 @@
+{
+  "name": "agent-workforce",
+  "interface": {
+    "displayName": "AI Agent Workforce"
+  },
+  "owner": {
+    "name": "Jay Heavner",
+    "url": "https://github.com/jayheavner"
+  },
+  "plugins": [
+    {
+      "name": "agent-workforce",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/jayheavner/agent-workforce.git"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -66,7 +66,7 @@ After all experts, the convener writes exactly five sections:
 - **Standalone** (default, any session): single-context roleplay — one model
   voices all experts. Cheap; convergence risk is real, which is what required
   dissent exists to counter.
-- **Dispatched** (any session holding the Agent tool): one subagent per expert.
+- **Dispatched** (any session with subagent/collaboration tools): one subagent per expert.
   Each receives only the artifact and its own roster entry — no expert sees
   another's output — using `references/dispatch-template.md`; the convener
   synthesizes the independent returns. Before dispatching, state the estimated
