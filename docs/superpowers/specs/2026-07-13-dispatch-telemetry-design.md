@@ -1,7 +1,9 @@
 # Dispatch Telemetry — Evidence-Based Model Routing — Design
 
 **Date:** 2026-07-13
-**Status:** Draft for human review
+**Status:** Approved 2026-07-13 — human directed work-to-completion in-session; plan-review
+passed same day (three plan-level conditions, all discharged in the implementation plan).
+D2 resolved: the recommended defaults-map option, amended to a **committed** file (see D2).
 **Prior art:** `2026-07-08-exact-closeout-cost-accounting-design.md` (the PostToolUse(Agent)
 cost hook, the per-session cost file, the sticky-`unavailable` fail-open pattern, per-session
 file naming + newest-wins, `model-rates.json` as the no-numbers-in-code rates source — this
@@ -299,10 +301,10 @@ bash test in `tests/`.
   rules, and the "counts only in canonical main" rule. Repo content, not installed instruction text,
   exactly like `docs/gaps/README.md`.
 - **`install.sh`:** add `bash -n tools/agent-team-scoreboard.sh` and `bash tests/test_scoreboard.sh`
-  to the existing validate block. If D2's installer-generated defaults are adopted, add the
-  frontmatter-pin extraction step (grep each `agents/*.md` `model:` line into
-  `hooks/agent-model-defaults.json`) and a shape check that every one of the nine roles has a pin
-  present in `model-rates.json`.
+  to the existing validate block. Per the D2 resolution: regenerate the role→pin map from each
+  `agents/*.md` `model:` line, fail if it differs from the committed
+  `hooks/agent-model-defaults.json`, shape-check that every pin is present in `model-rates.json`,
+  and install + manifest the file exactly like `model-rates.json`.
 
 Add one shakedown scenario to the README checklist: run a small task end-to-end, confirm
 `docs/telemetry/<slug>--<session>.jsonl` appears with one record per dispatch, the builder row shows
@@ -368,6 +370,17 @@ is a real complexity-vs-completeness tradeoff for the human. **Recommendation: t
 map** — idea (2) is half the point of this design, and the lighter option leaves its main threat
 model uncovered.
 
+**Resolution (2026-07-13, at implementation):** the defaults-map option, with one mechanical
+amendment discovered against the installer's actual manifest model. A purely installer-*generated*
+file has no repo counterpart, so `install.sh --check` — which compares every manifest entry against
+both the installed copy and the repo copy — would flag it `REMOVED — gone from the repo` on every
+check. The same cannot-silently-diverge guarantee lands cleaner as a **committed**
+`hooks/agent-model-defaults.json`: `install.sh` regenerates the map from `agents/*.md` frontmatter
+at validate time and **fails loudly if the committed file differs** (the drift-test pattern already
+used for the hash-identical coding-standards copies), shape-checks every pin against
+`model-rates.json`, then installs and manifests it exactly like `model-rates.json`. Divergence is
+impossible to install, and `--check` keeps working unmodified.
+
 ### D3 — One record schema assembled from two writers, vs. two record types
 
 **Consequential (contract).** Chosen: one schema (§1), hook-half in the cost file, verdict-half joined
@@ -418,7 +431,7 @@ design. Cost accounting still covers trivial dispatches.
 | File | Change |
 |---|---|
 | `hooks/agent-team-cost.sh` | Modify — read `tool_input.model`; store `requested_override` on each dispatch entry (§2). No other behavior change. |
-| `hooks/agent-model-defaults.json` | Create *(if D2 recommended option accepted)* — installer-generated role→pin map. |
+| `hooks/agent-model-defaults.json` | Create — committed role→pin map, install-validated against `agents/*.md` frontmatter (D2 resolution). |
 | `agents/orchestrator.md` | Modify — add the Dispatch telemetry closeout instruction and the `telemetry:` gate line (§3). |
 | `agents/scribe.md` | Modify — add the telemetry duty to the status-note section (§3). |
 | `docs/telemetry/README.md` | Create — record schema, quarantine rules, canonical-main counting rule (§1, §4). |
