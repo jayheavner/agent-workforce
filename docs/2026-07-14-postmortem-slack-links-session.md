@@ -190,6 +190,24 @@ Each one converted human frustration into the pressure that fed RC1.
    the question is answerable by evidence it can reach; only genuine preference/tradeoff/authority
    questions go to the human.
 
+## Disposition (2026-07-14)
+
+- Rec 1 (tense-and-scope): orchestrator rule in a02d457; ops rule and the debugger's
+  evidence-scoping in d088c01/a02d457. **Done.**
+- Rec 2 (findings ledger): orchestrator section in d088c01. **Done.**
+- Rec 3 (live-troubleshooting route): `debugger` specialist + symptom-first routing in a02d457;
+  ops granted the debugging skill. **Done.**
+- Rec 4 (relay fidelity / answers as actions): orchestrator rule in d088c01; debugger report
+  format in a02d457. **Done.**
+- Rec 5 (Okta credential reconciliation): **open — environment work requiring the human** (the
+  live token lives in the Employee vault, unreachable by the agents' service account).
+- Rec 6 (fact-shaped questions): orchestrator rule in d088c01. **Done.**
+- Found along the way: install.sh died on macOS bash 3.2 (empty-array expansion under set -u),
+  failing 31 install-test checks — fixed in c0c1c57; suite 36/36. Build c0c1c57 installed to
+  the live profile.
+- The original deliverable — the broken Slack links in email_webhook_handler — **remains open
+  pending the human's decision**: remove the links, deploy the workspace, or accept local-only.
+
 ## Cost of the failure
 
 Five specialist dispatches (~275k subagent tokens) plus orchestrator overhead; roughly fifteen
