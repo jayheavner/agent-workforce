@@ -210,3 +210,30 @@ Spec panel (7 experts, discussion mode) drove: the executor approval check, the 
 and secret-guard re-decisions (taken back to the human as contested points), the scope rule
 with worked examples, install retire-and-purge precision, the required behavioral
 validation, and the injection-risk acknowledgment above.
+
+## Amendment 2026-07-13 — External prior art: Ringer
+
+[Ringer](https://github.com/NateBJones-Projects/ringer), a parallel agent-swarm
+orchestrator reviewed 2026-07-13, is an independent existence proof of this spec's bet.
+It spends zero effort gating command syntax and all of its trust budget on outcome
+verification: every task declares an executable `check` (exit 0 = pass) plus expected
+output files, pass/fail comes from *running* the check — never from the worker's
+self-report — and raw worker output is logged verbatim. That model runs unsandboxed
+workers across three different harnesses (Codex, Grok, OpenRouter) at swarm scale, which
+is stronger evidence than this team's single-harness case.
+
+Mechanisms worth consulting during implementation (source vendored nowhere — read
+upstream; its license is non-standard, so take ideas, not code):
+
+- **Verification over trust as the invariant** — the direct analogue of this spec's
+  "the gate approves intent; the audit log and verifier judge outcomes."
+- **Lint against tautological checks** — static analysis flagging checks that cannot
+  fail or fail silently. If verification is the floor that replaces command-gating, the
+  floor must itself be falsifiable; this concern is being designed separately
+  (`2026-07-13-acceptance-check-linting-design.md`).
+- **Retry-with-failure-context** — the failed check's actual output is appended to the
+  retry prompt; matches this team's existing repair-loop pattern and argues for keeping
+  verifier evidence verbatim, not summarized.
+
+No change to this spec's decisions or acceptance criteria; this amendment records
+corroborating evidence and cross-links the follow-on designs.
