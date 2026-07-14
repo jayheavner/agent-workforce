@@ -44,7 +44,11 @@ add_profile() {
   if [ -d "$candidate" ]; then
     candidate="$(cd "$candidate" && pwd -P)"
   fi
-  for existing in "${PROFILE_DIRS[@]}"; do
+  # ${arr[@]+...} guard: macOS bash 3.2 under `set -u` treats expanding an
+  # EMPTY array as an unbound-variable fatal (fixed upstream in bash 4.4).
+  # This function's first caller runs while PROFILE_DIRS is still empty, so a
+  # bare "${PROFILE_DIRS[@]}" aborts the whole installer on macOS.
+  for existing in ${PROFILE_DIRS[@]+"${PROFILE_DIRS[@]}"}; do
     [ "$existing" = "$candidate" ] && return 0
   done
   PROFILE_DIRS+=("$candidate")
