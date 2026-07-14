@@ -6,7 +6,7 @@ testing, code review, cloud deployment, research, cloud/identity operations, doc
 and Asana ticket handling. Each agent has a fixed role, a pinned model, and enforced
 permissions, so the same agent always behaves the same way regardless of which task it is
 given. One of the ten, the orchestrator, is not dispatched like the others — it runs as the
-main Claude Code session itself, decomposing incoming work, dispatching the other nine
+main Claude Code session itself, decomposing incoming work, dispatching the other ten
 specialists one phase at a time, and stopping at human approval gates between phases. The
 full design rationale — why the orchestrator runs as the main session, why permissions are
 layered the way they are, and why each model was assigned to each role — is written up in
