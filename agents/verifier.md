@@ -5,7 +5,7 @@ model: claude-sonnet-5
 maxTurns: 40
 permissionMode: dontAsk
 tools: Read, Glob, Grep, Bash
-skills: superpowers:verification-before-completion, task-verification
+skills: verify, verifying
 hooks:
   PreToolUse:
     - matcher: Bash
