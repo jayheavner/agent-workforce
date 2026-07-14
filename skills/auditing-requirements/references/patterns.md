@@ -4,9 +4,14 @@ The one shared catalog. Used by `auditing-requirements` (the violation
 catalog it applies) and linked from `writing-business-requirements` (the
 prohibited-language table it must not restate). Edit here only.
 
+`Project agent guidance` below means the project's existing durable instruction
+surface: prefer `AGENTS.md` for ChatGPT/Codex and the relevant
+`.claude/rules/*.md` file for Claude Code. Preserve an established project
+convention rather than creating a second guidance system.
+
 ## 1. Implementation details
 
-Destination: `.claude/rules/` (coding standards).
+Destination: project agent guidance (coding standards).
 
 | Category | Cues | Wrong | Right |
 |---|---|---|---|
@@ -53,7 +58,7 @@ Destination: `tests/` or test documentation.
 | Category | Cues | Wrong | Extract to |
 |---|---|---|---|
 | Test cases/scenarios | `test case/scenario/suite`, `test_...()` names | "test_classify_with_invalid_input() verifies error handling" | `tests/unit/`, `tests/integration/` |
-| Coverage requirements | `coverage`, `90%/100%`, `every branch/edge case` | "Module shall have 90% test coverage" | `.claude/rules/testing.md` |
+| Coverage requirements | `coverage`, `90%/100%`, `every branch/edge case` | "Module shall have 90% test coverage" | Project agent guidance for testing |
 | Verification methods | `verification method/approach`, `mock/stub/fixture` | "Verification method: mock the API responses" | `tests/README.md` |
 | Assertions/expected results | `assert/expect/should return` in a test context | "Assert that the confidence score is at least 0.95" | `tests/` (as actual assertions) |
 
@@ -64,8 +69,8 @@ Destination: `tests/` or test documentation.
   might use pattern matching...") — describing, not prescribing.
 - An **attributed quote** ("The developer noted: 'we used try/except
   blocks here'").
-- A **cross-reference** that only points elsewhere ("See
-  `.claude/rules/testing.md` for exception-handling patterns").
+- A **cross-reference** that only points elsewhere ("See the project testing
+  guidance for exception-handling patterns").
 - Content **already in its correct document** (a test file containing a
   test case is not a violation).
 
@@ -83,17 +88,17 @@ rationale and describes HOW the system works, not WHAT it does.
 
 | Content type | Destination |
 |---|---|
-| Exception handling patterns | `.claude/rules/python-style.md` |
-| Error logging requirements | `.claude/rules/logging-security.md` |
-| Module organization rules | `.claude/rules/project-standards.md` |
-| Testing methodology | `.claude/rules/testing.md` |
+| Exception handling patterns | Project agent guidance for language/style |
+| Error logging requirements | Project agent guidance for logging/security |
+| Module organization rules | Project agent guidance for standards |
+| Testing methodology | Project agent guidance for testing |
 | Technology choices, design patterns, tradeoffs | `docs/decisions/DECISIONS.md` |
 | Library configuration | `docs/setup/*.md` |
 | API authentication | `docs/setup/api-setup.md` |
 | File organization | project guidance file |
 | Configuration defaults | `config/*.json` |
 | Test cases | `tests/unit/`, `tests/integration/` |
-| Test strategy, coverage requirements | `tests/README.md`, `.claude/rules/testing.md` |
+| Test strategy, coverage requirements | `tests/README.md`, project agent guidance for testing |
 
 ## Report format
 
@@ -103,7 +108,7 @@ violations:
     category: "exception_handling"
     location: "docs/requirements/verifier.md:45"
     content: "System shall catch all exceptions and log errors"
-    destination: ".claude/rules/logging-security.md"
+    destination: "project agent guidance for logging/security"
     suggested_replacement: "System shall handle errors and display error messages to users"
     severity: "high"  # high | medium | low
 ```

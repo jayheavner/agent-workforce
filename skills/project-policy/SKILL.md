@@ -6,7 +6,7 @@ policy-contract: 1
 
 # Project Policy
 
-*Resolution is per-key:* a project-scope policy (`.claude/skills/project-policy/`) overrides ONLY the keys it names and inherits the rest from user scope (`~/.claude/skills/project-policy/`); a `project-policy` skill wins over a CLAUDE.md `## Project policy` section when both exist. Skills echo the resolved value and its source.
+*Resolution is per-key:* use the closest-scope `project-policy` skill exposed by the active surface. A project-scope policy overrides ONLY the keys it names and inherits the rest from user or plugin scope. On Claude Code this commonly resolves through `.claude/skills/project-policy/` and `~/.claude/skills/project-policy/`; on ChatGPT/Codex use the active project, plugin, and user skill layers. A `project-policy` skill wins over a `## Project policy` section in `CLAUDE.md` or `AGENTS.md` when both exist. Skills echo the resolved value and its source.
 
 ## build-policy
 

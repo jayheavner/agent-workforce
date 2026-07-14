@@ -44,10 +44,9 @@ add_profile() {
   if [ -d "$candidate" ]; then
     candidate="$(cd "$candidate" && pwd -P)"
   fi
-  # ${arr[@]+...} guard: macOS bash 3.2 under `set -u` treats expanding an
-  # EMPTY array as an unbound-variable fatal (fixed upstream in bash 4.4).
-  # This function's first caller runs while PROFILE_DIRS is still empty, so a
-  # bare "${PROFILE_DIRS[@]}" aborts the whole installer on macOS.
+  # Bash 3.2 with `set -u` treats an empty array expansion as unbound. The
+  # `+word` form keeps the first add_profile call safe while preserving normal
+  # quoted-array behavior after an entry exists.
   for existing in ${PROFILE_DIRS[@]+"${PROFILE_DIRS[@]}"}; do
     [ "$existing" = "$candidate" ] && return 0
   done
@@ -162,7 +161,10 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
   bash "$REPO/tests/test_plugin_mode.sh" >/dev/null || fail "plugin-mode tests failed — run tests/test_plugin_mode.sh to see which"
+  bash "$REPO/tests/test_chatgpt_plugin.sh" >/dev/null || fail "ChatGPT plugin tests failed — run tests/test_chatgpt_plugin.sh to see which"
+  bash "$REPO/tests/test_codex_profiles.sh" >/dev/null || fail "Codex profile tests failed — run tests/test_codex_profiles.sh to see which"
   bash "$REPO/tests/test_decision_discipline_drift.sh" >/dev/null || fail "decision-discipline drift test failed — run tests/test_decision_discipline_drift.sh to see which"
+  bash "$REPO/tests/test_closeout_audit.sh" >/dev/null || fail "closeout audit test failed — run tests/test_closeout_audit.sh to see which"
 fi
 [ -f "$POLICY_KEYS" ] || fail "policy/KEYS.md is missing from repo"
 [ -f "$FRAMEWORK_PIN" ] || fail "SKILLS-FRAMEWORK is missing from repo"
