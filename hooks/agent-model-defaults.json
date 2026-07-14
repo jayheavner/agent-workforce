@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "comment": "Role -> frontmatter model pin. Committed, never hand-maintained blind: install.sh regenerates this map from agents/*.md and fails if it differs, so it cannot silently diverge. Consumed by the scribe when resolving requested_model for dispatch telemetry records (docs/telemetry/README.md).",
+  "roles": {
+    "architect": "claude-opus-4-8",
+    "builder": "claude-sonnet-5",
+    "deployer": "claude-sonnet-5",
+    "ops": "claude-sonnet-5",
+    "orchestrator": "claude-opus-4-8",
+    "researcher": "claude-sonnet-5",
+    "reviewer": "claude-opus-4-8",
+    "scribe": "claude-sonnet-5",
+    "ticketer": "claude-sonnet-5",
+    "verifier": "claude-sonnet-5"
+  }
+}
