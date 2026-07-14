@@ -12,9 +12,12 @@ recorded in the target project's own CLAUDE.md, which was in context the entire 
 
 ## The one-sentence verdict
 
-**The very first ops dispatch got the answer completely right in under two minutes, and the
-orchestrator abandoned that verified finding the moment the human contradicted it — everything
-after that was the cost of the capitulation.**
+**The very first ops dispatch got the answer completely right in under two minutes. The human
+then reported a conflicting first-person observation ("I've been in this platform hundreds of
+times back when it had a normal Amplify URL"), and the orchestrator — instead of asking the one
+question that reconciles observation with evidence (*which app, at which URL?*) — upgraded the
+observation into the conclusion "so it is deployed" and abandoned its verified finding.
+Everything after that was the cost of that unforced inference.**
 
 Ops dispatch #1 reported: NXDOMAIN, never provisioned, no hosting anywhere, exists only at
 `localhost:5173` on a dev machine. Two hours, four more dispatches, one credential rabbit hole,
@@ -27,10 +30,13 @@ and one killed launchd service later, the session's final conclusion was the sam
    Amplify, CloudFront, S3, API Gateway, Route53, GoDaddy — and concluded correctly: never
    deployed, local-only.
 2. **The pivot point.** The human replied: *"I've been in this platform hundreds of times back
-   when it had a normal Amplify URL. This is LAZY work."* This recollection was factually wrong
-   (no Amplify app for this workspace exists in the account — the human later confirmed the
-   local-only reality themselves). The orchestrator immediately discarded its verified finding
-   ("My bad — so it is deployed") instead of holding the contradiction open.
+   when it had a normal Amplify URL. This is LAZY work."* That is an experiential report, not a
+   counter-claim about infrastructure — and both statements could be true at once if the memory
+   attached a real Amplify experience (recon-web or CES are real Amplify apps the human uses) to
+   the wrong app. The orchestrator did not ask the discriminating question (*which app, at which
+   URL?*); it upgraded the observation into the conclusion "My bad — so it is deployed" and
+   discarded its verified finding. The contradiction with the evidence was manufactured by the
+   orchestrator's interpretation, not stated in the human's words.
 3. **The detour.** Accepting "it is deployed somewhere" as ground truth forced a search for a
    thing that doesn't exist: re-inspecting Amplify apps (ops #2, 41 tool uses), the Okta
    SPA redirect-URI path (ops #3 and #4), a stale-token investigation, a vault-access dead end,
@@ -50,21 +56,24 @@ and one killed launchd service later, the session's final conclusion was the sam
 
 ## Root causes
 
-### RC1 — No rule for "human testimony contradicts verified evidence" (primary)
+### RC1 — No rule for reconciling human observations with verified evidence (primary)
 
 The orchestrator's instructions say "trust specialist reports — do not re-verify" and, at gates,
-"the human decides." Nothing covers the case where those collide: a specialist's *evidence*
-(command + output) versus the human's *recollection*. Faced with an angry contradiction, the
-orchestrator treated the recollection as ground truth and the evidence as an error. The correct
-move was to hold both: "DNS says NXDOMAIN and no Amplify app matches this project; you recall
-using an Amplify URL. One of these is wrong. The cheapest discriminating check is X." Human
-memory is testimony, not evidence — it gets reconciled, not obeyed.
+"the human decides." Nothing covers the case where a human's first-person *observation* ("I've
+been in this platform at an Amplify URL") arrives alongside a specialist's contrary *evidence*
+(command + output: never deployed). Those are different kinds of input: the observation is
+almost certainly a true memory of a real experience, the evidence is checked fact, and the
+conflict lives in a single unverified link — whether the remembered experience belongs to *this*
+app. The correct move was to hold both and ask the discriminating question ("which app, at which
+URL, were you in?"). Instead the orchestrator upgraded the observation into an infrastructure
+conclusion ("so it is deployed") and discarded the finding. A version of the discriminating
+question was eventually asked (transcript line 171) — after the capitulation had already
+redirected two dispatches, by which point the human couldn't supply the URL anyway.
 
-The human's recollection was wrong twice ("I've used the Amplify URL," "it's in the same
-account"), and each wrong assertion redirected the search. That is not a blame line — humans
-misremember; that's *why* the discipline has to live in the orchestrator. A system that
-discards verified findings under social pressure will be steered by whichever party is most
-confident, not by evidence.
+The follow-on answer "it's in the same account" (line 327) redirected the search a second time.
+That is not a blame line — memories mis-attach; that's *why* the reconciliation discipline has
+to live in the orchestrator. A system that converts confident testimony into fact under social
+pressure will be steered by whichever party is most confident, not by evidence.
 
 ### RC2 — No findings ledger, so established facts silently expired
 
@@ -115,9 +124,10 @@ Each one converted human frustration into the pressure that fed RC1.
 
 ## Recommendations
 
-1. **Evidence-reconciliation rule (orchestrator).** When the human contradicts a specialist
-   finding that carries evidence, the orchestrator must not discard the finding. It states both
-   claims, names the cheapest discriminating check, and runs it. A re-dispatch to "find" a thing
+1. **Evidence-reconciliation rule (orchestrator).** When a human observation conflicts with a
+   specialist finding that carries evidence, the orchestrator must not discard the finding and
+   must not upgrade the observation into a conclusion. It states both, names the cheapest
+   discriminating question or check, and resolves it first. A re-dispatch to "find" a thing
    whose nonexistence was verified requires a new discriminating fact, stated in the dispatch.
 2. **Findings ledger.** The orchestrator keeps a short pinned list of established facts
    (claim + evidence + which dispatch proved it). Every subsequent dispatch prompt includes it;
