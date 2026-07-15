@@ -46,6 +46,21 @@ Use `implemented and locally verified` for a passing acceptance verdict that
 has not met its delivery target. Never use `done`, `complete`, or `shippable`
 for that interim state.
 
+## Completion-claim guard
+
+When the final status note or report contains a delivery receipt, run:
+
+```bash
+python3 <workforce-repo>/tools/lint_completion_claims.py --require-receipt <status-note>
+```
+
+It is a deterministic guard for the boundary this skill cannot infer from
+prose: a completion claim requires `shipment-verdict: SHIPPABLE`, and the
+target-required receipt fields must be `pass`. A `BLOCK` overrides a prose
+claim of completion and makes the shipment verdict `NOT SHIPPABLE`. The lint
+checks receipt structure and consistency only; independently verify each cited
+piece of evidence as usual.
+
 ## Verdicts
 
 - **pass** — the output shows the criterion holding. Quote the line that shows it.

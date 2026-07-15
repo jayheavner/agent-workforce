@@ -2,15 +2,21 @@
 # bin/agent-workforce-closeout — read-only completion audit for Git work.
 set -u
 
+TOOL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 usage() {
   cat <<'EOF'
 Usage:
   bin/agent-workforce-closeout [--repo PATH] [--base BRANCH] [--format text|json]
+                              [--completion-report PATH]
 
 Inspect the repository's completion state without changing files, branches, or
 worktrees. The audit reports dirty state, merged branches, worktrees, and safe
 cleanup candidates. Cleanup candidates are evidence only; integration and any
 destructive cleanup still require explicit human confirmation.
+
+When --completion-report is supplied, the report must carry a SHIPPABLE
+delivery receipt. A non-shippable receipt makes this terminal closeout fail.
 EOF
 }
 
@@ -22,6 +28,7 @@ fail() {
 REPO="$(pwd)"
 BASE=""
 FORMAT="text"
+COMPLETION_REPORT=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -38,6 +45,11 @@ while [ "$#" -gt 0 ]; do
     --format)
       [ "$#" -ge 2 ] || fail "--format requires text or json"
       FORMAT="$2"
+      shift 2
+      ;;
+    --completion-report)
+      [ "$#" -ge 2 ] || fail "--completion-report requires a path"
+      COMPLETION_REPORT="$2"
       shift 2
       ;;
     --help|-h)
@@ -77,6 +89,18 @@ fi
 [ -n "$BASE" ] || BASE="HEAD"
 git -C "$REPO" rev-parse --verify "${BASE}^{commit}" >/dev/null 2>&1 \
   || fail "base branch or commit is not available: $BASE"
+
+COMPLETION_LINT="not run"
+if [ -n "$COMPLETION_REPORT" ]; then
+  [ -f "$COMPLETION_REPORT" ] || fail "completion report does not exist: $COMPLETION_REPORT"
+  LINT_OUTPUT="$(python3 "$TOOL_ROOT/tools/lint_completion_claims.py" --require-receipt --require-shippable "$COMPLETION_REPORT" 2>&1)"
+  LINT_RC=$?
+  if [ "$LINT_RC" -ne 0 ]; then
+    printf '%s\n' "$LINT_OUTPUT" >&2
+    fail "completion report is not shippable"
+  fi
+  COMPLETION_LINT="pass"
+fi
 
 if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=all)" ]; then
   DIRTY=true
@@ -190,7 +214,9 @@ OUTPUT_JSON="$(jq -n \
   --argjson worktrees "$WORKTREES_JSON" \
   --argjson branch_candidates "$BRANCH_CANDIDATES_JSON" \
   --argjson worktree_candidates "$WORKTREE_CANDIDATES_JSON" \
-  '{repository:$repository, current_branch:$current_branch, base_branch:$base_branch, head:$head, dirty:$dirty, branches:$branches, worktrees:$worktrees, cleanup_candidates:{branches:$branch_candidates, worktrees:$worktree_candidates}}')"
+  --arg completion_report "$COMPLETION_REPORT" \
+  --arg completion_lint "$COMPLETION_LINT" \
+  '{repository:$repository, current_branch:$current_branch, base_branch:$base_branch, head:$head, dirty:$dirty, branches:$branches, worktrees:$worktrees, cleanup_candidates:{branches:$branch_candidates, worktrees:$worktree_candidates}, completion_report:(if $completion_report == "" then null else {path:$completion_report, delivery_claim_lint:$completion_lint} end)}')"
 
 if [ "$FORMAT" = "json" ]; then
   printf '%s\n' "$OUTPUT_JSON"
@@ -202,6 +228,10 @@ printf 'repository: %s\n' "$REPO"
 printf 'current branch: %s\n' "$CURRENT_BRANCH"
 printf 'base branch: %s\n' "$BASE"
 printf 'dirty: %s\n' "$DIRTY"
+if [ -n "$COMPLETION_REPORT" ]; then
+  printf 'completion report: %s\n' "$COMPLETION_REPORT"
+  printf 'delivery-claim lint: %s\n' "$COMPLETION_LINT"
+fi
 printf 'branches:\n'
 printf '%s\n' "$BRANCHES_JSON" | jq -r '.[] | "  - \(.name): merged=\(.merged_into_base), checked_out=\(.checked_out), cleanup_candidate=\(.cleanup_candidate)"'
 printf 'worktrees:\n'

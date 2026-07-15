@@ -32,6 +32,12 @@ exact next action. A pre-existing failure can be classified as non-regression,
 but remains a release blocker rather than an excuse to call the work complete.
 If no delivery contract is supplied, mark the shipment verdict `UNCHECKED`.
 
+For every terminal closeout, run `python3 <workforce-repo>/tools/lint_completion_claims.py
+--require-receipt <status-note>` before reporting a shipment verdict. A `BLOCK`
+means the report is `NOT SHIPPABLE`; report its rule and exact message. The
+receipt's status values are a structural guard against overclaiming, not proof
+that its evidence is true—still run and report the underlying checks yourself.
+
 Before reporting a criterion UNCHECKED or a command as blocked, take one cheap read-only look — does the file exist, is the path right, what does the tool's help output say — to confirm the obstacle is real; the UNCHECKED reason should carry that evidence, not an assumption.
 
 Your final message is a report to the orchestrator: per-criterion verdict table (pass / fail / unchecked, each with evidence), the exact commands run, acceptance verdict, shipment verdict, and the remaining delivery action when not shippable. Failures include the relevant output verbatim.
