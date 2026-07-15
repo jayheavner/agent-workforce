@@ -56,6 +56,11 @@ belong to this work; anything else in the tree is surfaced to the human —
 left uncommitted, stashed with a note, or offered as a separate commit —
 never swept into the feature commit and never silently discarded.
 
+A request to implement repository changes authorizes a focused local commit as
+the default delivery step unless the human explicitly says not to commit. This
+standing authority does not include pushing, publishing, or mixing unrelated
+work into the commit.
+
 Resolve `policy:git-conventions` from the project policy and state the
 resolved value and its source — project policy / user policy / judgment
 default — before writing the commit message. Where no policy defines it:
@@ -93,9 +98,11 @@ bin/agent-workforce-closeout --repo <checkout> --base <base> --format text
 
 Treat its branch and worktree candidates as evidence only. A candidate is
 eligible for cleanup only when it is merged into the confirmed base, clean, not
-the current checkout, and was created for this work. Present the exact cleanup
-commands and wait for confirmation; never delete by age, never remove a dirty
-worktree, and never delete a branch this work did not create.
+the current checkout, and was created for this work. When cleanup is inside the
+standing authorization, remove eligible task-created targets without a
+ceremonial confirmation; an explicit hold wins. Otherwise ask once for the
+missing authority. Never delete by age, remove a dirty worktree, or delete a
+branch this work did not create.
 
 If the tree holds unrelated changes, a conflict touches code this branch
 doesn't own, or there is no remote where the human expected one: say so

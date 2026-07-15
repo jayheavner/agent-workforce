@@ -61,6 +61,15 @@ enough: read the relevant command output, diff, artifact, or approval.
 - Integration names the selected human path: merged, PR/opened, held, or
   explicitly discarded. Do not infer integration from a successful test.
 
+## Finalizer ownership
+
+For repository changes, the executor finalizer owns the transition from green
+evidence to a clean local delivery. The implementation request authorizes a
+focused local commit unless the human explicitly opted out. Stage only this
+task's delta, include its plan/status/handoff artifacts, follow the repository's
+commit convention, and record the hash. Do not push without separate authority
+and do not absorb baseline dirt.
+
 ## Memory state
 
 Use one of these exact states:
@@ -85,8 +94,10 @@ bin/agent-workforce-closeout --repo <checkout> --base <base> --format text
 
 Cleanup requires all of these conditions: integration is confirmed; the target
 branch or worktree is merged into the selected base; it is clean; it is not the
-current checkout; and the task created it. Present exact cleanup commands and
-wait for confirmation. Do not delete by age, use force cleanup for convenience,
-or remove a branch/worktree owned by another task.
+current checkout; and the task created it. When integration and cleanup are
+inside standing authorization, the finalizer removes eligible targets without a
+ceremonial confirmation; an explicit hold wins. Otherwise ask once for the
+missing authority. Do not delete by age, use force cleanup for convenience, or
+remove a branch/worktree owned by another task.
 
 If the audit cannot run, mark cleanup `UNCHECKED` and identify the obstacle.
