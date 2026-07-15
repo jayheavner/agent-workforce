@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh model-rates.json agent-model-defaults.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent_team_closeout.py model-rates.json agent-model-defaults.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -145,6 +145,12 @@ bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
 bash -n "$REPO/hooks/agent-team-dispatch-guard.sh" || fail "dispatch guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-plugin-router.sh" ] || fail "hooks/agent-team-plugin-router.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed bash -n"
+[ -f "$REPO/hooks/agent_team_closeout.py" ] || fail "hooks/agent_team_closeout.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent_team_closeout.py" || fail "closeout hook failed Python syntax validation"
+[ -f "$REPO/tools/lint_completion_claims.py" ] || fail "tools/lint_completion_claims.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/tools/lint_completion_claims.py" || fail "completion linter failed Python syntax validation"
 jq empty "$REPO/hooks/model-rates.json" || fail "model-rates.json is not valid JSON"
 jq -e '
   def rates: [ .input, .output, .cache_write_5m, .cache_write_1h, .cache_read ];
@@ -192,6 +198,7 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_closeout_audit.sh" >/dev/null || fail "closeout audit test failed — run tests/test_closeout_audit.sh to see which"
   bash "$REPO/tests/test_completion_contract.sh" >/dev/null || fail "completion contract test failed — run tests/test_completion_contract.sh to see which"
   bash "$REPO/tests/test_completion_lint.sh" >/dev/null || fail "completion lint test failed — run tests/test_completion_lint.sh to see which"
+  bash "$REPO/tests/test_closeout_hook.sh" >/dev/null || fail "closeout hook test failed — run tests/test_closeout_hook.sh to see which"
 fi
 [ -f "$POLICY_KEYS" ] || fail "policy/KEYS.md is missing from repo"
 [ -f "$FRAMEWORK_PIN" ] || fail "SKILLS-FRAMEWORK is missing from repo"
@@ -336,6 +343,7 @@ if [ "$MODE" = "check" ]; then
     case "$rel" in
       agents/*) inst="$CLAUDE_DIR/agents/$(basename "$rel")" ;;
       hooks/*)  inst="$HOOKS_DIR/$(basename "$rel")" ;;
+      tools/lint_completion_claims.py) inst="$HOOKS_DIR/lint_completion_claims.py" ;;
       skills/*) inst="$CLAUDE_DIR/skills/${rel#skills/}" ;;
       *) continue ;;
     esac
@@ -399,10 +407,14 @@ PREEXISTING_COST=0
 PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
 PREEXISTING_DEFAULTS=0
+PREEXISTING_CLOSEOUT=0
+PREEXISTING_LINTER=0
 [ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
+[ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
+[ -f "$HOOKS_DIR/lint_completion_claims.py" ] && { cp "$HOOKS_DIR/lint_completion_claims.py" "$BACKUP/"; PREEXISTING_LINTER=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -456,6 +468,8 @@ restore() {
       agent-team-plugin-router.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-cost.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
+      lint_completion_claims.py) cp "$b" "$HOOKS_DIR/" ;;
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-model-defaults.json) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
@@ -495,6 +509,8 @@ cleanup_fresh() {
   [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$HOOKS_DIR/model-rates.json"
   [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-guard.sh"
   [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
+  [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
+  [ "$PREEXISTING_LINTER" -eq 0 ] && rm -f "$HOOKS_DIR/lint_completion_claims.py"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -513,6 +529,8 @@ if ! cp "$REPO/hooks/agent-team-audit.sh" "$HOOKS_DIR/"; then restore; cleanup_f
 if ! cp "$REPO/hooks/agent-team-plugin-router.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "plugin router copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
+if ! cp "$REPO/tools/lint_completion_claims.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "completion linter copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
@@ -533,6 +551,8 @@ chmod +x "$HOOKS_DIR/agent-team-audit.sh" || { restore; cleanup_fresh; fail "chm
 chmod +x "$HOOKS_DIR/agent-team-plugin-router.sh" || { restore; cleanup_fresh; fail "chmod of plugin router failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent_team_closeout.py" || { restore; cleanup_fresh; fail "chmod of closeout hook failed; rolled back"; }
+chmod +x "$HOOKS_DIR/lint_completion_claims.py" || { restore; cleanup_fresh; fail "chmod of completion linter failed; rolled back"; }
 
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;
@@ -542,6 +562,7 @@ TMP_MANIFEST="$(mktemp)"
 {
   for f in "$REPO"/agents/*.md; do printf 'agents/%s\t%s\n' "$(basename "$f")" "$(sha "$f")"; done
   for h in $HOOK_FILES; do printf 'hooks/%s\t%s\n' "$h" "$(sha "$REPO/hooks/$h")"; done
+  printf 'tools/lint_completion_claims.py\t%s\n' "$(sha "$REPO/tools/lint_completion_claims.py")"
   while IFS= read -r rel; do rel="${rel#./}"; printf 'skills/%s\t%s\n' "$rel" "$(sha "$REPO/skills/$rel")"; done <<EOF
 $(cd "$REPO/skills" && find . -type f)
 EOF
