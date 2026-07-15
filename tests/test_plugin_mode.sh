@@ -37,14 +37,23 @@ bash -n "$REPO/bin/agent-workforce" "$ROUTER" \
   && ok || bad "plugin settings do not select the namespaced live orchestrator"
 
 if jq -e '
-    .hooks.PreToolUse[].hooks[].command,
-    .hooks.PostToolUse[].hooks[].command
+    .hooks[][] .hooks[].command
     | contains("${CLAUDE_PLUGIN_ROOT}")
   ' "$REPO/hooks/hooks.json" >/dev/null; then
   ok
 else
   bad "a plugin hook command does not resolve through CLAUDE_PLUGIN_ROOT"
 fi
+
+jq -e '
+  (.hooks.PreToolUse[].hooks[].command | select(contains("closeout-dispatch"))) and
+  (.hooks.SubagentStop[].hooks[].command | select(contains("closeout-subagent"))) and
+  (.hooks.Stop[].hooks[].command | select(contains("closeout-stop")))
+' "$REPO/hooks/hooks.json" >/dev/null 2>&1 \
+  && ok || bad "plugin does not register dispatch, SubagentStop, and Stop closeout hooks"
+
+python3 -c 'compile(open("hooks/agent_team_closeout.py", encoding="utf-8").read(), "hooks/agent_team_closeout.py", "exec")' \
+  && ok || bad "closeout hook failed Python syntax validation"
 
 if command -v claude >/dev/null 2>&1; then
   # The repo also carries .claude-plugin/marketplace.json for ChatGPT's
@@ -88,6 +97,9 @@ expect_rc 0 dispatch "$(agent_payload builder general-purpose)" \
   "dispatch guard leaked into a specialist"
 expect_rc 0 dispatch "$(agent_payload unrelated-agent general-purpose)" \
   "dispatch guard leaked into an unrelated agent"
+
+expect_rc 0 closeout-stop "$(jq -cn --arg cwd "$TMPDIR_T" '{session_id:"none",cwd:$cwd,last_assistant_message:"ordinary"}')" \
+  "closeout Stop router errored for a session with no active workforce task"
 
 SID='11111111-1111-1111-1111-111111111111'
 TRANSCRIPT="$TMPDIR_T/session.jsonl"
