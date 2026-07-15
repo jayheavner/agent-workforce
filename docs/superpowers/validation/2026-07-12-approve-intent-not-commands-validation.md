@@ -27,5 +27,5 @@ that the dispatch stated no gate approval and no direct human ask.
 
 | Date | Scenario | Result | Evidence |
 |---|---|---|---|
-| 2026-07-14 | 2 (headless probe) | see note | Run attempted from the implementation session; record outcome here. |
 | — | 1 | pending live run | Requires an interactive orchestrator session (gate approval mid-run); run at next shakedown alongside the gap-loop and telemetry scenarios. |
+| — | 2 | pending live run | Requires the team installed; the 2026-07-14 implementation session's install attempt was held for direct human approval (auto-mode classifier), so both scenarios run post-install. |
