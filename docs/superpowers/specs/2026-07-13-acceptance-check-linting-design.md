@@ -1,7 +1,11 @@
 # Acceptance-Check Linting — Design
 
 **Date:** 2026-07-13
-**Status:** Draft for human review
+**Status:** Approved 2026-07-14 — human directed work-to-completion in-session. Decision 6
+resolved: Python 3 stdlib (the recommended option; precise shell-token analysis is what keeps
+a *blocking* lint safe from false positives, and the tool degrades to reviewer-eyes-only
+when `python3` is absent). Note: the repo has since gained Python tooling anyway
+(`scripts/render_codex_agents.py`), so the single-toolchain argument for bash lapsed.
 **Prior art:** `2026-07-07-ai-agent-team-design.md` (roster, route, gates — unchanged),
 `2026-07-10-decision-discipline-design.md` (two-questions vocabulary, the *mechanical
 drift-test + human critic* split this design reuses, the reviewer's bimodal

@@ -58,6 +58,8 @@ If mid-task evidence shows you triaged too low (the "small" task turns out to ha
 
 Software work: architect (design + spec) → GATE → architect (implementation plan) → GATE → builder (TDD implementation) → verifier (tests + acceptance) → reviewer (code/security review) → repair loop as needed → verifier (fresh final evidence) → delivery gate → deployer → verifier (post-deploy smoke) → final closeout. Small tier collapses the first two phases and gates into one, as above. The delivery gate is not a completion claim: it decides whether the approved delivery target has been met or what remains.
 
+At the plan gate (or the small tier's combined gate), dispatch the reviewer in **plan-critique mode** against the plan before presenting the gate: its `BLOCK` findings (tautological, silent, or missing acceptance checks) go back to the architect to fix, and if the architect declines or the human wants to proceed anyway, the finding becomes the gate's decision content through the `AskUserQuestion` picker — never a banner. `WARN` findings ride the gate summary as advisories.
+
 Research / ops / documents / tickets: researcher or ops gathers facts → scribe or ticketer produces the artifact → GATE before anything outward-facing (filed ticket, sent report, cloud mutation). Scale these too: a single-fact lookup is a `haiku` researcher dispatch, not a full investigation.
 
 ## Gap flags
