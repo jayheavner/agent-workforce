@@ -25,19 +25,29 @@ The `memory` field is explicit: use `not requested`, `not reusable`,
 docs/memory/<proposed-file>.md`. Project-memory records follow
 `docs/memory/README.md`; they do not claim to update personal Codex memory.
 
+Name the delivery target before offering the branch: integrated code or a
+deployed service. The target decides whether integration, deployment, and
+post-deploy smoke evidence are required. A passing local suite makes the branch
+eligible for the next delivery step; it does not make the user-visible outcome
+complete. If a required field remains pending, fails, or is unchecked, report
+`NOT SHIPPABLE` and the next exact action instead of calling the work done or
+complete.
+
 ## The finish gate
 
 Before any commit is finalized or integration offered:
 
-- Run the work's stated acceptance criteria — or the full test suite when
-  no criteria exist — fresh, after the last edit, per `verifying`. The
-  feature's own tests passing is not the gate; the *suite* is. A sibling
-  test the change broke is this work's bug.
+- Run the work's stated acceptance criteria fresh after the last edit, per
+  `verifying`. For every code change, run the full suite too. The feature's own
+  tests passing is not the gate; the *suite* is. A sibling test the change broke
+  is this work's bug.
 - Red means stop: fix it here if the cause is this branch's change, and
   re-run the gate; report it as blocking if it isn't. Nothing merges,
   pushes, or becomes a PR while the gate is red.
 - Read the full diff against the base branch per `reviewing` before
   offering the work for integration.
+- If a reviewer-triggered repair changed code, run the verification gate again
+  after that final edit; a re-review alone cannot establish a fresh green suite.
 
 ## Committing only this work
 

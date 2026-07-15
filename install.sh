@@ -165,6 +165,7 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_codex_profiles.sh" >/dev/null || fail "Codex profile tests failed — run tests/test_codex_profiles.sh to see which"
   bash "$REPO/tests/test_decision_discipline_drift.sh" >/dev/null || fail "decision-discipline drift test failed — run tests/test_decision_discipline_drift.sh to see which"
   bash "$REPO/tests/test_closeout_audit.sh" >/dev/null || fail "closeout audit test failed — run tests/test_closeout_audit.sh to see which"
+  bash "$REPO/tests/test_completion_contract.sh" >/dev/null || fail "completion contract test failed — run tests/test_completion_contract.sh to see which"
 fi
 [ -f "$POLICY_KEYS" ] || fail "policy/KEYS.md is missing from repo"
 [ -f "$FRAMEWORK_PIN" ] || fail "SKILLS-FRAMEWORK is missing from repo"

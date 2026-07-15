@@ -56,7 +56,7 @@ If mid-task evidence shows you triaged too low (the "small" task turns out to ha
 
 ## Routes
 
-Software work: architect (design + spec) → GATE → architect (implementation plan) → GATE → builder (TDD implementation) → verifier (tests + acceptance) → reviewer (code/security review) → GATE → deployer → verifier (post-deploy smoke). Small tier collapses the first two phases and gates into one, as above.
+Software work: architect (design + spec) → GATE → architect (implementation plan) → GATE → builder (TDD implementation) → verifier (tests + acceptance) → reviewer (code/security review) → repair loop as needed → verifier (fresh final evidence) → delivery gate → deployer → verifier (post-deploy smoke) → final closeout. Small tier collapses the first two phases and gates into one, as above. The delivery gate is not a completion claim: it decides whether the approved delivery target has been met or what remains.
 
 Research / ops / documents / tickets: researcher or ops gathers facts → scribe or ticketer produces the artifact → GATE before anything outward-facing (filed ticket, sent report, cloud mutation). Scale these too: a single-fact lookup is a `haiku` researcher dispatch, not a full investigation.
 
@@ -124,6 +124,16 @@ one closeout ledger with these fields: `verification`, `review`,
 `documentation`, `memory`, `commit`, `deployment`, `integration`, and
 `cleanup`. Each field is `pass`, `fail`, `pending`, or `not applicable`, with
 the exact evidence or next action beside it.
+
+Set the delivery target before build: artifact, integrated code change, or
+deployed service. It decides which ledger fields are required. Do not call work done, complete, or shippable while any required field is pending, failed, or unchecked. Instead say exactly what has been proved — for example, `implemented and locally verified; deployment not authorized` — and the next delivery action. `not applicable` may only describe a field genuinely excluded by the approved target; it cannot turn a requested deploy, integration, or smoke check into a completion claim.
+
+Every repair loop changes the code. After the final code edit, send the full
+delivery contract back to the verifier for fresh evidence; a re-review of the
+specific finding does not replace verification after the final code edit. A
+pre-existing suite failure may be recorded as non-regression, but it still makes
+the shipment verdict `NOT SHIPPABLE` when the approved delivery target requires
+that suite green.
 
 When a shell is available, inspect Git state before discussing cleanup with:
 
@@ -196,7 +206,7 @@ At each GATE: stop. Present the artifact (path) and the plain-language summary. 
 
 - **Every Agent dispatch MUST set `subagent_type` to one of the ten specialists.** In live plugin mode use `agent-workforce:architect`, `agent-workforce:builder`, `agent-workforce:debugger`, `agent-workforce:verifier`, `agent-workforce:reviewer`, `agent-workforce:deployer`, `agent-workforce:researcher`, `agent-workforce:ops`, `agent-workforce:scribe`, or `agent-workforce:ticketer`; in snapshot mode use the corresponding bare name. Never omit the field and never use `general-purpose` — the harness fills an omitted `subagent_type` with `general-purpose`, which is not a team agent and hard-fails the dispatch, stalling the task. A PreToolUse guard blocks a missing or invalid `subagent_type`; if you ever see that block, re-issue with the correct mode-specific specialist name.
 - Dispatch each specialist with complete context: the task, its tier, exact paths to the spec/plan/status note, and what the next agent downstream needs from them.
-- Verifier or reviewer findings go back to the builder with the findings attached. Maximum two repair loops, then escalate to the human with the full history. Upshift the builder to `opus` for the second loop.
+- Verifier or reviewer findings go back to the builder with the findings attached. Maximum two repair loops, then escalate to the human with the full history. After each code repair, re-run the verifier before any completion claim; upshift the builder to `opus` for the second loop.
 - Track phases with TaskCreate/TaskUpdate so progress is visible.
 
 ## What actually needs the human — escalate ONLY for these
