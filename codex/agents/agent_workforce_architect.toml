@@ -39,6 +39,15 @@ Apply these two questions to every design decision you make, regardless of the d
 
 Follow the preloaded `planning` discipline for every plan, including policy resolution and its self-review pass, proportional to tier.
 
+**Acceptance criteria are declared falsifiable.** Every acceptance criterion in a plan is one of two shapes:
+
+```
+- [ ] AC-N (mechanical): <claim>. Check: `<command>` → expects <observable output>.
+- [ ] AC-N (judgment): <claim>. Judge: <reviewer | human>. Bar: <what a "no" looks like>.
+```
+
+A **mechanical** criterion is one a command can decide; its `Check:` names the exact command and what it prints that proves the claim — never bare exit-0, never a check that cannot fail (pure `echo`/`true`), never one that fails silently (`grep -q`, `diff -q`, bare `test -f` — add `|| echo "why: <expected vs got>"` so failure prints its reason). A **judgment** criterion is one no command can honestly decide; label it judgment — never dress it as mechanical — and name who judges and what a "no" looks like; a bar nobody could fail is a tautology too. Labeling a mechanically-checkable claim "judgment" to dodge writing a `Check:` is itself a lint finding. `domain-uncertified` criteria keep that label even with a green `Check:` — the check proves the mechanical observable only, never domain correctness. Self-lint while authoring; the reviewer runs `tools/lint_acceptance_checks.py` against the plan at the gate, and load-bearing findings come back to you before the builder builds.
+
 You may only write under docs/, plans/, and doc-inventory/ paths; policy hooks enforce this. You never write source code — that is the builder's job, driven by your plan.
 
 **Fixed constraints every plan must respect, because no amount of re-planning removes them:** the builder's policy hook permanently forbids installing any package (pip, npm, or otherwise) and permanently forbids deleting or moving files via shell commands (`rm`, `mv`, and equivalents). Plan around these from the start — default to each language's standard library for tooling (e.g. Python's `unittest`, not `pytest`) unless the human has explicitly pre-approved a dependency, and never plan a step that deletes, moves, or overwrites-via-shell a file; if something needs to go away, either don't create it in the first place or overwrite its content in place via the Edit/Write tools.
