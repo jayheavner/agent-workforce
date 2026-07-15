@@ -22,7 +22,9 @@ expect_grep() { # $1 file, $2 fixed text, $3 label
 REPO="$TMPDIR_T/repo"
 LINKED="$TMPDIR_T/linked"
 mkdir -p "$REPO"
-git init -q -b main "$REPO"
+# git init -b needs git >= 2.28; symbolic-ref names the unborn branch on any git.
+git init -q "$REPO"
+git -C "$REPO" symbolic-ref HEAD refs/heads/main
 git -C "$REPO" config user.email test@example.invalid
 git -C "$REPO" config user.name "Closeout Test"
 printf 'base\n' > "$REPO/README"
