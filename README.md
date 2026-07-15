@@ -1,13 +1,13 @@
 # AI Agent Team
 
-This repository is the cross-platform source of truth for an eleven-role AI workforce covering
+This repository is the cross-platform source of truth for a twelve-role AI workforce covering
 design, specification, implementation, diagnosis, testing, code review, cloud deployment,
 research, cloud/identity operations, document writing, and Asana ticket handling. Claude Code
 uses native subagent definitions. Local Codex uses a two-part installation: the ChatGPT/Codex
 plugin plus companion custom-agent profiles. That local integration pins specialist models and
 reasoning efforts, carries the full role contracts, and runs hard-veto policy hooks after the user
 trusts them. Hosted ChatGPT Work cannot load those local profiles or hooks and is explicitly a
-reduced, non-parity surface. One of the eleven roles, the orchestrator, always stays in the main
+reduced, non-parity surface. One of the twelve roles, the orchestrator, always stays in the main
 session, decomposing incoming work, dispatching or running the other ten specialist phases one
 at a time, and stopping at human approval gates between phases. The full design rationale — why
 the orchestrator runs as the main session, why permissions are
@@ -363,29 +363,21 @@ overwrite the hand edit.
 
 ## Audit log
 
-Every decision made by the shared policy hook — every allowed and every blocked tool call, for
-every role — is appended as one line to `~/.claude/logs/agent-team-audit.log` (overridable by
-setting the `AGENT_TEAM_AUDIT_LOG` environment variable, which is mainly useful for pointing
-the tests or a dry run at a scratch location instead of the real log). Each line has the
-format written by the `audit()` function in `hooks/agent-team-policy.sh`:
+The team's flight recorder lives at `~/.claude/logs/agent-team-audit.log` (overridable via
+`AGENT_TEAM_AUDIT_LOG`, mainly for tests). Two hooks write it. `hooks/agent-team-audit.sh`
+(PostToolUse on Bash, log-only, can never block) appends one line per command any agent runs:
 
 ```
-<UTC timestamp> role=<role> tool=<tool name> decision=<allow|block> detail=<up to 200 chars of context>
+<UTC timestamp> role=<role> ran=<command>
 ```
 
-The log exists so that any agent's actions — especially the deployer's, since it is the one
-role whose mutations reach real cloud infrastructure — can be reconstructed after the fact,
-and so that lane enforcement can be checked directly rather than taken on faith. It also
-accumulates across the three files that make up the hook: `hooks/agent-team-policy.sh` is the
-thin entry point that every agent's frontmatter actually invokes, and it sources
-`hooks/agent-team-policy-lib.sh` for the shared helper functions and the per-role policy logic
-(builder, deployer, ops, and the shared read-only-runner policy used by verifier and reviewer),
-which in turn sources `hooks/agent-team-policy-mutations.sh` for the raw-shell-mutation
-blocklist shared by every mutation-checked role (file-mutation primitives, redirection, tee,
-archive/compression tools, in-place sed, package management, subshell/process-substitution
-syntax, and the eval/interpreter escape hatches). If you need to change what a role is allowed
-to do, the per-role function you want is in the library file; if you need to change what raw
-shell primitive is blocked for everyone, it is in the mutations file. Neither is the entry point.
+`hooks/agent-team-secrets.sh` (PreToolUse, the team's single blocking rule) appends a
+`decision=block` line whenever it stops a credential-bearing value from being directed at a
+file — the one enforced boundary that survived the approve-intent redesign (spec:
+`docs/superpowers/specs/2026-07-12-approve-intent-not-commands-design.md`). Everything else
+is instruction-level discipline: approval happens at gates as intent (goal + mutation scope
+in plain language), and after approval agents execute silently. The log exists so any
+agent's actions — "what did the executor run at 2am" — stay reconstructable after the fact.
 
 ## Cost accounting
 
@@ -461,9 +453,9 @@ Run this once, in full, after the first setup, before trusting the team with rea
       rivals the first shakedown's 85k–114k architect runs.
 - [ ] 6. Confirm the orchestrator stayed light: gate summaries arrived without extended
       deliberation, and the session never approached a spend-limit event.
-- [ ] 7. Confirm lane enforcement from the audit log:
-      `grep decision=block ~/.claude/logs/agent-team-audit.log` shows any attempted
-      out-of-lane commands, and no role bypassed its policy.
+- [ ] 7. Confirm the flight recorder from the audit log:
+      `grep role= ~/.claude/logs/agent-team-audit.log` shows every command each agent ran,
+      and zero permission prompts or commands were surfaced to you after gate approval.
 - [ ] 8. Only after all of the above pass, use the team on real work.
 
 ### Gap-loop shakedown

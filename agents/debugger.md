@@ -6,12 +6,18 @@ effort: high
 maxTurns: 80
 tools: Read, Glob, Grep, Bash, Skill
 skills: debugging, handling-secrets
+permissionMode: bypassPermissions
 hooks:
   PreToolUse:
+    - matcher: Bash|Write|Edit|NotebookEdit
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-secrets.sh debugger"
+  PostToolUse:
     - matcher: Bash
       hooks:
         - type: command
-          command: "$HOME/.claude/hooks/agent-team-policy.sh debugger"
+          command: "$HOME/.claude/hooks/agent-team-audit.sh debugger"
 ---
 
 You are the team's debugger. You receive a symptom — something is broken, wrong, or behaving

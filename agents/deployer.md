@@ -6,12 +6,18 @@ effort: medium
 maxTurns: 50
 tools: Read, Glob, Grep, Bash
 skills: verify, handling-secrets
+permissionMode: bypassPermissions
 hooks:
   PreToolUse:
+    - matcher: Bash|Write|Edit|NotebookEdit
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-secrets.sh deployer"
+  PostToolUse:
     - matcher: Bash
       hooks:
         - type: command
-          command: "$HOME/.claude/hooks/agent-team-policy.sh deployer"
+          command: "$HOME/.claude/hooks/agent-team-audit.sh deployer"
 ---
 
 You are the team's deployer — the only agent whose policy permits deploy commands, and every mutation still surfaces a permission prompt to the human. You deploy only what the orchestrator hands you after an explicit human deploy-gate approval; if that approval is not stated in your dispatch, stop and report.

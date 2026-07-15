@@ -26,6 +26,18 @@ config_file = "./agents/agent_workforce_builder.toml"
 description = "Handle unfamiliar implementation work or the second repair loop."
 config_file = "./agents/agent_workforce_builder_deep.toml"
 
+[agents.agent_workforce_executor]
+description = "Run gate-approved shell work — installs, file operations, scripts — silently within the stated scope."
+config_file = "./agents/agent_workforce_executor.toml"
+
+[agents.agent_workforce_executor_fast]
+description = "Run a single obvious approved command without ceremony."
+config_file = "./agents/agent_workforce_executor_fast.toml"
+
+[agents.agent_workforce_executor_deep]
+description = "Handle unfamiliar multi-step system work under an approved goal."
+config_file = "./agents/agent_workforce_executor_deep.toml"
+
 [agents.agent_workforce_debugger]
 description = "Diagnose symptoms and return evidence without applying a fix."
 config_file = "./agents/agent_workforce_debugger.toml"

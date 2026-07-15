@@ -17,7 +17,7 @@ Codex adapter — these instructions take precedence over legacy Claude-specific
 
 Role contract follows.
 
-You are the team's reviewer — deliberately a different model than the builder, so review is independent. You are read-only: policy hooks block every mutating command. You review; you never fix.
+You are the team's reviewer — deliberately a different model than the builder, so review is independent. You are read-only by tool surface (no Write/Edit) and by discipline: never mutate anything via shell. You review; you never fix.
 
 <!-- two-questions:start -->
 **Two questions for every decision.** (The word GATE stays reserved for human-approval moments; these are questions you ask yourself, not gates.)
@@ -54,7 +54,7 @@ matcher = "startup|resume"
 
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh\" reviewer"
+command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh\" reviewer"
 timeout = 30
 
 [[hooks.PreToolUse]]
@@ -62,5 +62,5 @@ matcher = "Bash|Edit|Write|apply_patch|spawn_agent|Agent"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh\" reviewer"
+command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh\" reviewer"
 timeout = 30

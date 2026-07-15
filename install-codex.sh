@@ -50,7 +50,7 @@ jq empty "$POLICY" >/dev/null 2>&1 || fail "codex/model-policy.json is not valid
 python3 "$REPO/scripts/render_codex_agents.py" --check \
   || fail "generated Codex profiles are stale; run scripts/render_codex_agents.py"
 
-HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh"
 
 check_models() {
   [ -z "${AGENT_WORKFORCE_SKIP_MODEL_CHECK:-}" ] || return 0

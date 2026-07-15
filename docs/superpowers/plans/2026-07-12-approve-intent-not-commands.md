@@ -1,5 +1,16 @@
 # Approve Intent, Not Commands — Implementation Plan
 
+> **Execution note (2026-07-14):** implemented to completion in-session at the human's
+> direction, from the spec (normative) rather than this plan verbatim — the repo had
+> moved substantially since this plan was written (debugger role, live plugin mode,
+> profile-aware installer, Codex port, skills-framework migration), so file-level steps
+> here that reference the pre-migration tree are historical. Deltas from the plan:
+> the roster is now twelve (executor joins eleven, not ten); the plugin router routes
+> `secrets`/`audit` modes instead of `policy`; the Codex parity model-mismatch check
+> moved into `agents-team-secrets.sh`; telemetry hooks (cost + defaults map) are kept.
+> Validation doc: `docs/superpowers/validation/2026-07-12-approve-intent-not-commands-validation.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove the per-command policy blocklists and permission prompts from the agent team; approval moves to gates (intent/scope), agents execute silently, a new executor agent handles arbitrary shell work, and a log-only audit hook plus a ported secret-write guard are the only hooks that remain on tool calls.
