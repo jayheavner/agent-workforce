@@ -19,7 +19,7 @@
 - On local Codex, require the exact named profile and its `WORKFORCE_PROFILE` completion marker. A task name alone is not a profile selector. If the collaboration tool exposes only task naming, use `bin/agent-workforce-dispatch`; missing profiles are not a reason to use a generic worker.
 - Require role-policy hooks to be trusted before local mutating phases. Their exit-code vetoes are an enforcement boundary; prose instructions alone are not.
 - In hosted ChatGPT Work, say `FULL PARITY UNAVAILABLE`: it cannot load the local profiles or hooks, and its subagents inherit the parent task's model and tools.
-- In an explicitly accepted single-thread fallback, keep the gates and verification loop but label review independence as degraded.
+- In an explicitly accepted single-thread fallback, keep the narrow pause conditions and verification loop but label review independence as degraded.
 - Do not invoke Claude-only scripts under `hooks/` for ChatGPT/Codex cost accounting or claim their audit logs cover ChatGPT/Codex actions.
 - Codex specialist profiles use the shared role-policy scripts installed under `$CODEX_HOME/agent-workforce/hooks`. Trust only the reviewed definitions installed by this repository.
 - Codex exposes model identity to hooks, but not stable per-dispatch effort, token, or credit totals. The profile pins effort; usage reporting remains task-level when the surface exposes it.

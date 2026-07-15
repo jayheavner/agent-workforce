@@ -1,6 +1,6 @@
 ---
 name: agent-workforce
-description: Route a task through the AI Agent Workforce's architect, builder, debugger, verifier, reviewer, deployer, researcher, operations, scribe, and ticketing roles with proportional process, explicit approval gates, repair loops, and evidence-based closeout. Use only when the user explicitly invokes $agent-workforce or @agent-workforce, asks to use the agent workforce or agent team, requests multi-agent orchestration, or asks for a task to be taken through named specialist phases.
+description: Route a task through the AI Agent Workforce's architect, builder, debugger, verifier, reviewer, deployer, researcher, operations, scribe, and ticketing roles with proportional unattended execution, narrow decision gates, repair loops, and evidence-based closeout. Use only when the user explicitly invokes $agent-workforce or @agent-workforce, asks to use the agent workforce or agent team, requests multi-agent orchestration, or asks for a task to be taken through named specialist phases.
 ---
 
 # Agent Workforce
@@ -48,17 +48,17 @@ Do not claim a model override, independent reviewer, permission boundary, or exa
 
 | Tier | Signals | Route |
 |---|---|---|
-| Trivial | Clear, cheap, reversible, no design content | One specialist phase or a direct one-line answer; no spec or gate unless the action is outward-facing |
-| Small | Clear requirements, established pattern, contained blast radius | Architect combined spec and plan -> gate -> builder -> verifier -> reviewer -> final gate |
-| Standard | Several interacting components or real design decisions | Architect spec -> gate -> architect plan -> gate -> builder -> verifier -> reviewer -> final gate |
-| Large/high-risk | Ambiguous, novel, security/data critical, production, or multi-system | Research when needed -> full standard route with deeper review and explicit deploy gate |
+| Trivial | Clear, cheap, reversible, no design content | One specialist phase or a direct one-line answer |
+| Small | Clear requirements, established pattern, contained blast radius | Architect combined spec and plan -> plan critique -> builder -> verifier -> reviewer -> closeout |
+| Standard | Several interacting components or real design decisions | Architect spec -> architect plan -> plan critique -> builder -> verifier -> reviewer -> closeout |
+| Large/high-risk | Ambiguous, novel, security/data critical, production, or multi-system | Research when needed -> full standard route with deeper review and deployment when authorized |
 
 Use shorter routes for non-software work:
 
 - Research: researcher -> answer with citations.
-- Operations: ops investigation -> gate before a mutation -> ops or deployer execution -> verification.
-- Documents: researcher when facts are missing -> scribe -> gate before sending or publishing.
-- Tickets: ticketer draft/review -> gate before filing, editing, closing, or commenting.
+- Operations: ops investigation -> authorized mutation by ops or deployer -> verification.
+- Documents: researcher when facts are missing -> scribe -> requested sending or publishing.
+- Tickets: ticketer draft/review -> requested filing, editing, closing, or commenting.
 
 If evidence shows the tier was too low, say so and re-tier. Difficulty alone is not a capability gap.
 
@@ -81,20 +81,15 @@ For every decision, ask:
 
 Try to dissolve binaries by finding an approach that preserves both underlying goals. Escalate only a genuine values, scope, or risk tradeoff that remains after analysis. Ordinary implementation choices belong to the responsible specialist.
 
-For standard and large specs with consequential decisions, run a spec-critique reviewer pass before the spec gate. After a default Sol architect, use `agent_workforce_spec_critic` on Terra at maximum effort so the critic is a different model; disclose that it is distinct but not a stronger capability tier. After the Terra architect downshift, use the default Sol reviewer. The critic surveys the raw spec for omitted decisions and judges surfaced decisions as `worked` or `stopped-short`. Return stopped-short findings to the architect for at most two targeted passes; if they remain, make those contested points the human gate.
+For standard and large specs with consequential decisions, run a spec-critique reviewer pass before implementation. After a default Sol architect, use `agent_workforce_spec_critic` on Terra at maximum effort so the critic is a different model; disclose that it is distinct but not a stronger capability tier. After the Terra architect downshift, use the default Sol reviewer. The critic surveys the raw spec for omitted decisions and judges surfaced decisions as `worked` or `stopped-short`. Return stopped-short findings to the architect for at most two targeted passes; if a genuine values or risk choice remains, ask only about those contested points.
 
-## Enforce gates
+## Run unattended by default
 
-At every gate, lead with the outcome, link or quote the artifact, summarize it in plain language, disclose gaps and degraded guarantees, then stop for the user's decision. Approval at one gate does not approve a later outward-facing action.
+The default is uninterrupted execution. Treat the original request as standing authorization for ordinary in-scope work and for outward mutations it explicitly requests or unmistakably entails. Carry that authority across specialist and phase boundaries.
 
-Always require explicit approval before:
+A direct request or explicit choice that names an outcome and mutation consumes that authorization exactly once. Selecting "Deploy main now, then redrive the DLQ" authorizes both actions; dispatch them without a second approval. Ask again only when evidence introduces a materially different outcome, scope, blast radius, irreversible effect, or an irreducible human action.
 
-- Production or cloud mutation.
-- Filing, editing, closing, or sending an outward-facing artifact.
-- A hard-to-reverse data or repository action.
-- Proceeding on a genuine unresolved scope or risk tradeoff.
-
-Do not pause for a derivable technical answer. Send verifier or reviewer findings back to the builder for at most two repair loops, using the stronger available reasoning setting on the second loop when the surface supports one. Then escalate with the full evidence.
+Artifacts, phase changes, successful verification, reviews, normal repair loops, authorized deployment, and closeout are progress updates rather than gates. Do not pause for a derivable technical answer. Send verifier or reviewer findings back to the builder for at most two repair loops, using the stronger available reasoning setting on the second loop when the surface supports one. Then escalate with the full evidence only if the specialist is actually stuck.
 
 ## Preserve role boundaries
 
@@ -109,7 +104,7 @@ Apply the practitioner test: would a competent practitioner reject work that mer
 1. Declare `DOMAIN GAP: <field>`.
 2. Use a researcher to gather sourced, explicitly uncertified domain constraints.
 3. Carry those constraints in the plan and label affected acceptance criteria `domain-uncertified`.
-4. Recommend domain-expert review at each gate.
+4. Recommend domain-expert review in progress updates and closeout.
 
 Record a gap only for missing capability, not hard work that is already inside a role's charter.
 
@@ -139,8 +134,8 @@ bin/agent-workforce-closeout --repo <checkout> --base <base> --format text
 ```
 
 The audit identifies cleanup candidates but performs no cleanup. Integration,
-branch deletion, worktree removal, and other hard-to-reverse actions remain
-human-confirmed. If the surface cannot run the audit, report `UNCHECKED` with
+branch deletion, worktree removal, and other hard-to-reverse actions require
+authority, which the original request may already supply. If the surface cannot run the audit, report `UNCHECKED` with
 that obstacle rather than inferring Git state.
 
 Memory is also explicit. The workforce may record reusable project context in
