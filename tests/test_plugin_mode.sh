@@ -64,6 +64,8 @@ expect_rc 2 policy "$(bash_payload builder 'sam deploy')" \
   "builder policy was not enforced in plugin mode"
 expect_rc 2 policy "$(bash_payload 'agent-workforce:builder' 'sam deploy')" \
   "namespaced builder role was not normalized"
+expect_rc 2 policy "$(bash_payload 'agent-workforce:debugger' 'touch nope')" \
+  "namespaced debugger role was not normalized"
 expect_rc 0 policy "$(bash_payload unrelated-agent 'sam deploy')" \
   "plugin policy leaked into an unrelated agent"
 expect_rc 0 policy "$(bash_payload 'other-plugin:builder' 'sam deploy')" \
