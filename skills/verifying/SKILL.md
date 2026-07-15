@@ -24,6 +24,28 @@ For each criterion to verify:
 Rerun after the last change, not before it — evidence gathered earlier in the
 session is stale the moment anything was edited.
 
+## Shipment verdict
+
+An acceptance verdict proves the stated criteria. A shipment verdict answers a
+different question: whether the approved delivery target can truthfully be
+called done. Ask for the delivery contract before issuing a completion report:
+the target (artifact, integrated change, or deployed service), the required
+ledger fields, and the command or observable evidence for each field.
+
+- **SHIPPABLE** — every required delivery check passes, including a fresh full
+  suite after the final code edit and any required integration, deployment, or
+  post-deploy smoke check.
+- **NOT SHIPPABLE** — any required delivery check is pending, failed, or
+  UNCHECKED. A pre-existing suite failure may be non-regression evidence, but
+  it is still a release blocker until the delivery target no longer depends on
+  that suite or the failure is resolved.
+- **UNCHECKED** — no delivery contract was supplied. Report acceptance evidence
+  if available, but do not turn it into a completion claim.
+
+Use `implemented and locally verified` for a passing acceptance verdict that
+has not met its delivery target. Never use `done`, `complete`, or `shippable`
+for that interim state.
+
 ## Verdicts
 
 - **pass** — the output shows the criterion holding. Quote the line that shows it.

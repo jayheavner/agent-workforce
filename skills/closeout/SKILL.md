@@ -10,6 +10,22 @@ reported complete. It complements `finishing-a-branch`: this skill defines the
 ledger and evidence contract; `finishing-a-branch` governs branch integration
 and cleanup decisions.
 
+## Completion is not a ledger heading
+
+Agree the delivery target before closeout: an artifact, an integrated code
+change, or a deployed service. The target makes the required ledger fields
+explicit — for example, an integrated code change needs fresh verification,
+review, commit, and integration; a deployed service also needs deployment and
+post-deploy evidence.
+
+The ledger reports state; it does not create completion. Call work `done`,
+`complete`, or `shippable` only when every field required by the delivery target
+is `pass` after the final edit. If a required field is `pending`, `fail`, or
+`UNCHECKED`, report `NOT SHIPPABLE`, name the exact next action, and use a
+precise interim state such as `implemented and locally verified`. `not
+applicable` is valid only when the agreed delivery target genuinely excludes the
+field; it cannot hide an unapproved deploy, integration, or release check.
+
 ## Required ledger
 
 Write one ledger in the task status note and repeat its material contents in the
@@ -30,8 +46,10 @@ enough: read the relevant command output, diff, artifact, or approval.
 
 ## Evidence rules
 
-- Verification is fresh and criterion-specific. Record the exact command and
-  the relevant output; use `UNCHECKED` when an obstacle prevents the check.
+- Verification is fresh and criterion-specific after the final code edit.
+  Record the exact command and the relevant output; use `UNCHECKED` when an
+  obstacle prevents the check. A focused test may establish an acceptance
+  criterion, but the required full suite establishes shipment readiness.
 - Review covers the full relevant diff and security-sensitive context.
 - Documentation names the status note, plan/spec, decision record, or other
   artifact written. Do not invent a changelog or release note that was not

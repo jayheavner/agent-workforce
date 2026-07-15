@@ -115,7 +115,7 @@ Record a gap only for missing capability, not hard work that is already inside a
 
 ## Close with evidence
 
-Do not claim completion from a specialist's report alone. Require fresh verification of each acceptance criterion and a reviewer verdict. Report:
+Do not claim completion from a specialist's report alone. Require fresh verification of each acceptance criterion and a reviewer verdict. Set the delivery target before build — artifact, integrated code change, or deployed service — then identify the required closeout fields from that target. Do not call work done, complete, or shippable while any required field is pending, failed, or unchecked. Use a precise interim state such as `implemented and locally verified` with the next delivery action instead. A re-review of a repair does not replace fresh verifier evidence after the final code edit; a pre-existing suite failure can be non-regression but still makes the shipment `NOT SHIPPABLE` when the target requires that suite green. Report:
 
 - Artifacts and changes produced.
 - Per-criterion pass, fail, or unchecked status with evidence.
