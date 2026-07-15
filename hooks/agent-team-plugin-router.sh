@@ -7,9 +7,9 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  secrets|audit|dispatch|cost) ;;
+  secrets|audit|dispatch|cost|closeout-dispatch|closeout-subagent|closeout-stop) ;;
   *)
-    printf 'agent-workforce plugin router: expected secrets, audit, dispatch, or cost mode\n' >&2
+    printf 'agent-workforce plugin router: unknown routing mode: %s\n' "$MODE" >&2
     exit 2
     ;;
 esac
@@ -20,6 +20,23 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 INPUT="$(cat)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# Stop does not reliably carry agent_type. The state sentinel created by the
+# dispatch path keeps this plugin-global hook scoped to active workforce tasks.
+if [ "$MODE" = "closeout-stop" ]; then
+  printf '%s' "$INPUT" | AGENT_TEAM_COMPLETION_LINTER="${AGENT_TEAM_COMPLETION_LINTER:-$HERE/../tools/lint_completion_claims.py}" \
+    python3 "$HERE/agent_team_closeout.py" stop
+  exit $?
+fi
+
+# SubagentStop does carry agent_type; the Python hook ignores unrelated roles
+# and sessions with no active workforce state.
+if [ "$MODE" = "closeout-subagent" ]; then
+  printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py" subagent-stop
+  exit $?
+fi
+
 ROLE="$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null)" || {
   printf 'agent-workforce plugin router: hook input was not valid JSON\n' >&2
   exit 2
@@ -38,8 +55,6 @@ case "$ROLE" in
   *) exit 0 ;;
 esac
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-
 case "$MODE" in
   secrets)
     printf '%s' "$INPUT" | bash "$HERE/agent-team-secrets.sh" "$ROLE"
@@ -54,5 +69,9 @@ case "$MODE" in
   cost)
     [ "$ROLE" = "orchestrator" ] || exit 0
     printf '%s' "$INPUT" | bash "$HERE/agent-team-cost.sh"
+    ;;
+  closeout-dispatch)
+    [ "$ROLE" = "orchestrator" ] || exit 0
+    printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py" dispatch
     ;;
 esac

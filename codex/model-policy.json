@@ -48,7 +48,7 @@
       "sandbox_mode": "workspace-write",
       "approval_policy": "on-request",
       "web_search": "disabled",
-      "description": "Implement an approved plan with TDD and focused commits."
+      "description": "Implement a reviewed plan with TDD and focused commits."
     },
     {
       "name": "agent_workforce_builder_deep",
@@ -70,7 +70,7 @@
       "sandbox_mode": "danger-full-access",
       "approval_policy": "never",
       "web_search": "disabled",
-      "description": "Run gate-approved shell work \u2014 installs, file operations, scripts \u2014 silently within the stated scope."
+      "description": "Run authorized shell work \u2014 installs, file operations, scripts \u2014 silently within the stated scope."
     },
     {
       "name": "agent_workforce_executor_fast",
@@ -81,7 +81,7 @@
       "sandbox_mode": "danger-full-access",
       "approval_policy": "never",
       "web_search": "disabled",
-      "description": "Run a single obvious approved command without ceremony."
+      "description": "Run a single obvious authorized command without ceremony."
     },
     {
       "name": "agent_workforce_executor_deep",
@@ -92,7 +92,7 @@
       "sandbox_mode": "danger-full-access",
       "approval_policy": "never",
       "web_search": "disabled",
-      "description": "Handle unfamiliar multi-step system work under an approved goal."
+      "description": "Handle unfamiliar multi-step system work within an authorized goal."
     },
     {
       "name": "agent_workforce_debugger",
@@ -191,7 +191,7 @@
       "sandbox_mode": "workspace-write",
       "approval_policy": "on-request",
       "web_search": "disabled",
-      "description": "Execute an explicitly approved deployment and verify or roll it back."
+      "description": "Execute an authorized deployment and verify or roll it back."
     },
     {
       "name": "agent_workforce_researcher",
@@ -279,7 +279,7 @@
       "sandbox_mode": "read-only",
       "approval_policy": "on-request",
       "web_search": "disabled",
-      "description": "Draft, review, and close tickets with evidence and explicit write gates."
+      "description": "Draft, review, and close tickets with evidence and standing write authorization."
     },
     {
       "name": "agent_workforce_ticketer_fast",
@@ -290,7 +290,7 @@
       "sandbox_mode": "read-only",
       "approval_policy": "on-request",
       "web_search": "disabled",
-      "description": "Write a ticket comment or status update after approval."
+      "description": "Write an authorized ticket comment or status update."
     }
   ]
 }

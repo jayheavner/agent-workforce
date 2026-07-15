@@ -19,7 +19,7 @@ description = "Design novel, ambiguous, or multi-system work at maximum depth."
 config_file = "./agents/agent_workforce_architect_deep.toml"
 
 [agents.agent_workforce_builder]
-description = "Implement an approved plan with TDD and focused commits."
+description = "Implement a reviewed plan with TDD and focused commits."
 config_file = "./agents/agent_workforce_builder.toml"
 
 [agents.agent_workforce_builder_deep]
@@ -27,15 +27,15 @@ description = "Handle unfamiliar implementation work or the second repair loop."
 config_file = "./agents/agent_workforce_builder_deep.toml"
 
 [agents.agent_workforce_executor]
-description = "Run gate-approved shell work — installs, file operations, scripts — silently within the stated scope."
+description = "Run authorized shell work — installs, file operations, scripts — silently within the stated scope."
 config_file = "./agents/agent_workforce_executor.toml"
 
 [agents.agent_workforce_executor_fast]
-description = "Run a single obvious approved command without ceremony."
+description = "Run a single obvious authorized command without ceremony."
 config_file = "./agents/agent_workforce_executor_fast.toml"
 
 [agents.agent_workforce_executor_deep]
-description = "Handle unfamiliar multi-step system work under an approved goal."
+description = "Handle unfamiliar multi-step system work within an authorized goal."
 config_file = "./agents/agent_workforce_executor_deep.toml"
 
 [agents.agent_workforce_debugger]
@@ -71,7 +71,7 @@ description = "Critique a Sol-authored specification on a distinct model."
 config_file = "./agents/agent_workforce_spec_critic.toml"
 
 [agents.agent_workforce_deployer]
-description = "Execute an explicitly approved deployment and verify or roll it back."
+description = "Execute an authorized deployment and verify or roll it back."
 config_file = "./agents/agent_workforce_deployer.toml"
 
 [agents.agent_workforce_researcher]
@@ -103,9 +103,9 @@ description = "Update a concise status note from supplied facts."
 config_file = "./agents/agent_workforce_scribe_fast.toml"
 
 [agents.agent_workforce_ticketer]
-description = "Draft, review, and close tickets with evidence and explicit write gates."
+description = "Draft, review, and close tickets with evidence and standing write authorization."
 config_file = "./agents/agent_workforce_ticketer.toml"
 
 [agents.agent_workforce_ticketer_fast]
-description = "Write a ticket comment or status update after approval."
+description = "Write an authorized ticket comment or status update."
 config_file = "./agents/agent_workforce_ticketer_fast.toml"
