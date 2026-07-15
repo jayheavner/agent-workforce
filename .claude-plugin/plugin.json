@@ -3,7 +3,7 @@
   "name": "agent-workforce",
   "version": "1.0.0",
   "displayName": "AI Agent Workforce",
-  "description": "A Claude Code workforce — an orchestrator and eleven specialists; approval is of intent at gates, with an audit log and a secrets guard.",
+  "description": "A Claude Code workforce — an orchestrator and eleven specialists; requested work runs unattended until a genuinely new decision or authority boundary appears.",
   "author": {
     "name": "Jay Heavner",
     "url": "https://github.com/jayheavner"

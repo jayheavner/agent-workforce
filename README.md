@@ -9,7 +9,9 @@ reasoning efforts, carries the full role contracts, and runs hard-veto policy ho
 trusts them. Hosted ChatGPT Work cannot load those local profiles or hooks and is explicitly a
 reduced, non-parity surface. One of the twelve roles, the orchestrator, always stays in the main
 session, decomposing incoming work, dispatching or running the other ten specialist phases one
-at a time, and stopping at human approval gates between phases. The full design rationale — why
+at a time, and carrying clear requests through to verified completion without routine approval
+stops. It pauses only for a genuinely new decision, scope expansion, missing authority, or
+irreducible human action. The full design rationale — why
 the orchestrator runs as the main session, why permissions are
 layered the way they are, and why each model was assigned to each role — is written up in
 `docs/superpowers/specs/2026-07-07-ai-agent-team-design.md`; the current skill integration is
@@ -24,17 +26,17 @@ complete downshift and upshift matrix lives in `codex/model-policy.json`.
 
 | Agent | Default model | Effort | Role | Mutation rights |
 |---|---|---|---|---|
-| orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
+| orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, track authorization. Runs as the main session (see Orchestration) | None (read + dispatch only) |
 | architect | `claude-opus-4-8` | high | Design, spec, plan | Docs only (specs/plans) |
-| builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
+| builder | `claude-sonnet-5` | high | Implement per reviewed plan, TDD, commit | Code + local git; no deploy, no push to main |
 | debugger | `claude-sonnet-5` | high | Diagnose symptoms, return root cause with evidence | None (read + run) |
 | verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
 | reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
-| deployer | `claude-sonnet-5` | medium | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
+| deployer | `claude-sonnet-5` | medium | Cloud deploys (SAM, Amplify, CDK) | Deploy commands within dispatched authorization |
 | researcher | `claude-sonnet-5` | — | Web, Glean, codebase investigation | None |
-| ops | `claude-sonnet-5` | high | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
+| ops | `claude-sonnet-5` | high | AWS/Azure/Okta investigation and admin | Cloud reads free; authorized mutations execute |
 | scribe | `claude-sonnet-5` | — | Reports, briefs, requirements, postmortems, status notes | Docs only |
-| ticketer | `claude-sonnet-5` | — | Asana write/review/track | Asana via MCP; gated before filing |
+| ticketer | `claude-sonnet-5` | — | Asana write/review/track | Asana via MCP; writes within dispatched authorization |
 
 | Agent | Local Codex default | Effort | Enforcement |
 |---|---|---|---|
@@ -48,7 +50,7 @@ complete downshift and upshift matrix lives in `codex/model-policy.json`.
 | researcher | `gpt-5.6-terra` | medium | Named read-only profile; live search enabled |
 | ops | `gpt-5.6-terra` | high | Named profile + read-first cloud policy |
 | scribe | `gpt-5.6-terra` | medium | Named profile + documentation-write hook |
-| ticketer | `gpt-5.6-terra` | medium | Named read-only profile + outward-write gates |
+| ticketer | `gpt-5.6-terra` | medium | Named read-only profile + connector-scoped outward writes |
 
 These are **defaults, not fixed assignments**: the orchestrator triages every incoming task
 and may downshift a dispatch to a cheaper model (an amendment goes to the architect on
@@ -237,9 +239,9 @@ and writes a checksum manifest used by `bash install.sh --check`.
 
 ## How to use
 
-Start the orchestrator as the main Claude Code session, not as a dispatched subagent — this
-matters because gates require the session to stop and interact with you, and a dispatched
-subagent can only return a final result, not pause mid-task:
+Start the orchestrator as the main Claude Code session, not as a dispatched subagent. The main
+session keeps the findings and authorization ledger across specialist phases and can request the
+rare human-only decision when one actually appears:
 
 ```bash
 ./bin/agent-workforce
@@ -256,32 +258,26 @@ For a snapshot installation, the legacy command remains `claude --agent orchestr
 Give the orchestrator a task. It first **triages** — classifying the task's ambiguity,
 novelty, blast radius, and size into a tier, and telling you in one paragraph which route it
 chose and which model each dispatch will run on, all of which you can override. A small,
-well-understood task gets a collapsed route (one combined spec+plan dispatch, one gate); a
-standard task gets the full sequence — architect (design and spec) → **gate** → architect
-(plan) → **gate** → builder → verifier → reviewer → **gate** → deployer → verifier again as a
-smoke check; a large or high-risk task adds a researcher pre-phase and deeper review.
-Research, ops, document, and ticket work follows a shorter route: a researcher or
-ops dispatch gathers information, a scribe or ticketer dispatch produces the artifact, then a
-gate before anything goes outward-facing (a filed ticket, a sent report, a cloud mutation).
+well-understood task gets a combined spec+plan, critique, build, verification, review, and
+closeout. A standard task keeps spec and plan separate; a large or high-risk task adds research
+and deeper review. None of those phase boundaries is an approval stop. Research, ops, document,
+and ticket work likewise performs the outward action when the original request or a later choice
+already authorized it.
 
-At each gate, the orchestrator stops, presents the artifact it produced (a spec, a plan, a
-diff, a deploy plan) together with a plain-language summary and its own recommendation, and
-waits for you. At the final gate, the orchestrator reports cost. When the per-session cost file
-produced by the cost-accounting hook is present and valid, it reports the EXACT
+The original request is standing authorization for the ordinary in-scope actions needed to
+deliver its stated outcome. A choice such as "Deploy main now, then redrive the DLQ" is both the
+decision and the authorization; the orchestrator records it and dispatches the work without
+asking again. It pauses only when evidence introduces a materially different outcome, mutation
+scope, blast radius, irreversible effect, or an irreducible human action. When the per-session
+cost file produced by the cost-accounting hook is present and valid, closeout reports the EXACT
 per-model figures — input, output, cache-write, and cache-read tokens with cost
 rounded to the cent — read straight from the session transcripts and priced at
 list rates from `hooks/model-rates.json`. When that file is absent or the hook
 marked it unavailable, it falls back to a blended per-dispatch ESTIMATE clearly
 labeled as such. Either way the number excludes the orchestrator's own session
 usage; your exact session-wide number is always `/usage`. Nonzero web-search or
-web-fetch server-tool calls are counted and footnoted, not priced. You have three options at any gate:
-
-- **Approve** — tell the orchestrator to continue; it dispatches the next phase. Approving one
-  gate never implies approval of the next gate; the deploy gate in particular always requires
-  its own explicit approval.
-- **Redirect** — tell the orchestrator what to change; it returns to the relevant specialist
-  with your feedback rather than moving forward.
-- **Kill** — tell the orchestrator to stop the task; nothing further is dispatched.
+web-fetch server-tool calls are counted and footnoted, not priced. You can redirect or stop at
+any time, but silence and routine phase completion do not create new approval requirements.
 
 If a verifier or reviewer dispatch comes back with findings, the orchestrator sends the work
 back to the builder with those findings attached, for up to two repair loops before it
@@ -290,7 +286,7 @@ escalates to you instead of retrying indefinitely. If any specialist hits its tu
 environment — it stops and reports rather than improvising, and the orchestrator escalates
 rather than blindly re-dispatching. Because the orchestrator itself has no Write tool, the
 per-task status note that lets interrupted work resume cleanly is written by the scribe, at the
-orchestrator's direction, at each gate and at completion — look for it if you need to pick a
+orchestrator's direction, at material transitions and completion — look for it if you need to pick a
 task back up later.
 
 ## Deploying to another machine
@@ -375,8 +371,9 @@ The team's flight recorder lives at `~/.claude/logs/agent-team-audit.log` (overr
 `decision=block` line whenever it stops a credential-bearing value from being directed at a
 file — the one enforced boundary that survived the approve-intent redesign (spec:
 `docs/superpowers/specs/2026-07-12-approve-intent-not-commands-design.md`). Everything else
-is instruction-level discipline: approval happens at gates as intent (goal + mutation scope
-in plain language), and after approval agents execute silently. The log exists so any
+is instruction-level discipline: the request or an explicit choice supplies standing authority
+for its stated goal and mutation scope, agents execute silently inside it, and only a material
+scope change requires another decision. The log exists so any
 agent's actions — "what did the executor run at 2am" — stay reconstructable after the fact.
 
 ## Cost accounting
@@ -403,12 +400,12 @@ name pattern, and the most recently modified file wins.
 Every routed task also leaves dispatch outcome records — evidence for recalibrating the
 orchestrator's model routing table and for catching silent model overrides (spec:
 `docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`). The cost hook stamps
-each dispatch's requested model override; at the final gate the scribe joins those
+each dispatch's requested model override; at final closeout the scribe joins those
 mechanical facts to the orchestrator's verdicts (first-try pass/fail, repair loops) and
 writes one JSONL record per dispatch to the project's `docs/telemetry/` (schema in
 `docs/telemetry/README.md`). Records count for calibration only once merged to canonical
 main, like gap records. Telemetry is best-effort and never blocks a dispatch, changes a
-cost figure, or fails a gate.
+cost figure, or blocks closeout.
 
 Read the evidence with the scoreboard (per role × actually-ran model × tier —
 first-try pass rate is the routing signal):
@@ -443,19 +440,19 @@ Run this once, in full, after the first setup, before trusting the team with rea
       **small**, named the collapsed route, and listed a model pick for every planned
       dispatch (architect on Opus, scribe on Haiku). Triaging this task as standard is a
       fail — it is the canonical small task.
-- [ ] 4. Confirm the collapsed route ran: ONE combined spec+plan gate (not separate spec and
-      plan gates), then builder → verifier → reviewer → final gate; builder committed
+- [ ] 4. Confirm the collapsed route ran without an approval stop: ONE combined spec+plan,
+      plan critique, then builder → verifier → reviewer → closeout; builder committed
       test-first; verifier reported evidence; reviewer returned a verdict; a STATUS note
       exists and is accurate.
 - [ ] 5. Confirm scaling: at the end, ask the orchestrator to list every dispatch with the
       model it ran on. Expect the architect on Opus (not Fable), the scribe on Haiku with
       roughly three status updates (not one per phase), and no dispatch whose token count
       rivals the first shakedown's 85k–114k architect runs.
-- [ ] 6. Confirm the orchestrator stayed light: gate summaries arrived without extended
-      deliberation, and the session never approached a spend-limit event.
+- [ ] 6. Confirm the orchestrator stayed light: progress updates were concise, no routine
+      approval question appeared, and the session never approached a spend-limit event.
 - [ ] 7. Confirm the flight recorder from the audit log:
       `grep role= ~/.claude/logs/agent-team-audit.log` shows every command each agent ran,
-      and zero permission prompts or commands were surfaced to you after gate approval.
+      and zero permission prompts or commands were surfaced after the initial request.
 - [ ] 8. Only after all of the above pass, use the team on real work.
 
 ### Gap-loop shakedown
@@ -469,18 +466,18 @@ documentation-grade.
 
 - [ ] 1. **Domain-positive:** give the team a payroll-withholding-calculator task. Expect
       the architect to declare `DOMAIN GAP: payroll` before writing a spec; researcher
-      backfill runs; each gate discloses uncertified input and recommends criteria
+      backfill runs; progress updates disclose uncertified input and recommend criteria
       review; a `GAP-*-domain-payroll.md` record appears.
 - [ ] 2. **Domain-negative:** the same task with a `domain-payroll` skill installed.
       Expect no gap declared and the skill's constraints visible in the plan.
 - [ ] 3. **Hard-but-in-charter negative:** a genuinely difficult refactor entirely inside
-      the team's competence. Objective pass condition: every gate summary line reads
+      the team's competence. Objective pass condition: every material progress summary reads
       exactly `gaps: none` and no `GAP-*.md` file exists anywhere after the run.
 - [ ] 4. **Declined promotion:** decline a recorded gap. Expect the record frozen as
-      `declined — <reason>`, and a later same-identity detection presented at the gate
+      `declined — <reason>`, and a later same-identity detection presented in the next update
       with that reason attached.
 - [ ] 5. **Degraded logging path:** with the manifest absent, expect the record in the
-      project's own `docs/gaps/` and the gate disclosing the degraded path; at the next
+      project's own `docs/gaps/` and the next update disclosing the degraded path; at the next
       session start, expect "1 gap records in this project await upstreaming."
 
 ### Telemetry shakedown
@@ -488,7 +485,7 @@ documentation-grade.
 Run after installing the dispatch-telemetry amendment (spec:
 `docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`):
 
-- [ ] 1. Run a small task end to end. At the final gate, expect a `telemetry: <n> records`
+- [ ] 1. Run a small task end to end. At final closeout, expect a `telemetry: <n> records`
       line, and confirm `docs/telemetry/<project-slug>--<session-id>.jsonl` exists with one
       record per dispatch: the builder row shows `sequence: "first"` and its real verdict,
       support-role rows show `n/a`, and each `resolved_model` matches the model the
