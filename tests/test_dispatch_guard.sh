@@ -28,9 +28,10 @@ expect() { # $1 expected_rc, $2 json, $3 label
 expect_allow() { expect 0 "$1" "$2"; }
 expect_block() { expect 2 "$1" "$2"; }
 
-# All nine valid specialists allow.
-for a in architect builder verifier reviewer deployer researcher ops scribe ticketer; do
+# All ten valid specialists allow.
+for a in architect builder debugger verifier reviewer deployer researcher ops scribe ticketer; do
   expect_allow "$(agent_json "$a")" "valid: $a allows"
+  expect_allow "$(agent_json "agent-workforce:$a")" "valid plugin namespace: $a allows"
 done
 
 # Missing / empty / harness-default / unknown all block.
@@ -38,6 +39,7 @@ expect_block "$(jq -cn '{tool_name:"Agent",tool_input:{description:"do a thing"}
 expect_block "$(agent_json '')" "empty subagent_type blocks"
 expect_block "$(agent_json 'general-purpose')" "general-purpose blocks"
 expect_block "$(agent_json 'designer')" "unknown type blocks"
+expect_block "$(agent_json 'other-plugin:builder')" "foreign plugin namespace blocks"
 
 # Substring of a valid name must NOT match (space-delimited membership).
 expect_block "$(agent_json 'archi')" "substring 'archi' blocks"

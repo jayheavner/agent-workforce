@@ -101,6 +101,12 @@ orchestrator declares in the dispatch.
 
 ### Skill preloads (frontmatter `skills:`)
 
+> **Amendment 2026-07-13:** The preload list below records the original v1
+> design and is superseded by
+> `docs/superpowers/specs/2026-07-13-skills-framework-migration-design.md`.
+> The workforce now vendors the portable `jayheavner/skills` framework and no
+> active agent depends on `superpowers:*`.
+
 - architect: `superpowers:writing-plans` (always); invokes `superpowers:brainstorming`, `plan-review`, and `ux-to-ui-design` situationally via the Skill tool per task tier — see Scaling down above
 - builder: `coding-standards`, `superpowers:test-driven-development`, `secure-secrets`
 - verifier: `superpowers:verification-before-completion`, `task-verification`

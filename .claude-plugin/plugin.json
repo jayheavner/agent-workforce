@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agent-workforce",
+  "version": "1.0.0",
+  "displayName": "AI Agent Workforce",
+  "description": "A policy-enforced Claude Code workforce with an orchestrator and ten scoped specialists.",
+  "author": {
+    "name": "Jay Heavner",
+    "url": "https://github.com/jayheavner"
+  },
+  "repository": "https://github.com/jayheavner/agent-workforce",
+  "keywords": [
+    "agents",
+    "orchestration",
+    "skills",
+    "workforce"
+  ]
+}

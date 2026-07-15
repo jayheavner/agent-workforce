@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Agent Workforce"
+  short_description: "Route work through scoped specialist roles and approval gates"
+  default_prompt: "Use $agent-workforce to triage this task and carry it through the right specialists."
