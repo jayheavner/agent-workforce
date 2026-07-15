@@ -7,9 +7,9 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  policy|dispatch|cost) ;;
+  secrets|audit|dispatch|cost) ;;
   *)
-    printf 'agent-workforce plugin router: expected policy, dispatch, or cost mode\n' >&2
+    printf 'agent-workforce plugin router: expected secrets, audit, dispatch, or cost mode\n' >&2
     exit 2
     ;;
 esac
@@ -34,15 +34,18 @@ case "$ROLE" in
 esac
 
 case "$ROLE" in
-  orchestrator|architect|builder|debugger|verifier|reviewer|deployer|researcher|ops|scribe|ticketer) ;;
+  orchestrator|architect|builder|debugger|verifier|reviewer|deployer|executor|researcher|ops|scribe|ticketer) ;;
   *) exit 0 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 case "$MODE" in
-  policy)
-    printf '%s' "$INPUT" | bash "$HERE/agent-team-policy.sh" "$ROLE"
+  secrets)
+    printf '%s' "$INPUT" | bash "$HERE/agent-team-secrets.sh" "$ROLE"
+    ;;
+  audit)
+    printf '%s' "$INPUT" | bash "$HERE/agent-team-audit.sh" "$ROLE"
     ;;
   dispatch)
     [ "$ROLE" = "orchestrator" ] || exit 0

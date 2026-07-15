@@ -62,6 +62,39 @@
       "description": "Handle unfamiliar implementation work or the second repair loop."
     },
     {
+      "name": "agent_workforce_executor",
+      "role": "executor",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "danger-full-access",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Run gate-approved shell work \u2014 installs, file operations, scripts \u2014 silently within the stated scope."
+    },
+    {
+      "name": "agent_workforce_executor_fast",
+      "role": "executor",
+      "variant": "downshift",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "sandbox_mode": "danger-full-access",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Run a single obvious approved command without ceremony."
+    },
+    {
+      "name": "agent_workforce_executor_deep",
+      "role": "executor",
+      "variant": "upshift",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "sandbox_mode": "danger-full-access",
+      "approval_policy": "never",
+      "web_search": "disabled",
+      "description": "Handle unfamiliar multi-step system work under an approved goal."
+    },
+    {
       "name": "agent_workforce_debugger",
       "role": "debugger",
       "variant": "default",

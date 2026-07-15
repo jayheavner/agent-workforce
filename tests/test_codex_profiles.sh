@@ -22,10 +22,10 @@ if jq -e '
   .schema_version == 1
   and .orchestrator.model == "gpt-5.6-sol"
   and .orchestrator.effort == "high"
-  and (.profiles | length == 23)
-  and ([.profiles[].name] | unique | length == 23)
+  and (.profiles | length == 26)
+  and ([.profiles[].name] | unique | length == 26)
   and ([.profiles[].name] | all(test("^[a-z0-9_]+$")))
-  and ([.profiles[].role] | unique | sort == ["architect","builder","debugger","deployer","ops","researcher","reviewer","scribe","ticketer","verifier"])
+  and ([.profiles[].role] | unique | sort == ["architect","builder","debugger","deployer","executor","ops","researcher","reviewer","scribe","ticketer","verifier"])
   and ([.profiles[].model] | all(. == "gpt-5.6-sol" or . == "gpt-5.6-terra" or . == "gpt-5.6-luna"))
   and ([.profiles[].effort] | all(. == "low" or . == "medium" or . == "high" or . == "xhigh" or . == "max"))
   and (first(.profiles[] | select(.name == "agent_workforce_debugger")) == {
@@ -125,11 +125,11 @@ CODEX_HOME="$TMPDIR_T/codex" AGENT_WORKFORCE_SKIP_MODEL_CHECK=1 \
   && ok || bad "Codex profile installer failed in a clean destination"
 
 installed_count="$(find "$TMPDIR_T/codex/agents" -type f -name 'agent_workforce_*.toml' 2>/dev/null | wc -l | tr -d ' ')"
-[ "$installed_count" = "23" ] && ok || bad "Codex installer did not install all 23 profiles"
+[ "$installed_count" = "26" ] && ok || bad "Codex installer did not install all 26 profiles"
 [ -f "$TMPDIR_T/codex/agent-workforce.config.toml" ] \
   && ok || bad "Codex installer did not install the orchestrator root profile"
 installed_launch_count="$(find "$TMPDIR_T/codex" -maxdepth 1 -type f -name 'agent_workforce_*.config.toml' | wc -l | tr -d ' ')"
-[ "$installed_launch_count" = "23" ] && ok || bad "Codex installer did not install all 23 direct-launch profiles"
+[ "$installed_launch_count" = "26" ] && ok || bad "Codex installer did not install all 26 direct-launch profiles"
 
 bash -n "$REPO/bin/agent-workforce-codex" "$REPO/bin/agent-workforce-dispatch" \
   && ok || bad "a Codex launcher has invalid shell syntax"
@@ -198,37 +198,33 @@ codex_payload() { # $1 role, $2 model, $3 tool, $4 command-or-patch
   '
 }
 
-expect_policy_rc() { # $1 expected, $2 role, $3 model, $4 tool, $5 value, $6 label
+expect_secrets_rc() { # $1 expected, $2 role, $3 model, $4 tool, $5 value, $6 label
   expected="$1"; role="$2"; model="$3"; tool="$4"; value="$5"; label="$6"
   set +e
   printf '%s' "$(codex_payload "$role" "$model" "$tool" "$value")" \
     | AGENT_TEAM_EXPECTED_MODEL="$model" AGENT_TEAM_AUDIT_LOG="$TMPDIR_T/audit.log" \
-      bash "$REPO/hooks/agent-team-policy.sh" "$role" >/dev/null 2>&1
+      bash "$REPO/hooks/agent-team-secrets.sh" "$role" >/dev/null 2>&1
   rc=$?
   set -u
   [ "$rc" -eq "$expected" ] && ok || bad "$label (expected $expected, got $rc)"
 }
 
-expect_policy_rc 2 builder gpt-5.6-terra Bash 'aws s3 ls' \
-  "Codex builder policy allowed a cloud CLI"
-expect_policy_rc 2 researcher gpt-5.6-terra Bash 'pwd' \
-  "Codex researcher policy allowed shell access"
-expect_policy_rc 2 debugger gpt-5.6-terra Bash 'touch should-not-exist' \
-  "Codex debugger policy allowed a mutating shell command"
-expect_policy_rc 2 debugger gpt-5.6-terra apply_patch $'*** Begin Patch\n*** Add File: docs/should-not-exist.md\n+x\n*** End Patch' \
-  "Codex debugger policy allowed a file patch"
-expect_policy_rc 2 architect gpt-5.6-sol apply_patch $'*** Begin Patch\n*** Add File: src/nope.py\n+x\n*** End Patch' \
-  "Codex architect policy allowed a source-code patch"
-expect_policy_rc 0 architect gpt-5.6-sol apply_patch $'*** Begin Patch\n*** Add File: docs/ok.md\n+x\n*** End Patch' \
-  "Codex architect policy blocked a documentation patch"
+expect_secrets_rc 0 builder gpt-5.6-terra Bash 'aws s3 ls' \
+  "Codex builder secrets guard blocked a plain command (blocklists are retired)"
+expect_secrets_rc 2 builder gpt-5.6-terra Bash 'echo $OKTA_TOKEN > creds.txt' \
+  "Codex builder secrets guard allowed a secret write"
+expect_secrets_rc 2 executor gpt-5.6-terra apply_patch $'*** Begin Patch\n*** Add File: notes.md\n+export KEY=$MY_API_KEY\n*** End Patch' \
+  "Codex executor secrets guard allowed a secret-bearing patch"
+expect_secrets_rc 0 architect gpt-5.6-sol apply_patch $'*** Begin Patch\n*** Add File: docs/ok.md\n+x\n*** End Patch' \
+  "Codex architect secrets guard blocked a documentation patch"
 
 set +e
 printf '%s' "$(codex_payload builder gpt-5.6-sol Bash 'pwd')" \
   | AGENT_TEAM_EXPECTED_MODEL="gpt-5.6-terra" AGENT_TEAM_AUDIT_LOG="$TMPDIR_T/audit.log" \
-    bash "$REPO/hooks/agent-team-policy.sh" builder >/dev/null 2>&1
+    bash "$REPO/hooks/agent-team-secrets.sh" builder >/dev/null 2>&1
 rc=$?
 set -u
-[ "$rc" -eq 2 ] && ok || bad "Codex policy did not fail closed on a model mismatch"
+[ "$rc" -eq 2 ] && ok || bad "Codex secrets guard did not fail closed on a model mismatch"
 
 printf 'codex-profile tests: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

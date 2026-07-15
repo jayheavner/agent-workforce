@@ -35,7 +35,7 @@ matcher = "startup|resume"
 
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh\" deployer"
+command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh\" deployer"
 timeout = 30
 
 [[hooks.PreToolUse]]
@@ -43,5 +43,5 @@ matcher = "Bash|Edit|Write|apply_patch|spawn_agent|Agent"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh\" deployer"
+command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-terra\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh\" deployer"
 timeout = 30

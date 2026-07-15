@@ -124,17 +124,20 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh agent-team-cost.sh agent-team-dispatch-guard.sh model-rates.json agent-model-defaults.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh model-rates.json agent-model-defaults.json"
+# Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
+# are retired. On install they are backed up, then PURGED from the hooks dir;
+# --check fails with a RETIRED finding if any reappears.
+RETIRED_HOOK_FILES="agent-team-policy.sh agent-team-policy-lib.sh agent-team-policy-mutations.sh"
 POLICY_KEYS="$REPO/policy/KEYS.md"
 FRAMEWORK_PIN="$REPO/SKILLS-FRAMEWORK"
 
 # --- validation (nothing is touched until all of this passes) ---
 command -v jq >/dev/null 2>&1 || fail "jq is required"
-[ -f "$REPO/hooks/agent-team-policy-lib.sh" ] || fail "hooks/agent-team-policy-lib.sh is missing from repo"
-[ -f "$REPO/hooks/agent-team-policy-mutations.sh" ] || fail "hooks/agent-team-policy-mutations.sh is missing from repo"
-bash -n "$REPO/hooks/agent-team-policy.sh" || fail "policy script failed bash -n"
-bash -n "$REPO/hooks/agent-team-policy-lib.sh" || fail "policy lib script failed bash -n"
-bash -n "$REPO/hooks/agent-team-policy-mutations.sh" || fail "policy mutations script failed bash -n"
+[ -f "$REPO/hooks/agent-team-secrets.sh" ] || fail "hooks/agent-team-secrets.sh is missing from repo"
+[ -f "$REPO/hooks/agent-team-audit.sh" ] || fail "hooks/agent-team-audit.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-secrets.sh" || fail "secrets guard failed bash -n"
+bash -n "$REPO/hooks/agent-team-audit.sh" || fail "audit hook failed bash -n"
 [ -f "$REPO/hooks/agent-team-cost.sh" ] || fail "hooks/agent-team-cost.sh is missing from repo"
 [ -f "$REPO/hooks/model-rates.json" ] || fail "hooks/model-rates.json is missing from repo"
 bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
@@ -174,7 +177,10 @@ bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed
 # test_install_skills.sh inherit AGENT_TEAM_SKIP_INSTALL_TEST=1 so they exercise
 # skill/install behavior without multiplying the unrelated hook suites.
 if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
-  bash "$REPO/tests/test_policy_hooks.sh" >/dev/null || fail "policy hook tests failed — run tests/test_policy_hooks.sh to see which"
+  bash "$REPO/tests/test_secrets_hook.sh" >/dev/null || fail "secrets guard tests failed — run tests/test_secrets_hook.sh to see which"
+  bash "$REPO/tests/test_audit_hook.sh" >/dev/null || fail "audit hook tests failed — run tests/test_audit_hook.sh to see which"
+  bash "$REPO/tests/test_agent_frontmatter.sh" >/dev/null || fail "agent frontmatter tests failed — run tests/test_agent_frontmatter.sh to see which"
+  bash "$REPO/tests/test_install_retire.sh" >/dev/null || fail "install-retire tests failed — run tests/test_install_retire.sh to see which"
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_scoreboard.sh" >/dev/null || fail "scoreboard tests failed — run tests/test_scoreboard.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
@@ -356,6 +362,9 @@ EOF
   done <<EOF
 $(cd "$REPO/skills" && find . -type f)
 EOF
+  for h in $RETIRED_HOOK_FILES; do
+    [ -f "$HOOKS_DIR/$h" ] && { echo "check: RETIRED — $HOOKS_DIR/$h is a retired policy hook and must be purged; re-run install"; drift=1; }
+  done
   if [ "$drift" -eq 0 ]; then
     echo "check: OK — installed team matches repo build $(jq -r '.commit' "$MANIFEST") (installed $(jq -r '.installed_at' "$MANIFEST"))"
     exit 0
@@ -378,12 +387,12 @@ for f in "$REPO"/agents/*.md; do
     PREEXISTING_AGENTS="$PREEXISTING_AGENTS $bn"
   fi
 done
-PREEXISTING_POLICY=0
-PREEXISTING_POLICY_LIB=0
-PREEXISTING_POLICY_MUT=0
-[ -f "$HOOKS_DIR/agent-team-policy.sh" ] && { cp "$HOOKS_DIR/agent-team-policy.sh" "$BACKUP/"; PREEXISTING_POLICY=1; }
-[ -f "$HOOKS_DIR/agent-team-policy-lib.sh" ] && { cp "$HOOKS_DIR/agent-team-policy-lib.sh" "$BACKUP/"; PREEXISTING_POLICY_LIB=1; }
-[ -f "$HOOKS_DIR/agent-team-policy-mutations.sh" ] && { cp "$HOOKS_DIR/agent-team-policy-mutations.sh" "$BACKUP/"; PREEXISTING_POLICY_MUT=1; }
+# Retired policy hooks: back up any installed copy (so restore() can put the
+# machine back exactly as it was on a failed install), then purge post-install.
+RETIRED_PRESENT=""
+for h in $RETIRED_HOOK_FILES; do
+  [ -f "$HOOKS_DIR/$h" ] && { cp "$HOOKS_DIR/$h" "$BACKUP/"; RETIRED_PRESENT="$RETIRED_PRESENT $h"; }
+done
 PREEXISTING_COST=0
 PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
@@ -440,6 +449,9 @@ restore() {
       agent-team-policy.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-policy-lib.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-policy-mutations.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-secrets.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-audit.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-plugin-router.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-cost.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
@@ -471,9 +483,12 @@ cleanup_fresh() {
       *) rm -f "$CLAUDE_DIR/agents/$bn" ;;
     esac
   done
-  [ "$PREEXISTING_POLICY" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-policy.sh"
-  [ "$PREEXISTING_POLICY_LIB" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-policy-lib.sh"
-  [ "$PREEXISTING_POLICY_MUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-policy-mutations.sh"
+  for h in $RETIRED_HOOK_FILES; do
+    case " $RETIRED_PRESENT " in
+      *" $h "*) : ;;                       # was present pre-install; restore() put it back
+      *) rm -f "$HOOKS_DIR/$h" ;;
+    esac
+  done
   [ "$PREEXISTING_COST" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-cost.sh"
   [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$HOOKS_DIR/model-rates.json"
   [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-guard.sh"
@@ -491,9 +506,9 @@ EOF
 
 # --- install ---
 if ! cp "$REPO"/agents/*.md "$CLAUDE_DIR/agents/"; then restore; cleanup_fresh; fail "agent copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-policy.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-policy-lib.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook lib copy failed; rolled back"; fi
-if ! cp "$REPO/hooks/agent-team-policy-mutations.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook mutations copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-secrets.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "secrets guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-audit.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "audit hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-plugin-router.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "plugin router copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
@@ -508,11 +523,12 @@ while IFS= read -r rel; do
 done <<EOF
 $(cd "$REPO/skills" && find . -type f)
 EOF
-# Only the entry point is ever executed directly (agent frontmatter and the
-# shell invoke it by path); agent-team-policy-lib.sh and
-# agent-team-policy-mutations.sh are only ever `source`d (a two-level chain:
-# entry point -> lib -> mutations), so they need to be readable, not executable.
-chmod +x "$HOOKS_DIR/agent-team-policy.sh" || { restore; cleanup_fresh; fail "chmod failed; rolled back"; }
+# Purge the retired policy hooks now that every copy above succeeded; a failed
+# install never reaches this line, so restore() semantics are unaffected.
+for h in $RETIRED_HOOK_FILES; do rm -f "$HOOKS_DIR/$h"; done
+chmod +x "$HOOKS_DIR/agent-team-secrets.sh" || { restore; cleanup_fresh; fail "chmod of secrets guard failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-audit.sh" || { restore; cleanup_fresh; fail "chmod of audit hook failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-plugin-router.sh" || { restore; cleanup_fresh; fail "chmod of plugin router failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
 

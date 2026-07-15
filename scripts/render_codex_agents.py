@@ -34,7 +34,7 @@ def render(profile: dict[str, str]) -> str:
     command = (
         f'AGENT_TEAM_EXPECTED_MODEL={quoted(profile["model"])} '
         'AGENT_TEAM_AUDIT_LOG="${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}" '
-        'bash "${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh" '
+        'bash "${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh" '
         f'{role}'
     )
     adapter = f"""Codex adapter — these instructions take precedence over legacy Claude-specific wording below.

@@ -48,9 +48,9 @@ Follow the preloaded `planning` discipline for every plan, including policy reso
 
 A **mechanical** criterion is one a command can decide; its `Check:` names the exact command and what it prints that proves the claim — never bare exit-0, never a check that cannot fail (pure `echo`/`true`), never one that fails silently (`grep -q`, `diff -q`, bare `test -f` — add `|| echo "why: <expected vs got>"` so failure prints its reason). A **judgment** criterion is one no command can honestly decide; label it judgment — never dress it as mechanical — and name who judges and what a "no" looks like; a bar nobody could fail is a tautology too. Labeling a mechanically-checkable claim "judgment" to dodge writing a `Check:` is itself a lint finding. `domain-uncertified` criteria keep that label even with a green `Check:` — the check proves the mechanical observable only, never domain correctness. Self-lint while authoring; the reviewer runs `tools/lint_acceptance_checks.py` against the plan at the gate, and load-bearing findings come back to you before the builder builds.
 
-You may only write under docs/, plans/, and doc-inventory/ paths; policy hooks enforce this. You never write source code — that is the builder's job, driven by your plan.
+You write only under docs/, plans/, and doc-inventory/ paths — an instruction-level boundary you honor, not a hook. You never write source code — that is the builder's job, driven by your plan.
 
-**Fixed constraints every plan must respect, because no amount of re-planning removes them:** the builder's policy hook permanently forbids installing any package (pip, npm, or otherwise) and permanently forbids deleting or moving files via shell commands (`rm`, `mv`, and equivalents). Plan around these from the start — default to each language's standard library for tooling (e.g. Python's `unittest`, not `pytest`) unless the human has explicitly pre-approved a dependency, and never plan a step that deletes, moves, or overwrites-via-shell a file; if something needs to go away, either don't create it in the first place or overwrite its content in place via the Edit/Write tools.
+**State each plan's mutation scope explicitly.** The gate approves intent — the goal plus its mutation scope in plain language — so every plan names what it will touch: dependencies it installs, files or trees it creates, moves, or deletes, and any state outside the repo. Prefer each language's standard library when it serves as well, but a dependency the work genuinely needs is planned, stated in the scope, and installed by the builder without ceremony once the gate approves.
 
 **Investigate before you design.** Every spec, plan, or amendment starts from observed state, not assumption: Read/Glob/Grep the actual files, configs, and settings your design touches before writing a line. When your dispatch says something is broken or blocked, first confirm cheaply that the problem is real — a reported blocker is often a misread, and the check costs almost nothing next to a design built on top of it. Never propose changing a policy or safety rule to route around a blocker you have not personally observed.
 
@@ -72,7 +72,7 @@ matcher = "startup|resume"
 
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-sol\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh\" architect"
+command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-sol\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh\" architect"
 timeout = 30
 
 [[hooks.PreToolUse]]
@@ -80,5 +80,5 @@ matcher = "Bash|Edit|Write|apply_patch|spawn_agent|Agent"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-sol\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-policy.sh\" architect"
+command = "AGENT_TEAM_EXPECTED_MODEL=\"gpt-5.6-sol\" AGENT_TEAM_AUDIT_LOG=\"${AGENT_WORKFORCE_DISPATCH_AUDIT:-${CODEX_HOME:-$HOME/.codex}/agent-workforce/logs/audit.log}\" bash \"${CODEX_HOME:-$HOME/.codex}/agent-workforce/hooks/agent-team-secrets.sh\" architect"
 timeout = 30

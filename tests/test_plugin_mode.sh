@@ -63,17 +63,22 @@ agent_payload() { # $1 role, $2 subagent type
     '{agent_type:$r,tool_name:"Agent",tool_input:{subagent_type:$t}}'
 }
 
-expect_rc 2 policy "$(bash_payload builder 'sam deploy')" \
-  "builder policy was not enforced in plugin mode"
-expect_rc 2 policy "$(bash_payload 'agent-workforce:builder' 'sam deploy')" \
+expect_rc 0 secrets "$(bash_payload builder 'sam deploy')" \
+  "command with no secret was blocked (blocklists are retired)"
+expect_rc 2 secrets "$(bash_payload builder 'echo $OKTA_TOKEN > creds.txt')" \
+  "builder secrets guard was not enforced in plugin mode"
+expect_rc 2 secrets "$(bash_payload 'agent-workforce:builder' 'echo $OKTA_TOKEN > creds.txt')" \
   "namespaced builder role was not normalized"
-expect_rc 2 policy "$(bash_payload 'agent-workforce:debugger' 'touch nope')" \
-  "namespaced debugger role was not normalized"
-expect_rc 0 policy "$(bash_payload unrelated-agent 'sam deploy')" \
-  "plugin policy leaked into an unrelated agent"
-expect_rc 0 policy "$(bash_payload 'other-plugin:builder' 'sam deploy')" \
-  "plugin policy normalized a foreign plugin role"
-expect_rc 2 policy '{' "malformed hook input did not fail closed"
+expect_rc 2 secrets "$(bash_payload 'agent-workforce:executor' 'echo $MY_API_KEY | tee out')" \
+  "namespaced executor role was not normalized"
+expect_rc 0 secrets "$(bash_payload unrelated-agent 'echo $OKTA_TOKEN > creds.txt')" \
+  "plugin secrets guard leaked into an unrelated agent"
+expect_rc 0 secrets "$(bash_payload 'other-plugin:builder' 'echo $OKTA_TOKEN > creds.txt')" \
+  "plugin secrets guard normalized a foreign plugin role"
+expect_rc 2 secrets '{' "malformed hook input did not fail closed"
+expect_rc 0 audit "$(bash_payload executor 'npm install left-pad')" "audit route errored"
+grep -q "role=executor ran=npm install left-pad" "$TMPDIR_T/audit.log" \
+  && ok || bad "audit route did not log the executor command"
 
 expect_rc 2 dispatch "$(agent_payload orchestrator general-purpose)" \
   "orchestrator dispatch guard was not enforced"
