@@ -33,19 +33,21 @@ commits, pushes, deletes a branch, or removes a worktree itself.
 - Every `tests/test_*.sh` script passed after the final implementation edit.
 - `git diff --check` passed.
 
-## Closeout ledger
+## Delivery receipt
 
-- `verification: pass` — focused and full repository shell suites are green.
-- `review: pass` — the task diff was checked against all six approved behaviors;
+- delivery-target: integrated-code
+- shipment-verdict: SHIPPABLE
+- verification: pass — focused and full repository shell suites are green.
+- review: pass — the task diff was checked against all six approved behaviors;
   the review added terminal-state retirement and descendant-commit validation.
-- `documentation: pass` — implementation plan and this status note are present.
-- `memory: not requested` — no personal or project memory was changed.
-- `commit: pass` — the focused Conventional Commit is reported in the final
-  handoff; pre-existing dirty paths are excluded.
-- `deployment: not applicable` — no cloud or hosted service is involved.
-- `integration: pending` — the focused commit is held on
-  `codex/enforced-closeout-finalizer`; the primary `main` checkout contains
-  unrelated overlapping dirty work, so no merge or push was attempted.
-- `cleanup: not applicable` — the task worktree and branch are active delivery
-  resources, not merged cleanup candidates. No pre-existing branch, worktree,
-  stash, or dirty file was removed.
+- documentation: pass — implementation plan and this status note are present.
+- memory: pass — at Jay's explicit request, the multiple-GitHub-identity
+  rule was recorded in personal memory without changing global authentication.
+- commit: pass — the feature commit is `bb83c06`; the integration merge is
+  `a924449`. Pre-existing and concurrent work remained excluded.
+- integration: pass — the task was merged into `main` at `a924449` and pushed
+  to `jayheavner/agent-workforce`.
+- deployment: not applicable — no cloud or hosted service is involved.
+- cleanup: pass — the clean, merged task worktree was removed and the local
+  `codex/enforced-closeout-finalizer` branch was deleted. Unrelated worktrees,
+  branches, stashes, and dirty files were left untouched.
