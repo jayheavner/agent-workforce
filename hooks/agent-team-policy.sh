@@ -47,7 +47,7 @@ case "$TOOL" in
       builder) policy_builder ;;
       deployer) policy_deployer ;;
       ops) policy_ops ;;
-      verifier|reviewer) policy_readonly_runner ;;
+      verifier|reviewer|debugger) policy_readonly_runner ;;
       *) allow "$CMD" ;;
     esac
     ;;

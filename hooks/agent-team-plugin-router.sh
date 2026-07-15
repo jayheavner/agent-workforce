@@ -34,7 +34,7 @@ case "$ROLE" in
 esac
 
 case "$ROLE" in
-  orchestrator|architect|builder|verifier|reviewer|deployer|researcher|ops|scribe|ticketer) ;;
+  orchestrator|architect|builder|debugger|verifier|reviewer|deployer|researcher|ops|scribe|ticketer) ;;
   *) exit 0 ;;
 esac
 
