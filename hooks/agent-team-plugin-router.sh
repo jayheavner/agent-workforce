@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Route plugin-level hooks to the existing role-aware hook implementations.
+# Claude Code ignores hooks embedded in plugin agent definitions, while plugin
+# hooks apply to the whole session. This adapter restores per-role behavior and
+# deliberately ignores agents that are not part of this workforce.
+set -u
+
+MODE="${1:-}"
+case "$MODE" in
+  policy|dispatch|cost) ;;
+  *)
+    printf 'agent-workforce plugin router: expected policy, dispatch, or cost mode\n' >&2
+    exit 2
+    ;;
+esac
+
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'agent-workforce plugin router: jq is required to identify the active agent safely\n' >&2
+  exit 2
+fi
+
+INPUT="$(cat)"
+ROLE="$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null)" || {
+  printf 'agent-workforce plugin router: hook input was not valid JSON\n' >&2
+  exit 2
+}
+
+# Installed plugin agents may be reported either as their bare name or with
+# this plugin's namespace. Do not normalize another plugin's role name into a
+# workforce role: plugin hooks are session-global and must not leak.
+case "$ROLE" in
+  agent-workforce:*) ROLE="${ROLE#agent-workforce:}" ;;
+  *:*) exit 0 ;;
+esac
+
+case "$ROLE" in
+  orchestrator|architect|builder|debugger|verifier|reviewer|deployer|researcher|ops|scribe|ticketer) ;;
+  *) exit 0 ;;
+esac
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+case "$MODE" in
+  policy)
+    printf '%s' "$INPUT" | bash "$HERE/agent-team-policy.sh" "$ROLE"
+    ;;
+  dispatch)
+    [ "$ROLE" = "orchestrator" ] || exit 0
+    printf '%s' "$INPUT" | bash "$HERE/agent-team-dispatch-guard.sh"
+    ;;
+  cost)
+    [ "$ROLE" = "orchestrator" ] || exit 0
+    printf '%s' "$INPUT" | bash "$HERE/agent-team-cost.sh"
+    ;;
+esac

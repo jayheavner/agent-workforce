@@ -11,6 +11,7 @@ fi
 ROLE="$1"
 INPUT="$(cat)"
 TOOL="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')"
+ACTIVE_MODEL="$(printf '%s' "$INPUT" | jq -r '.model // empty')"
 CMD=""
 FILE=""
 CONTENT=""
@@ -39,6 +40,12 @@ block() { # $1 human reason, $2 detail
 # variable setup above is safe and reads naturally top-to-bottom.
 source "$(cd "$(dirname "$0")" && pwd)/agent-team-policy-lib.sh"
 
+if [ -n "${AGENT_TEAM_EXPECTED_MODEL:-}" ] \
+  && [ "$ACTIVE_MODEL" != "$AGENT_TEAM_EXPECTED_MODEL" ]; then
+  block "active model '$ACTIVE_MODEL' does not match pinned profile model '$AGENT_TEAM_EXPECTED_MODEL'" \
+    "model-mismatch:$ACTIVE_MODEL"
+fi
+
 case "$TOOL" in
   Bash)
     CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')"
@@ -47,7 +54,9 @@ case "$TOOL" in
       builder) policy_builder ;;
       deployer) policy_deployer ;;
       ops) policy_ops ;;
-      verifier|reviewer) policy_readonly_runner ;;
+      verifier|reviewer|debugger) policy_readonly_runner ;;
+      architect|researcher|scribe|ticketer)
+        block "shell access is not part of the $ROLE role" "$CMD" ;;
       *) allow "$CMD" ;;
     esac
     ;;
@@ -59,6 +68,44 @@ case "$TOOL" in
       architect|scribe) policy_docwriter_path ;;
       *) allow "$FILE" ;;
     esac
+    ;;
+  apply_patch)
+    CONTENT="$(printf '%s' "$INPUT" | jq -r '
+      if (.tool_input | type) == "string" then .tool_input
+      else (.tool_input.patch // .tool_input.input // empty)
+      end
+    ')"
+    check_write_content_secrets
+    if printf '%s\n' "$CONTENT" | grep -q '^\*\*\* Delete File:'; then
+      block "file deletion through apply_patch is not allowed for $ROLE" "$CONTENT"
+    fi
+    case "$ROLE" in
+      architect|scribe)
+        found=0
+        while IFS= read -r FILE; do
+          [ -n "$FILE" ] || continue
+          found=1
+          if has_in "$FILE" '(^|/)\.\.(/|$)'; then
+            block "patch path contains a '..' segment" "$FILE"
+          fi
+          case "$FILE" in
+            docs/*|plans/*|doc-inventory/*|scratchpad/*|STATUS.md|STATUS-*.md|*/docs/*|*/plans/*|*/doc-inventory/*|*/scratchpad/*|*/STATUS.md|*/STATUS-*.md) : ;;
+            *) block "patch writes are limited to documentation paths for $ROLE" "$FILE" ;;
+          esac
+        done <<EOF
+$(printf '%s\n' "$CONTENT" | sed -nE 's/^\*\*\* (Add|Update) File:[[:space:]]*//p')
+EOF
+        [ "$found" -eq 1 ] || block "could not identify any patch target path" "$CONTENT"
+        allow "$CONTENT"
+        ;;
+      builder) allow "$CONTENT" ;;
+      *) block "file edits are not part of the $ROLE role" "$CONTENT" ;;
+    esac
+    ;;
+  Agent|spawn_agent|collaboration.spawn_agent)
+    [ "$ROLE" = "orchestrator" ] \
+      || block "specialists may not spawn nested agents" "$TOOL"
+    allow "$TOOL"
     ;;
   *)
     allow "tool=$TOOL"

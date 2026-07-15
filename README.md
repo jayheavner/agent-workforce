@@ -1,26 +1,33 @@
 # AI Agent Team
 
-This repository is the source of truth for a team of ten scoped Claude Code subagents that
-cover the full range of software and operations work: design, specification, implementation,
-testing, code review, cloud deployment, research, cloud/identity operations, document writing,
-and Asana ticket handling. Each agent has a fixed role, a pinned model, and enforced
-permissions, so the same agent always behaves the same way regardless of which task it is
-given. One of the ten, the orchestrator, is not dispatched like the others — it runs as the
-main Claude Code session itself, decomposing incoming work, dispatching the other nine
-specialists one phase at a time, and stopping at human approval gates between phases. The
-full design rationale — why the orchestrator runs as the main session, why permissions are
+This repository is the cross-platform source of truth for an eleven-role AI workforce covering
+design, specification, implementation, diagnosis, testing, code review, cloud deployment,
+research, cloud/identity operations, document writing, and Asana ticket handling. Claude Code
+uses native subagent definitions. Local Codex uses a two-part installation: the ChatGPT/Codex
+plugin plus companion custom-agent profiles. That local integration pins specialist models and
+reasoning efforts, carries the full role contracts, and runs hard-veto policy hooks after the user
+trusts them. Hosted ChatGPT Work cannot load those local profiles or hooks and is explicitly a
+reduced, non-parity surface. One of the eleven roles, the orchestrator, always stays in the main
+session, decomposing incoming work, dispatching or running the other ten specialist phases one
+at a time, and stopping at human approval gates between phases. The full design rationale — why
+the orchestrator runs as the main session, why permissions are
 layered the way they are, and why each model was assigned to each role — is written up in
-`docs/superpowers/specs/2026-07-07-ai-agent-team-design.md`; this README covers installation,
+`docs/superpowers/specs/2026-07-07-ai-agent-team-design.md`; the current skill integration is
+recorded in `docs/superpowers/specs/2026-07-13-skills-framework-migration-design.md`. This README covers installation,
 day-to-day use, and the one-time shakedown that should happen before trusting the team with
 real work.
 
 ## Roster
+
+The first table describes Claude Code. The second gives the default local Codex mapping; the
+complete downshift and upshift matrix lives in `codex/model-policy.json`.
 
 | Agent | Default model | Effort | Role | Mutation rights |
 |---|---|---|---|---|
 | orchestrator | `claude-opus-4-8` | high | Triage, decompose, dispatch, enforce gates. Runs as the main session (see Orchestration) | None (read + dispatch only) |
 | architect | `claude-opus-4-8` | high | Design, spec, plan | Docs only (specs/plans) |
 | builder | `claude-sonnet-5` | high | Implement per approved plan, TDD, commit | Code + local git; no deploy, no push to main |
+| debugger | `claude-sonnet-5` | high | Diagnose symptoms, return root cause with evidence | None (read + run) |
 | verifier | `claude-sonnet-5` | — | Run tests and acceptance checks | None (read + run) |
 | reviewer | `claude-opus-4-8` | high | Code and security review | None (read only) |
 | deployer | `claude-sonnet-5` | medium | Cloud deploys (SAM, Amplify, CDK) | Deploy commands only, each prompted |
@@ -28,6 +35,20 @@ real work.
 | ops | `claude-sonnet-5` | high | AWS/Azure/Okta investigation and admin | Cloud reads free; mutations prompted |
 | scribe | `claude-sonnet-5` | — | Reports, briefs, requirements, postmortems, status notes | Docs only |
 | ticketer | `claude-sonnet-5` | — | Asana write/review/track | Asana via MCP; gated before filing |
+
+| Agent | Local Codex default | Effort | Enforcement |
+|---|---|---|---|
+| orchestrator | `gpt-5.6-sol` | high | CLI launcher pins it; desktop composer selection is manual |
+| architect | `gpt-5.6-sol` | high | Named profile + documentation-write hook |
+| builder | `gpt-5.6-terra` | high | Named profile + builder command policy |
+| debugger | `gpt-5.6-terra` | high | Named read-only profile + command and patch policy |
+| verifier | `gpt-5.6-terra` | medium | Named read-only profile + command policy |
+| reviewer | `gpt-5.6-sol` | high | Named read-only profile, distinct from builder |
+| deployer | `gpt-5.6-terra` | medium | Named profile + deployment allowlist |
+| researcher | `gpt-5.6-terra` | medium | Named read-only profile; live search enabled |
+| ops | `gpt-5.6-terra` | high | Named profile + read-first cloud policy |
+| scribe | `gpt-5.6-terra` | medium | Named profile + documentation-write hook |
+| ticketer | `gpt-5.6-terra` | medium | Named read-only profile + outward-write gates |
 
 These are **defaults, not fixed assignments**: the orchestrator triages every incoming task
 and may downshift a dispatch to a cheaper model (an amendment goes to the architect on
@@ -40,64 +61,179 @@ so you see the cost/depth plan before work starts. The four agents with no effor
 the ones eligible for Haiku downshifts — Haiku rejects the effort parameter, so they
 deliberately inherit the session's setting instead. Model IDs are pinned as full strings
 deliberately: a default change is a deliberate edit to the agent definitions in this repo,
-followed by re-running the installer, never an automatic upgrade. The reviewer
+then a new live session or `/reload-plugins`; snapshot mode additionally requires reinstalling.
+Models are never upgraded implicitly. The reviewer
 intentionally runs a different model (Opus) than the builder (Sonnet) so review is not the
 builder's own model grading its own work. See the spec for the full model-assignment
 policy and the skill preloads each agent carries.
 
-## How to install
+The reusable disciplines are vendored from
+[`jayheavner/skills`](https://github.com/jayheavner/skills) at the exact commit recorded in
+`SKILLS-FRAMEWORK`. A checkout of that source repository is an authoring-machine concern, not
+an installation dependency: every target machine gets the pinned copies from this repository.
+Upgrade by re-vendoring a reviewed upstream revision, updating the pin, and running this
+repository's tests and shakedown.
+
+The additional `agent-workforce` skill is owned by this repository. It is the orchestration
+layer used by ChatGPT and Codex and is safe to load alongside the Claude integration.
+
+## Install in ChatGPT or Codex
+
+The repo includes a Codex plugin manifest at `.codex-plugin/plugin.json` and a marketplace at
+`.claude-plugin/marketplace.json`. The marketplace uses the legacy-compatible repo location
+that ChatGPT desktop explicitly supports, so the existing Claude plugin layout and the new
+ChatGPT distribution can coexist.
+
+Validate the package and the generated custom-agent profiles from a checkout:
 
 ```bash
-bash install.sh
+bash tests/test_chatgpt_plugin.sh
+bash tests/test_codex_profiles.sh
 ```
 
-Nothing is copied anywhere until every validation check below passes:
+Add the GitHub repo as a marketplace and install it from Codex CLI:
 
-- `jq` is present on the machine (the policy hook depends on it to parse tool-call JSON).
-- All hook scripts — the three policy files plus `hooks/agent-team-cost.sh` (the PostToolUse
-  cost-accounting hook) — pass `bash -n` syntax checks, and `hooks/model-rates.json` parses as
-  JSON with the five numeric rate keys on every model.
-- The full policy test suite (`tests/test_policy_hooks.sh`) and the cost-hook test suite
-  (`tests/test_cost_hook.sh`) both pass.
-- Every agent file under `agents/` has YAML frontmatter with the required keys (`name`,
-  `description`, `model`), and the `model` value is one of the three pinned team models
-  (`claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-5`) — an unpinned or unrecognized model
-  fails the install rather than installing silently.
-- Every `skills:` entry in every agent file resolves to an actually-installed skill. Namespaced
-  entries (`plugin:skill`) are checked against the plugin cache; bare entries are checked
-  against `~/.claude/skills/<name>/SKILL.md`, except for a short whitelist of built-in skills
-  that ship inside the Claude Code client itself and have no `SKILL.md` on disk anywhere
-  (currently `verify`, `run`, `init`, `review`, `security-review`, `update-config`,
-  `keybindings-help`) — those are recognized by name instead of by file lookup. A renamed or
-  missing skill fails the install loudly rather than degrading silently.
-- The installer also warns (without failing) if the `CLAUDE_CODE_SUBAGENT_MODEL` environment
-  variable is set, either in the current shell or in `~/.zshrc`, `~/.zprofile`, or
-  `~/.zshenv` — that variable silently overrides every model pin in the roster table above.
-- Every vendored skill directory under `skills/` has a `SKILL.md` (exact filename, uppercase)
-  with `name:` and `description:` frontmatter, and `name:` matches the directory it lives in;
-  a skill missing any of that fails the install before anything is copied. The three copies
-  of `references/coding-standards.md` (under `coding-standards/`, `code-review/`, and
-  `plan-review/`) must be hash-identical — a diverged copy fails the install rather than
-  silently installing inconsistent guidance.
-- The sandbox install-test suite (`tests/test_install_skills.sh`) runs as part of validation:
-  it installs the vendored skills into a throwaway `HOME`, confirms all ten arrive with an
-  exact-name `SKILL.md`, checks the manifest records a correct hash for every file, and
-  confirms `--check` reports OK, then DRIFT and MISSING after deliberately corrupting an
-  installed file.
+```bash
+codex plugin marketplace add jayheavner/agent-workforce
+codex plugin add agent-workforce@agent-workforce
+```
 
-Only after all of that passes does the installer touch `~/.claude/`. Any agent file already
-installed under `~/.claude/agents/` that this run is about to replace is copied first into a
-timestamped backup directory, `~/.claude/backups/agent-team-<timestamp>/`; the same applies to
-`~/.claude/hooks/agent-team-policy.sh`, `~/.claude/hooks/agent-team-policy-lib.sh`,
-`~/.claude/hooks/agent-team-policy-mutations.sh`, and every file under `~/.claude/skills/` that
-a vendored skill is about to replace, if they already exist. If any copy step fails partway
-through — an agent file, the policy script, the policy library, the mutations blocklist, or a
-skill file — the installer restores every file it just backed up (skills files by their full
-relative path, so nested files under `skills/<name>/references/...` roll back correctly) and
-removes any file it freshly created that had no prior version to restore, so a failed install
-always reverts cleanly to whatever state existed before it ran; it never leaves a partial or
-broken install in place. A successful run prints where the backup was written and reminds you
-how to start the team.
+Install the local model/effort profiles and policy runtime on every machine that will run the
+workforce:
+
+```bash
+bash install-codex.sh
+```
+
+In Codex CLI, start the pinned orchestrator directly:
+
+```bash
+./bin/agent-workforce-codex
+```
+
+Start a conversation directly with one pinned specialist:
+
+```bash
+./bin/agent-workforce-codex --agent agent_workforce_researcher_fast
+```
+
+Run one pinned specialist phase non-interactively (the workforce skill uses this companion route when the current collaboration API cannot select custom profiles):
+
+```bash
+./bin/agent-workforce-dispatch agent_workforce_reviewer "Review the current diff."
+```
+
+In the ChatGPT desktop Codex surface, choose **GPT-5.6 Sol** and **High** before starting a new
+task, then invoke `$agent-workforce`. Open `/hooks` once and trust the Agent Workforce role-policy
+hooks. In ChatGPT Work, invoke `@agent-workforce`, but expect it to stop and disclose that full
+parity is unavailable unless you explicitly accept reduced hosted behavior.
+
+For ChatGPT desktop, restart the app after adding the marketplace, open **Plugins**, choose
+**AI Agent Workforce**, and install the plugin. Sharing the plugin does not share files under
+`~/.codex/agents`; every local Codex machine must run `install-codex.sh` separately.
+
+### Remaining parity boundaries
+
+Codex plugins do not distribute user-scoped custom-agent profiles, so the explicit companion
+installer is required. The desktop plugin also cannot change the parent task's composer model;
+the CLI launcher pins Sol/High, while desktop users select it before the task starts. Parent task
+permission overrides may tighten or replace a child profile's sandbox defaults, but the trusted
+role hook still vetoes prohibited commands.
+
+On the ChatGPT desktop/Codex v2 runtime tested on 2026-07-14, the in-thread collaboration tool
+accepts a task name but no custom-profile selector. Live child transcripts showed
+`agent_role: null` and parent-model inheritance even when the task name matched an installed
+profile. The integration therefore uses separate top-level Codex tasks for pinned specialist
+phases. This preserves model, effort, role instructions, sandbox, and hooks, but not the native
+child-task bubble or shared child conversation. See `docs/chatgpt-codex-parity.md` for the evidence
+and remaining platform gaps.
+
+Codex hook payloads expose the active model and tool call, so model mismatches and role-policy
+violations can fail closed. They do not expose stable per-dispatch reasoning-effort, token, or
+credit totals, and Codex documents transcript files as an unstable hook interface. Therefore the
+local integration provides an exact dispatch/model/effort audit from its pinned profiles, but it
+does not claim Claude's exact per-dispatch dollar-cost report. Hosted ChatGPT Work additionally
+lacks the local profiles and policy hooks; it is not full parity.
+
+## Install and run (live plugin mode, recommended)
+
+Prerequisites are Git, a current Claude Code installation with `--plugin-dir` support, and
+`jq`:
+
+```bash
+git --version
+claude --version
+jq --version
+```
+
+On a new machine:
+
+```bash
+git clone https://github.com/jayheavner/agent-workforce.git
+cd agent-workforce
+bash tests/test_plugin_mode.sh
+./bin/agent-workforce
+```
+
+The launcher runs `claude --plugin-dir <this-checkout>`. Claude discovers the repo's agents,
+skills, and hooks directly, and `settings.json` selects the namespaced live orchestrator
+(`agent-workforce:orchestrator`). Nothing is copied into a Claude profile.
+
+To update an existing clean checkout without reinstalling:
+
+```bash
+git pull --ff-only
+./bin/agent-workforce
+```
+
+New files and edits are discovered automatically at the next session start. In an open
+session, run `/reload-plugins` after `git pull` to reload agents, skills, and hooks without
+restarting Claude Code. The plugin deliberately does not pull Git by itself: the checkout is
+updated by `git pull --ff-only` or the machine's normal checkout-sync mechanism.
+
+### Multiple Claude profiles
+
+Live plugin mode does not install into a profile. Point the launcher at whichever profile
+should supply the session's authentication, settings, and connectors:
+
+```bash
+./bin/agent-workforce
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" ./bin/agent-workforce
+CLAUDE_CONFIG_DIR="/another/profile/path" ./bin/agent-workforce
+```
+
+All profiles use the same live checkout, so one checkout update updates the workforce for
+every profile. There is no per-profile reinstall. Profile-specific credentials and connectors
+remain profile/account concerns and are not stored here.
+
+### Snapshot installer fallback
+
+`install.sh` remains supported when direct plugin loading is unavailable or an immutable copied
+snapshot is specifically wanted. Snapshot mode is the only mode that requires reinstalling
+after a repo update.
+
+Before a snapshot install, discover the machine's profiles. If multiple profiles exist, select
+each intended target explicitly:
+
+```bash
+bash install.sh --list-profiles
+bash install.sh --profile "$HOME/.claude"
+bash install.sh --check --profile "$HOME/.claude"
+
+bash install.sh --profile "$HOME/.claude-work"
+bash install.sh --check --profile "$HOME/.claude-work"
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude --agent orchestrator
+```
+
+Discovery checks the default `~/.claude`, the active `CLAUDE_CONFIG_DIR`, and profile-shaped
+`$HOME/.claude-*` directories. Non-conventional paths can be supplied through the
+colon-separated `AGENT_TEAM_PROFILE_DIRS` variable. If multiple profiles are detected without
+an explicit selection, install and check operations stop before changing anything.
+
+The snapshot installer validates agent frontmatter and skill resolution, all vendored skill
+contracts, hook syntax and JSON, policy/dispatch/cost/plugin tests, and a sandbox installation
+suite before copying. It backs up every managed file it replaces, rolls back a partial failure,
+and writes a checksum manifest used by `bash install.sh --check`.
 
 ## How to use
 
@@ -106,8 +242,16 @@ matters because gates require the session to stop and interact with you, and a d
 subagent can only return a final result, not pause mid-task:
 
 ```bash
-claude --agent orchestrator
+./bin/agent-workforce
 ```
+
+To start a specialist directly, pass its plugin-qualified name:
+
+```bash
+./bin/agent-workforce --agent agent-workforce:researcher
+```
+
+For a snapshot installation, the legacy command remains `claude --agent orchestrator`.
 
 Give the orchestrator a task. It first **triages** — classifying the task's ambiguity,
 novelty, blast radius, and size into a tier, and telling you in one paragraph which route it
@@ -153,46 +297,49 @@ task back up later.
 
 The repo is the complete source of truth — the agents carry no dependency on any session
 memory, project memory, or the contents of a personal `~/.claude/CLAUDE.md`. All triage,
-model, effort, and permission behavior lives in the agent files this repo installs. What a
+model, effort, and permission behavior lives in the agent files this repo loads. What a
 new machine DOES need, and how each is guarded:
 
 1. **Claude Code** signed into an account whose connectors cover the MCP-backed roles —
    the researcher's Glean access and the ticketer's Asana access ride on claude.ai
    connectors, which are account-scoped, not machine-scoped.
-2. **`jq`** — the policy hook parses tool-call JSON with it. The installer fails without it.
-3. **The superpowers plugin** (plus the client's own built-in skills) — the only skill
-   dependency that is still genuinely external to this repo. The ten org skills the agents
-   preload or invoke (coding-standards, code-review, secure-secrets, write-ticket, and the
-   rest named in the agent files) are **vendored** under `skills/` in this repo and
-   installed by `install.sh` into `~/.claude/skills/`; they are no longer a separate
-   machine dependency to track. The installer still resolves every skill reference,
-   including the architect's situationally-invoked skills, and still fails loudly on
-   anything missing — now that only means a gap in the superpowers plugin or a client
-   built-in, since the org skills ship with the repo itself.
+2. **`jq`** — the policy hook parses tool-call JSON with it. The launcher and installer both
+   fail clearly without it.
+3. **The Claude Code built-in skills** — the framework no longer depends on the superpowers
+   plugin. Nineteen pinned skills are vendored under `skills/`: the framework core, the
+   requirements, Asana ticketing, 1Password, and UX packs, plus this consumer's
+   `project-policy` instance. Live mode loads them directly from the checkout; snapshot mode
+   copies them into the selected profile. Validation fails loudly if an agent preload,
+   situational skill, dependency edge, or policy key is missing.
 4. **Role credentials in the environment** ($OKTA_TOKEN, AWS profiles, the 1Password
    service-account token) — only needed for the ops/deployer work that uses them, and
    machine-specific by nature.
 
-So the deployment procedure is: install prerequisites, clone this repo, run
-`bash install.sh`, and treat any validation failure as the dependency list telling you
-what that machine is missing.
+So the recommended deployment procedure is: install prerequisites, clone this repo, run
+`bash tests/test_plugin_mode.sh`, then start `./bin/agent-workforce`, optionally setting
+`CLAUDE_CONFIG_DIR` to choose among multiple profiles. Use the snapshot installer only when
+direct plugin loading is unavailable or intentionally not wanted.
 
 ## Drift detection — the anti-fog mechanism
 
-Documentation gets forgotten; the installed agents, hooks, and skills are what actually runs.
-Three mechanisms keep repo and reality aligned without relying on anyone's memory:
+In live plugin mode, the repo files are what actually run. The launcher passes the checkout to
+Claude explicitly, and the orchestrator announces `team plugin <version>, live checkout` at
+session start. `git status --short` shows local modifications, `git pull --ff-only` updates the
+only workforce copy, and `/reload-plugins` refreshes an open session.
 
-- Every install writes a **build manifest** (`~/.claude/agent-team-manifest.json`): the
+Snapshot mode retains three additional drift mechanisms:
+
+- Every install writes a **build manifest** (`<profile>/agent-team-manifest.json`): the
   repo commit, install timestamp, and a checksum of every installed file — agents, hooks,
-  and every vendored skill file, each tracked under its own manifest key
-  (skill files use the key `skills/<name>/<relpath>`, so nested files such as
-  `skills/coding-standards/references/coding-standards.md` are tracked individually).
-- **`bash install.sh --check`** verifies the installation any time, without touching
+  the pinned skills-framework revision, and every vendored skill file, each tracked under its
+  own manifest key (skill files use the key `skills/<name>/<relpath>`, so nested references are
+  tracked individually).
+- **`bash install.sh --check [--profile <dir>]`** verifies one profile any time, without touching
   anything: it re-runs the full validation (skill resolution and the vendored-skills
   checks above, `jq` present, hook and install-skills tests pass) and compares checksums
   the same way for agents, hooks, and skills alike — an installed file hand-edited under
-  `~/.claude/` (including a skill file edited or deleted directly under
-  `~/.claude/skills/`) reports DRIFT or MISSING, a repo file changed since the last
+  the selected profile (including a skill file edited or deleted directly under its
+  `skills/` directory) reports DRIFT or MISSING, a repo file changed since the last
   install reports STALE, a repo file never installed reports NEW, and a file the manifest
   still lists but the repo no longer has reports REMOVED. Any finding exits nonzero with
   the exact file named. Run it on any machine you suspect is behind.
@@ -202,15 +349,17 @@ Three mechanisms keep repo and reality aligned without relying on anyone's memor
 
 ## How to change the team
 
-Edit the agent definitions, hook files, skills, or tests in this repository — never edit files
-under `~/.claude/agents/`, `~/.claude/hooks/`, or `~/.claude/skills/` directly, since those are
-install targets that get overwritten the next time `install.sh` runs, and a direct edit there
-will silently vanish (or, if you leave it in place, `bash install.sh --check` will flag it as
-DRIFT). Skill edits are made under `skills/` in this repo and installed the same way as agents
-and hooks — via `bash install.sh` — never by hand-editing the installed copy. After making a
-change, re-run `bash install.sh` to validate and reinstall. A model change for any role is a
-deliberate, reviewed edit to that agent's `model:` frontmatter line in this repo, followed by an
-install — models are never changed automatically or implicitly.
+Edit agent definitions, hook files, the consumer `project-policy`, or tests in this repository.
+Generic framework-skill edits belong in `jayheavner/skills`; re-vendor them here at a new pinned
+revision rather than carrying an unexplained local fork. In live plugin mode, validate with
+`bash tests/test_plugin_mode.sh`, then start a new session or run `/reload-plugins`; there is no
+install step. A model change remains a deliberate, reviewed frontmatter edit and is never made
+automatically.
+
+If a machine intentionally uses snapshot mode, never hand-edit the copies under a profile's
+`agents/` or `skills/` directories, or under `~/.claude/hooks/`. Make the repo edit, run
+`bash install.sh`, then `bash install.sh --check`; otherwise the next snapshot install will
+overwrite the hand edit.
 
 ## Audit log
 
@@ -246,8 +395,8 @@ the session's per-dispatch transcript files and writes a per-session cost file t
 `~/.claude/logs/agent-team-cost/<project-slug>--<session-id>.json` (override the
 directory with `AGENT_TEAM_COST_DIR`, and the rates file with `AGENT_TEAM_RATES`,
 mainly for tests). Prices come only from `hooks/model-rates.json` — all list
-prices per million tokens; the script contains no numbers. To change a rate, edit
-that file and re-run `bash install.sh`.
+prices per million tokens; the script contains no numbers. To change a rate, edit that file and
+reload the live plugin (or reinstall a snapshot).
 
 The hook never emits a wrong number: if it cannot recognize a transcript's format,
 or sees a model missing from the rates file, it writes a sticky "unavailable"
@@ -291,10 +440,11 @@ which `install.sh` verifies against `agents/*.md` frontmatter on every run.
 
 ## Shakedown checklist
 
-Run this once, in full, after the first install, before trusting the team with real work:
+Run this once, in full, after the first setup, before trusting the team with real work:
 
-- [ ] 1. Run `bash tests/test_policy_hooks.sh` — all pass.
-- [ ] 2. Start `claude --agent orchestrator`; give it a disposable task: "Build a CLI tool in a
+- [ ] 1. Run `bash tests/test_policy_hooks.sh`, `bash tests/test_plugin_mode.sh`, and
+      `bash tests/test_chatgpt_plugin.sh` — all pass.
+- [ ] 2. Start `./bin/agent-workforce`; give it a disposable task: "Build a CLI tool in a
       fresh temp project named csv2json-2 that converts CSV to JSON, through the full
       pipeline including review; skip deploy."
 - [ ] 3. Confirm triage fired: before the first dispatch, the orchestrator declared the task

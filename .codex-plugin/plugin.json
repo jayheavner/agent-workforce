@@ -1,0 +1,39 @@
+{
+  "name": "agent-workforce",
+  "version": "1.0.0",
+  "description": "A gated AI workforce that routes software, research, operations, document, and ticket work through scoped specialist roles.",
+  "author": {
+    "name": "Jay Heavner",
+    "url": "https://github.com/jayheavner"
+  },
+  "homepage": "https://github.com/jayheavner/agent-workforce",
+  "repository": "https://github.com/jayheavner/agent-workforce",
+  "keywords": [
+    "agents",
+    "orchestration",
+    "skills",
+    "workforce",
+    "software-development"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AI Agent Workforce",
+    "shortDescription": "Gated specialist workflows for complex work",
+    "longDescription": "Route work through architect, builder, debugger, verifier, reviewer, deployer, researcher, operations, scribe, and ticketing roles with explicit approval gates and evidence-based closeout.",
+    "developerName": "Jay Heavner",
+    "category": "Productivity",
+    "capabilities": [
+      "Planning",
+      "Multi-agent orchestration",
+      "Implementation",
+      "Verification",
+      "Review"
+    ],
+    "websiteURL": "https://github.com/jayheavner/agent-workforce",
+    "defaultPrompt": [
+      "Use the agent workforce to take this task from triage through verified completion.",
+      "Route this change through architecture, implementation, verification, and review.",
+      "Use the workforce to investigate this problem and return an evidence-backed answer."
+    ]
+  }
+}

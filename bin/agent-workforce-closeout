@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# bin/agent-workforce-closeout — read-only completion audit for Git work.
+set -u
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bin/agent-workforce-closeout [--repo PATH] [--base BRANCH] [--format text|json]
+
+Inspect the repository's completion state without changing files, branches, or
+worktrees. The audit reports dirty state, merged branches, worktrees, and safe
+cleanup candidates. Cleanup candidates are evidence only; integration and any
+destructive cleanup still require explicit human confirmation.
+EOF
+}
+
+fail() {
+  printf 'closeout: %s\n' "$1" >&2
+  exit 2
+}
+
+REPO="$(pwd)"
+BASE=""
+FORMAT="text"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo)
+      [ "$#" -ge 2 ] || fail "--repo requires a path"
+      REPO="$2"
+      shift 2
+      ;;
+    --base)
+      [ "$#" -ge 2 ] || fail "--base requires a branch"
+      BASE="$2"
+      shift 2
+      ;;
+    --format)
+      [ "$#" -ge 2 ] || fail "--format requires text or json"
+      FORMAT="$2"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      ;;
+  esac
+done
+
+case "$FORMAT" in
+  text|json) ;;
+  *) fail "--format must be text or json" ;;
+esac
+
+[ -d "$REPO" ] || fail "repository path does not exist: $REPO"
+REPO_ROOT="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null)" \
+  || fail "not a Git repository: $REPO"
+REPO="$REPO_ROOT"
+
+HEAD="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" \
+  || fail "repository has no commit: $REPO"
+CURRENT_BRANCH="$(git -C "$REPO" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+[ -n "$CURRENT_BRANCH" ] || CURRENT_BRANCH="HEAD"
+
+if [ -z "$BASE" ]; then
+  for candidate in main master "$CURRENT_BRANCH"; do
+    [ "$candidate" = "HEAD" ] && continue
+    if git -C "$REPO" rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
+      BASE="$candidate"
+      break
+    fi
+  done
+fi
+[ -n "$BASE" ] || BASE="HEAD"
+git -C "$REPO" rev-parse --verify "${BASE}^{commit}" >/dev/null 2>&1 \
+  || fail "base branch or commit is not available: $BASE"
+
+if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=all)" ]; then
+  DIRTY=true
+else
+  DIRTY=false
+fi
+
+BRANCHES_JSON='[]'
+WORKTREES_JSON='[]'
+BRANCH_CANDIDATES_JSON='[]'
+WORKTREE_CANDIDATES_JSON='[]'
+CHECKED_OUT_JSON='{}'
+
+WT_PATH=""
+WT_HEAD=""
+WT_BRANCH=""
+WT_DETACHED=false
+
+flush_worktree() {
+  [ -n "$WT_PATH" ] || return 0
+  local branch_name clean merged current candidate
+  branch_name="${WT_BRANCH#refs/heads/}"
+  if [ -n "$WT_BRANCH" ]; then
+    CHECKED_OUT_JSON="$(jq -c --arg branch "$branch_name" '. + {($branch): true}' <<<"$CHECKED_OUT_JSON")"
+  fi
+  if [ -d "$WT_PATH" ] && [ -n "$(git -C "$WT_PATH" status --porcelain --untracked-files=all 2>/dev/null)" ]; then
+    clean=false
+  elif [ -d "$WT_PATH" ]; then
+    clean=true
+  else
+    clean=false
+  fi
+  if [ -n "$branch_name" ] && git -C "$REPO" merge-base --is-ancestor "$branch_name" "$BASE" >/dev/null 2>&1; then
+    merged=true
+  else
+    merged=false
+  fi
+  if [ "$WT_PATH" = "$REPO" ] || { [ -n "$branch_name" ] && [ "$branch_name" = "$CURRENT_BRANCH" ]; }; then
+    current=true
+  else
+    current=false
+  fi
+  if [ "$current" = true ] || [ "$clean" != true ] || [ "$merged" != true ] || [ -z "$branch_name" ]; then
+    candidate=false
+  else
+    candidate=true
+    WORKTREE_CANDIDATES_JSON="$(jq -c --arg path "$WT_PATH" '. + [$path]' <<<"$WORKTREE_CANDIDATES_JSON")"
+  fi
+  WORKTREES_JSON="$(jq -c \
+    --arg path "$WT_PATH" \
+    --arg head "$WT_HEAD" \
+    --arg branch "$branch_name" \
+    --argjson detached "$WT_DETACHED" \
+    --argjson clean "$clean" \
+    --argjson merged "$merged" \
+    --argjson current "$current" \
+    --argjson candidate "$candidate" \
+    '. + [{path:$path, head:$head, branch:$branch, detached:$detached, clean:$clean, merged_into_base:$merged, current:$current, cleanup_candidate:$candidate}]' \
+    <<<"$WORKTREES_JSON")"
+  WT_PATH=""
+  WT_HEAD=""
+  WT_BRANCH=""
+  WT_DETACHED=false
+}
+
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    worktree\ *) flush_worktree; WT_PATH="${line#worktree }" ;;
+    HEAD\ *) WT_HEAD="${line#HEAD }" ;;
+    branch\ *) WT_BRANCH="${line#branch }" ;;
+    detached) WT_DETACHED=true ;;
+    "") flush_worktree ;;
+  esac
+done < <(git -C "$REPO" worktree list --porcelain)
+flush_worktree
+
+while IFS= read -r branch || [ -n "$branch" ]; do
+  [ -n "$branch" ] || continue
+  if git -C "$REPO" merge-base --is-ancestor "$branch" "$BASE" >/dev/null 2>&1; then
+    merged=true
+  else
+    merged=false
+  fi
+  if jq -e --arg branch "$branch" '.[$branch] == true' <<<"$CHECKED_OUT_JSON" >/dev/null 2>&1; then
+    checked_out=true
+  else
+    checked_out=false
+  fi
+  if [ "$branch" = "$CURRENT_BRANCH" ] || [ "$branch" = "$BASE" ] || [ "$merged" != true ] || [ "$checked_out" = true ]; then
+    candidate=false
+  else
+    candidate=true
+    BRANCH_CANDIDATES_JSON="$(jq -c --arg branch "$branch" '. + [$branch]' <<<"$BRANCH_CANDIDATES_JSON")"
+  fi
+  BRANCHES_JSON="$(jq -c \
+    --arg name "$branch" \
+    --argjson merged "$merged" \
+    --argjson checked "$checked_out" \
+    --argjson candidate "$candidate" \
+    '. + [{name:$name, merged_into_base:$merged, checked_out:$checked, cleanup_candidate:$candidate}]' \
+    <<<"$BRANCHES_JSON")"
+done < <(git -C "$REPO" for-each-ref --format='%(refname:short)' refs/heads/)
+
+OUTPUT_JSON="$(jq -n \
+  --arg repository "$REPO" \
+  --arg current_branch "$CURRENT_BRANCH" \
+  --arg base_branch "$BASE" \
+  --arg head "$HEAD" \
+  --argjson dirty "$DIRTY" \
+  --argjson branches "$BRANCHES_JSON" \
+  --argjson worktrees "$WORKTREES_JSON" \
+  --argjson branch_candidates "$BRANCH_CANDIDATES_JSON" \
+  --argjson worktree_candidates "$WORKTREE_CANDIDATES_JSON" \
+  '{repository:$repository, current_branch:$current_branch, base_branch:$base_branch, head:$head, dirty:$dirty, branches:$branches, worktrees:$worktrees, cleanup_candidates:{branches:$branch_candidates, worktrees:$worktree_candidates}}')"
+
+if [ "$FORMAT" = "json" ]; then
+  printf '%s\n' "$OUTPUT_JSON"
+  exit 0
+fi
+
+printf 'CLOSEOUT AUDIT\n'
+printf 'repository: %s\n' "$REPO"
+printf 'current branch: %s\n' "$CURRENT_BRANCH"
+printf 'base branch: %s\n' "$BASE"
+printf 'dirty: %s\n' "$DIRTY"
+printf 'branches:\n'
+printf '%s\n' "$BRANCHES_JSON" | jq -r '.[] | "  - \(.name): merged=\(.merged_into_base), checked_out=\(.checked_out), cleanup_candidate=\(.cleanup_candidate)"'
+printf 'worktrees:\n'
+printf '%s\n' "$WORKTREES_JSON" | jq -r '.[] | "  - \(.path): branch=\(if .branch == "" then "(detached)" else .branch end), clean=\(.clean), merged=\(.merged_into_base), cleanup_candidate=\(.cleanup_candidate)"'
+printf 'cleanup candidates:\n'
+printf '%s\n' "$BRANCH_CANDIDATES_JSON" | jq -r 'if length == 0 then "  branches: none" else "  branches: " + (join(", ")) end'
+printf '%s\n' "$WORKTREE_CANDIDATES_JSON" | jq -r 'if length == 0 then "  worktrees: none" else "  worktrees: " + (join(", ")) end'
