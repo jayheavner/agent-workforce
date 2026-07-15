@@ -1,5 +1,5 @@
 {
-  "description": "Route the workforce secrets guard, audit log, dispatch validation, and cost accounting by active agent type.",
+  "description": "Route workforce secret, audit, dispatch, cost, and closeout enforcement by active agent type.",
   "hooks": {
     "PreToolUse": [
       {
@@ -17,6 +17,10 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" dispatch"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" closeout-dispatch"
           }
         ]
       }
@@ -37,6 +41,26 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" cost"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" closeout-subagent"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" closeout-stop"
           }
         ]
       }

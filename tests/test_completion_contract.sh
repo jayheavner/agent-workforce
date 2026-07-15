@@ -40,6 +40,24 @@ expect_grep skills/agent-workforce/SKILL.md "Do not call work done, complete, or
   "Codex workforce route shares the completion rule"
 expect_grep install.sh 'test_completion_contract.sh' \
   "installer runs the completion-contract regression test"
+expect_grep agents/orchestrator.md "Executor finalizer" \
+  "orchestrator assigns late artifacts to an executor finalizer"
+expect_grep agents/orchestrator.md "agent_team_closeout.py\" stop" \
+  "snapshot orchestrator registers the blocking Stop hook"
+expect_grep agents/verifier.md "WORKFORCE_VERIFICATION:" \
+  "verifier emits machine-readable terminal evidence"
+expect_grep agents/reviewer.md "WORKFORCE_REVIEW:" \
+  "reviewer emits machine-readable terminal evidence"
+expect_grep skills/agent-workforce/SKILL.md "Local commits are part of repository delivery" \
+  "Codex workforce treats focused local commits as default delivery work"
+expect_grep skills/closeout/SKILL.md "finalizer" \
+  "closeout assigns a finalizer after late documentation"
+expect_grep install.sh 'test_closeout_hook.sh' \
+  "installer runs the behavioral closeout-hook regression"
+expect_grep agents/orchestrator.md "If integration and cleanup are inside" \
+  "orchestrator executes authorized task-created cleanup"
+expect_grep agents/executor.md "implementation request as standing authorization" \
+  "executor finalizer does not ask for a commit reminder"
 
 printf 'completion-contract tests: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

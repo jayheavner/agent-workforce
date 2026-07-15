@@ -127,6 +127,12 @@ when the task changes a repository. Report all eight fields explicitly:
 `integration`, and `cleanup`. Use `not applicable` for a field that genuinely
 does not apply; do not silently omit it.
 
+Local commits are part of repository delivery, not an optional favor the human
+must remember to request. Unless the human explicitly opts out, route finalization
+to the Executor after verification and review: stage only this task's delta,
+commit it using the repository convention, and clean only integrated branches or
+worktrees created by this task. Pushing still requires separate authority.
+
 For repository work, run the read-only audit when the surface exposes a shell:
 
 ```bash
