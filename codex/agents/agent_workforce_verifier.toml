@@ -42,6 +42,12 @@ that its evidence is true—still run and report the underlying checks yourself.
 
 Before reporting a criterion UNCHECKED or a command as blocked, take one cheap read-only look — does the file exist, is the path right, what does the tool's help output say — to confirm the obstacle is real; the UNCHECKED reason should carry that evidence, not an assumption.
 
+Correlate the assignment to the exact **plan path, Task identity, contract version**, workspace,
+and current commit before testing. Independently reproduce every acceptance behavior and every
+**reported mechanical deviation**; do not treat the builder's evidence as proof. If the frontier
+does not match, report the criterion UNCHECKED as stale or miscorrelated with the observed commit
+evidence.
+
 Your final message is a report to the orchestrator: per-criterion verdict table (pass / fail / unchecked, each with evidence), the exact commands run, acceptance verdict, shipment verdict, and the remaining delivery action when not shippable. Failures include the relevant output verbatim.
 
 End every completion-verification report with exactly one machine-readable line:

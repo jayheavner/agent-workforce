@@ -79,6 +79,42 @@ repository's tests and shakedown.
 The additional `agent-workforce` skill is owned by this repository. It is the orchestration
 layer used by ChatGPT and Codex and is safe to load alongside the Claude integration.
 
+## Process assurance
+
+The workforce includes a checkpoint process auditor that reuses the independent reviewer in
+`process-audit mode`; it is not an additional agent. A durable state owner stores the approved
+versioned charter, exact audit requests and nine-rule results, finding lineages, bounded
+remediation, amendments, one-use transition authorization, checkpoint disclosures, and
+longitudinal effectiveness outcomes. Claude hooks record reviewer results and guard protected
+builder dispatch. The Codex companion wrapper uses the same engine and marker schemas.
+
+Installation defaults the feature to `OFF`. Start a Claude live-plugin session in observation
+mode with:
+
+```bash
+AGENT_TEAM_PROCESS_ASSURANCE_MODE=SHADOW ./bin/agent-workforce
+```
+
+`SHADOW` records Standard/Large checkpoints but cannot block or be represented as enforcement.
+Use `ENFORCE` only after the exact adapter has passed result-capture and pre-dispatch guard
+qualification; the implemented protected transition is Standard/Large `PRE_BUILDER`. Closeout
+remains shadow and rejects only falsely clean disclosure. State defaults outside the checkout at
+`~/.claude/process-assurance` and can be redirected with
+`AGENT_TEAM_PROCESS_ASSURANCE_STATE`. A session's feature mode is immutable; promotion uses a new
+assurance session so its SHADOW evidence remains intact.
+
+Codex companion phases carry one stable assurance session:
+
+```bash
+bin/agent-workforce-dispatch --assurance-session TASK-ID --assurance-mode SHADOW \
+  agent_workforce_reviewer 'Process-audit mode. ...'
+```
+
+Operators can inspect, verify, amend, and record effectiveness evidence through
+`bin/agent-workforce-process-assurance`; see
+[`docs/process-assurance-operations.md`](docs/process-assurance-operations.md) for marker shapes,
+promotion boundaries, recovery, and examples.
+
 ## Install in ChatGPT or Codex
 
 The repo includes a Codex plugin manifest at `.codex-plugin/plugin.json` and a marketplace at
@@ -288,6 +324,25 @@ rather than blindly re-dispatching. Because the orchestrator itself has no Write
 per-task status note that lets interrupted work resume cleanly is written by the scribe, at the
 orchestrator's direction, at material transitions and completion — look for it if you need to pick a
 task back up later.
+
+### Adaptive execution handoff
+
+New implementation plans declare `execution-contract: 1` and fix outcomes, interfaces,
+invariants, acceptance evidence, and explicit executor discretion instead of pre-writing every
+internal implementation step. Builder preflight may correct a stale helper, test seam, path, mock,
+or equivalent installed mechanism when approved behavior is unchanged; every deviation is carried
+to verifier and reviewer.
+
+Every builder dispatch returns an ordered, correlated result with plan/task identity, workspace,
+commit and dirty-tree frontier, evidence, and proven versus unrun verification. Incomplete results
+use a typed stop so plan, policy, environment, workspace, authority, and product decisions route to
+their actual owner. Sonnet remains the normal executor only for bounded established work. One
+audited `EXECUTION_STALL` may receive one Opus retry; a larger model never substitutes for fixing a
+bad plan, policy collision, workspace conflict, or broken environment. Scribe persists every
+builder terminal result and human gate; git commits remain the per-slice checkpoint.
+
+The controlled rollout and seven-scenario scorecard are in
+`docs/superpowers/validation/2026-07-14-adaptive-execution-handoff-validation.md`.
 
 ## Deploying to another machine
 

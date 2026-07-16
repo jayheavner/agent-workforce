@@ -7,7 +7,7 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  secrets|audit|dispatch|cost|closeout-dispatch|closeout-subagent|closeout-stop) ;;
+  secrets|audit|dispatch|cost|assurance-dispatch|assurance-subagent|assurance-stop|closeout-dispatch|closeout-subagent|closeout-stop) ;;
   *)
     printf 'agent-workforce plugin router: unknown routing mode: %s\n' "$MODE" >&2
     exit 2
@@ -30,10 +30,20 @@ if [ "$MODE" = "closeout-stop" ]; then
   exit $?
 fi
 
+if [ "$MODE" = "assurance-stop" ]; then
+  printf '%s' "$INPUT" | python3 "$HERE/agent-team-process-assurance.py" stop
+  exit $?
+fi
+
 # SubagentStop does carry agent_type; the Python hook ignores unrelated roles
 # and sessions with no active workforce state.
 if [ "$MODE" = "closeout-subagent" ]; then
   printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py" subagent-stop
+  exit $?
+fi
+
+if [ "$MODE" = "assurance-subagent" ]; then
+  printf '%s' "$INPUT" | python3 "$HERE/agent-team-process-assurance.py" subagent-stop
   exit $?
 fi
 
@@ -65,6 +75,10 @@ case "$MODE" in
   dispatch)
     [ "$ROLE" = "orchestrator" ] || exit 0
     printf '%s' "$INPUT" | bash "$HERE/agent-team-dispatch-guard.sh"
+    ;;
+  assurance-dispatch)
+    [ "$ROLE" = "orchestrator" ] || exit 0
+    printf '%s' "$INPUT" | python3 "$HERE/agent-team-process-assurance.py" dispatch
     ;;
   cost)
     [ "$ROLE" = "orchestrator" ] || exit 0

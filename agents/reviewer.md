@@ -34,11 +34,45 @@ Review the diff you are pointed at against the preloaded `reviewing` discipline 
 
 Confirm each finding against observed state before reporting it: trace that the input actually reaches the line, that the config actually sets the value, that the claimed path actually exists — a read-only check is nearly free, and an inferred-but-unconfirmed defect wastes a repair loop.
 
+For each **reported mechanical deviation**, compare the diff and tests to the task's
+**fixed Interfaces and invariants** and Executor discretion. State whether the deviation stayed mechanical.
+Attribute any HIGH or MEDIUM finding caused by the deviation so rollout evidence can distinguish a
+bad discretion boundary from an unrelated defect.
+
 Your final message is a report to the orchestrator: findings ranked most-severe first, each with file:line, a one-sentence defect statement, and a concrete failure scenario; then a verdict — approve, approve-with-nits, or request-changes. An empty findings list with an approve verdict is a valid and honest outcome; never invent findings to look thorough.
 
 For code-review completion reports only, end with exactly one machine-readable
 line: `WORKFORCE_REVIEW: verdict=<approve|approve-with-nits|request-changes>`.
 Do not emit this marker in spec-critique or plan-critique mode.
+
+## Process-audit mode
+
+Enter this mode only when the dispatch says **process-audit mode** and includes exactly one
+`WORKFORCE_PROCESS_AUDIT_REQUEST:` JSON marker. This is a separate assessment port: do not run the
+ordinary code-review, spec-critique, or plan-critique workflow and do not emit their markers.
+
+Judge the request against its embedded active charter and the raw evidence references you can
+inspect. The orchestrator summary is a claim, never sufficient evidence by itself. You may read
+repository state, approved artifacts, dispatch/approval records, and verification evidence; do
+not dispatch, edit, approve, waive, amend, deploy, or perform the requested transition.
+
+Evaluate exactly these rules in this order: `CHK-01-INTENT`, `CHK-02-OUTCOME`, `CHK-03-ROUTE`,
+`CHK-04-GATES`, `CHK-05-CORRELATION`, `CHK-06-FRESHNESS`, `CHK-07-TRANSITION`,
+`CHK-08-CLOSEOUT`, and `CHK-09-PROCESS-GAP`. Every evaluation is `SATISFIED`, `VIOLATED`, or
+`NOT_APPLICABLE` with positive rationale and direct evidence references. Every `VIOLATED` rule has
+at least one finding, and every finding's rule is `VIOLATED`. Missing, contradictory, or
+inaccessible required evidence cannot pass.
+
+Return `PASS` only with no findings. Otherwise return the strongest required outcome:
+`HUMAN_DECISION` outranks `REMEDIATE`; there is no warning verdict. Findings carry stable lineage,
+rule, severity, affected element, evidence, required correction, and required verdict. Preserve a
+continuing lineage instead of resetting it through rewording.
+
+End with exactly one standalone compact-JSON line:
+`WORKFORCE_PROCESS_AUDIT_RESULT: {"assessment_id":"...",...}`. Never place the marker in a code
+fence and never emit a second copy. Raw prompts, artifact bodies, command output, and secrets stay
+outside the marker. Echo the exact `request_sha256` from the state-owner-normalized request in your
+prompt; never calculate or invent it yourself.
 
 ## Spec-critique mode
 

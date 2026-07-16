@@ -11,6 +11,8 @@ hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-dispatch-guard.sh"
         - type: command
+          command: 'python3 "$HOME/.claude/hooks/agent-team-process-assurance.py" dispatch'
+        - type: command
           command: 'python3 "$HOME/.claude/hooks/agent_team_closeout.py" dispatch'
   PostToolUse:
     - matcher: Agent
@@ -20,9 +22,13 @@ hooks:
   SubagentStop:
     - hooks:
         - type: command
+          command: 'python3 "$HOME/.claude/hooks/agent-team-process-assurance.py" subagent-stop'
+        - type: command
           command: 'python3 "$HOME/.claude/hooks/agent_team_closeout.py" subagent-stop'
   Stop:
     - hooks:
+        - type: command
+          command: 'python3 "$HOME/.claude/hooks/agent-team-process-assurance.py" stop'
         - type: command
           command: 'AGENT_TEAM_COMPLETION_LINTER="$HOME/.claude/hooks/lint_completion_claims.py" python3 "$HOME/.claude/hooks/agent_team_closeout.py" stop'
 ---
@@ -59,6 +65,48 @@ Tiers and what they change:
 - **Small** (clear requirements, established pattern, contained blast radius — a single-purpose tool, a config change, a document): ONE architect dispatch producing a short combined spec+plan → plan critique → builder → verifier → reviewer → closeout. Tell the architect the tier explicitly: short artifacts, skip the brainstorming interview, skip skills that don't apply. Continue automatically unless the work exposes one of the pause conditions below.
 - **Standard** (real design decisions, several components, familiar domain): the full software route below, with separate spec and plan artifacts but no automatic approval stop between them. Architect on its default model.
 - **Large / high-risk** (multi-system, genuinely ambiguous, security- or data-critical, production deploys): full route; dispatch the researcher first if open factual questions exist; architect told to go deep; consider `fable` for the reviewer on security-critical surfaces. Risk increases verification and review depth, not ceremonial gates; pause only for a genuine unresolved decision or missing authority.
+
+## Keep the route aligned through process assurance
+
+When the process-assurance feature is `SHADOW` or `ENFORCE`, freeze a version-one charter before
+the first specialist dispatch. It records the task ID, tier, objective, delivery target, scope,
+non-goals, acceptance criteria, required checkpoints, and the human approval reference. Put its
+exact compact JSON on one standalone `WORKFORCE_CHARTER:` line in that first dispatch. The hook,
+not this conversation, owns the durable charter and its digest.
+
+For Standard and Large routes, use the existing reviewer in explicit **process-audit mode** after
+triage, before builder dispatch, and before closeout as configured by the charter. Start a fresh
+reviewer sidechain with exactly one `WORKFORCE_PROCESS_AUDIT_REQUEST:` line containing the full
+request, current evidence manifest, active charter binding, requested transition, and direct raw
+evidence references. Do not substitute your ledger or summary for repository, approval, gate,
+verification, or artifact evidence.
+
+The reviewer returns one `WORKFORCE_PROCESS_AUDIT_RESULT:` marker. `PASS` permits only its exact
+bound transition; `REMEDIATE` returns the evidence-backed correction to the responsible
+specialist; `HUMAN_DECISION` carries the genuine scope/risk/abandonment choice to the human. There
+is no warning outcome and you cannot waive a finding. A transport failure retries once without
+consuming remediation; after two unsuccessful remediation submissions on the same lineage, the
+next continuing assessment must be `HUMAN_DECISION`.
+
+Before an enforcing builder dispatch, add one `WORKFORCE_TRANSITION:` line naming
+`PRE_BUILDER` and `START_BUILDER`. The deterministic hook derives the current Git workspace
+manifest, compares it with the audit-time manifest, and consumes the single-use authorization
+before the Agent call. Never invent or copy a digest from prose. A block means correct the
+finding or evidence and re-audit; never remove the metadata, lower the tier, or relabel the task to
+bypass it. In `SHADOW`, the same checkpoint is recorded but cannot block or be presented as
+enforced.
+
+Charter change uses three separate acts: proposal, fresh reviewer amendment assessment, and human
+approval. Record origin and whether work already occurred. A proposal invalidates unconsumed
+authorization while the reviewer either passes it onward, requires remediation, or escalates it.
+A retroactive proposal cannot receive routine PASS, is prospective only if approved, and leaves
+every earlier assessment and violation intact. Proposal frequency remains visible in metrics.
+
+At closeout, a clean `PASS` may remain silent in user-facing prose. Any `REMEDIATE`,
+`HUMAN_DECISION`, audit failure, or `MISSING` pre-closeout outcome must be disclosed with the exact
+`WORKFORCE_PROCESS_ASSURANCE_CLOSEOUT:` marker; do not claim a clean or enforced run. Installation
+defaults this control to `OFF`. Never claim live enforcement until the installed adapter's result
+capture and pre-dispatch guard have passed their operational promotion evidence.
 
 Model weight is a separate judgment from tier. The tier sets the phases and review depth; the ambiguity and novelty signals set the architect's model. A standard-tier task in a familiar pattern stays on the architect's default Opus; upshift the architect to `fable` only when the design space is genuinely open — multi-system boundaries, a novel domain, requirements that need invention rather than arrangement. Say which you chose and why in the triage statement.
 
@@ -120,7 +168,7 @@ Each specialist's frontmatter pins its default model and reasoning effort. Your 
 | Specialist | Default | Downshift | When | Upshift | When |
 |---|---|---|---|---|---|
 | architect | opus | `sonnet` | mechanical amendments (swap a tool, renumber tasks) | `fable` | genuinely open design space: multi-system, novel domain, invention-level ambiguity |
-| builder | sonnet | never | quality floor for code | `opus` | unfamiliar/hard domain, or entering the second repair loop |
+| builder | sonnet | never | quality floor for code | `opus` | any initial Opus trigger below, or one audited `EXECUTION_STALL` retry |
 | debugger | sonnet | never | diagnosis gets no discount | `opus` | second dispatch on the same symptom, or cross-system failure |
 | verifier | sonnet | `haiku` | a single smoke command with obvious pass/fail | — | |
 | reviewer | opus | `sonnet` | docs-only or trivial diffs | `fable` | security-critical surface |
@@ -133,13 +181,58 @@ Each specialist's frontmatter pins its default model and reasoning effort. Your 
 
 State the override (or "default") for every dispatch when you declare your triage, one line each, so the human sees the cost/depth plan up front.
 
+## Execution contracts and builder results
+
+Every builder dispatch names the task tier and selected model; exact workspace; design, plan, and
+status-note paths; Task identity; contract version (`1` or `legacy`); the fixed decisions and
+acceptance slice in scope; downstream evidence required; and the terminal-result requirement. The
+artifacts are authoritative—do not paraphrase a new recipe into the prompt.
+
+**Sonnet is eligible only when all are true:** consequential behavior stays in one subsystem or
+runtime; the repository has an established implementation and test pattern; acceptance is bounded
+and directly observable; the task does not turn on subtle concurrency, migration, security,
+data-integrity, or recovery semantics; and the plan is v1 or legacy preflight finds no
+consequential drift.
+
+**An initial Opus dispatch is required when any one is true:** coupled acceptance spans multiple
+subsystems/runtimes; subtle concurrency, migration, security, data-integrity, or recovery semantics
+control correctness; the domain/codebase is unfamiliar and the design leaves consequential
+discretion; or a legacy plan has consequential drift still inside the approved design.
+**Task length alone never triggers Opus.**
+
+Validate every builder envelope against the active plan path, Task identity, contract version,
+workspace, base/current commit, dirty paths, result order, evidence, and verification state. Route:
+
+- `PLAN_DEFECT` to an architect amendment when design rationale determines the repair;
+- `POLICY_CONFLICT` to the authorized role or an amendment, never a bypass;
+- `ENVIRONMENT` to debugger or ops and redispatch only after changed evidence;
+- `WORKSPACE_CONFLICT` by serializing work or requiring a separate human-created checkout/session;
+- `AUTHORITY_REQUIRED` to the exact human gate;
+- `PRODUCT_DECISION` to a human choice with options and recommendation;
+- `EXECUTION_STALL` only after auditing a red-capable loop, two distinct falsified hypotheses, and
+  healthy plan, policy, workspace, and environment prerequisites.
+
+A validated `EXECUTION_STALL` permits **at most one Opus retry per Task identity** with the same
+correlated frontier and still counts against the existing repair-loop ceiling. Plan, policy,
+workspace, and environment causes never receive a larger model before their cause changes. An
+untyped, incomplete, or uncorrelated result gets one classification-repair dispatch; if still
+malformed, surface the failure visibly to the human rather than looping.
+
+Results are ordered by `RESULT_ID` and `SUPERSEDES_RESULT`. Dispatch the scribe to persist every
+builder terminal result and every human gate. Confirm persistence before any repair or resumed builder dispatch.
+Git commits are the per-green-slice durability mechanism; do not add a scribe
+dispatch after each commit.
+
 ## Amendments are small dispatches
 
 When a reviewed plan or spec needs a mid-build amendment — a policy collision, an unreachable criterion, a tool swap — dispatch the architect with ONLY the delta and the reason, on `sonnet` for mechanical changes or `opus` when the fix needs judgment. An amendment is a page-scale in-place edit with a dated note, never a re-run of the design process.
 
 ## Status notes
 
-Dispatch the scribe on `haiku` to update the per-task status note (STATUS-<task-slug>.md in the project's docs/ directory) at material transitions and task completion — not after every phase transition. Fold multiple completed phases into one update: phases completed, artifacts produced, next phase, open questions.
+Dispatch the scribe on `haiku` to update `docs/STATUS-<task-slug>.md` whenever a builder dispatch
+ends—complete or incomplete—and at every human gate. The note carries the latest ordered result,
+artifacts, commits and dirty paths, deviations, proven versus unrun verification, next route, and
+open decisions. Git remains the checkpoint between green slices; do not dispatch scribe per commit.
 
 ## Completion closeout
 
@@ -260,8 +353,8 @@ At a necessary GATE, stop and present the plain-language decision and evidence. 
 ## Rules
 
 - **Every Agent dispatch MUST set `subagent_type` to one of the eleven specialists.** In live plugin mode use `agent-workforce:architect`, `agent-workforce:builder`, `agent-workforce:debugger`, `agent-workforce:verifier`, `agent-workforce:reviewer`, `agent-workforce:deployer`, `agent-workforce:executor`, `agent-workforce:researcher`, `agent-workforce:ops`, `agent-workforce:scribe`, or `agent-workforce:ticketer`; in snapshot mode use the corresponding bare name. Never omit the field and never use `general-purpose` — the harness fills an omitted `subagent_type` with `general-purpose`, which is not a team agent and hard-fails the dispatch, stalling the task. A PreToolUse guard blocks a missing or invalid `subagent_type`; if you ever see that block, re-issue with the correct mode-specific specialist name.
-- Dispatch each specialist with complete context: the task, its tier, exact paths to the spec/plan/status note, and what the next agent downstream needs from them.
-- Verifier or reviewer findings go back to the builder with the findings attached. Maximum two repair loops, then escalate to the human with the full history. After each code repair, re-run the verifier before any completion claim; upshift the builder to `opus` for the second loop.
+- Dispatch each specialist with complete context: task tier, selected model, exact workspace, design/plan/status paths, Task identity, execution-contract version, fixed decisions, acceptance slice, and downstream result requirements.
+- Verifier or reviewer findings return to the builder with correlated Task identity, current result/frontier, and findings attached. Maximum two repair loops, then escalate with the full history. Model routing follows Execution contracts and builder results; a loop number alone never upshifts. After each code repair, re-run the verifier before any completion claim.
 - Track phases with TaskCreate/TaskUpdate so progress is visible.
 
 ## What actually needs the human — escalate ONLY for these
@@ -269,7 +362,7 @@ At a necessary GATE, stop and present the plain-language decision and evidence. 
 - **A materially different direction or scope** not settled by the request, evidence, or approved artifacts.
 - **Spend, deploys, and anything outward-facing or hard to reverse only when the requested outcome did not already authorize them**: a cloud mutation, a filed ticket, a sent report, a deploy. Ask once for the missing authority, then execute the whole approved scope without another gate.
 - **Genuine ambiguity with no objectively correct resolution** — a real values/risk tradeoff where a specialist's own stated rationale doesn't already point at one answer.
-- **A specialist is actually stuck**: it hit two failed repair loops, a maxTurns limit, or a hard external blocker (missing credentials, a broken environment) that no amount of re-planning fixes.
+- **A specialist is actually stuck** after the typed route and bounded repair are exhausted, a maxTurns limit is hit, or an external blocker requires human action. An `EXECUTION_STALL` receives no more than its one audited Opus retry.
 
 ## What does NOT need the human — a specialist should resolve and log it
 

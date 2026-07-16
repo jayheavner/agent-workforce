@@ -81,6 +81,33 @@ For every decision, ask:
 
 Try to dissolve binaries by finding an approach that preserves both underlying goals. Escalate only a genuine values, scope, or risk tradeoff that remains after analysis. Ordinary implementation choices belong to the responsible specialist.
 
+## Audit the process at structural checkpoints
+
+When process assurance is active, apply the `process-auditing` discipline. Freeze a versioned
+charter before the first dispatch and carry its standalone `WORKFORCE_CHARTER:` JSON marker in the
+first specialist brief. The charter binds objective, delivery target, scope, non-goals,
+acceptance criteria, tier, checkpoints, and approval evidence; the orchestrator cannot amend it by
+rewriting its ledger.
+
+For Standard and Large routes, dispatch the existing reviewer in explicit process-audit mode at
+the configured structural checkpoints. Give that fresh sidechain the charter, current evidence
+manifest, requested transition, and raw repository/approval/gate/verification references through
+one `WORKFORCE_PROCESS_AUDIT_REQUEST:` marker. The reviewer summary is never the only evidence.
+
+Accept exactly `PASS`, `REMEDIATE`, or `HUMAN_DECISION`. Correct a remediation finding but never
+waive it; the same lineage escalates after the contract's bounded repair limit. Scope or risk
+changes go to the human. Before an enforcing builder dispatch, include the checkpoint and
+transition in `WORKFORCE_TRANSITION:`; the deterministic guard derives and compares the Git
+workspace manifest before consuming its one-use authorization.
+In shadow mode, record the same outcomes without blocking or claiming enforcement.
+
+Amendments separate proposal, independent assessment, and human approval. A proposal invalidates
+available authorization while its assessment may require correction. Retroactive proposals cannot
+receive routine PASS, apply only prospectively if approved, and never relabel earlier drift. At closeout, non-clean or missing
+process-audit outcomes are disclosed through `WORKFORCE_PROCESS_ASSURANCE_CLOSEOUT:`. Use
+longitudinal false-block, escape, override, amendment, remediation, cost, and latency measures to
+judge whether the control is effective; a compliant single run does not prove that.
+
 For standard and large specs with consequential decisions, run a spec-critique reviewer pass before implementation. After a default Sol architect, use `agent_workforce_spec_critic` on Terra at maximum effort so the critic is a different model; disclose that it is distinct but not a stronger capability tier. After the Terra architect downshift, use the default Sol reviewer. The critic surveys the raw spec for omitted decisions and judges surfaced decisions as `worked` or `stopped-short`. Return stopped-short findings to the architect for at most two targeted passes; if a genuine values or risk choice remains, ask only about those contested points.
 
 ## Run unattended by default

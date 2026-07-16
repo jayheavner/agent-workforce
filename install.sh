@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent_team_closeout.py model-rates.json agent-model-defaults.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent-team-process-assurance.py process_assurance.py agent_team_closeout.py model-rates.json agent-model-defaults.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -148,6 +148,12 @@ bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed 
 [ -f "$REPO/hooks/agent_team_closeout.py" ] || fail "hooks/agent_team_closeout.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/agent_team_closeout.py" || fail "closeout hook failed Python syntax validation"
+[ -f "$REPO/hooks/agent-team-process-assurance.py" ] || fail "hooks/agent-team-process-assurance.py is missing from repo"
+[ -f "$REPO/hooks/process_assurance.py" ] || fail "hooks/process_assurance.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent-team-process-assurance.py" || fail "process-assurance adapter failed Python syntax validation"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/process_assurance.py" || fail "process-assurance engine failed Python syntax validation"
 [ -f "$REPO/tools/lint_completion_claims.py" ] || fail "tools/lint_completion_claims.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/tools/lint_completion_claims.py" || fail "completion linter failed Python syntax validation"
@@ -190,6 +196,10 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_scoreboard.sh" >/dev/null || fail "scoreboard tests failed — run tests/test_scoreboard.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
+  bash "$REPO/tests/test_execution_handoff_text.sh" >/dev/null || fail "execution handoff tests failed — run tests/test_execution_handoff_text.sh to see which"
+  bash "$REPO/tests/test_process_assurance_hook.sh" >/dev/null || fail "process-assurance hook tests failed — run tests/test_process_assurance_hook.sh to see which"
+  bash "$REPO/tests/test_process_assurance_integration.sh" >/dev/null || fail "process-assurance integration tests failed — run tests/test_process_assurance_integration.sh to see which"
+  bash "$REPO/tests/test_process_assurance_cli.sh" >/dev/null || fail "process-assurance CLI tests failed — run tests/test_process_assurance_cli.sh to see which"
   bash "$REPO/tests/test_plugin_mode.sh" >/dev/null || fail "plugin-mode tests failed — run tests/test_plugin_mode.sh to see which"
   bash "$REPO/tests/test_chatgpt_plugin.sh" >/dev/null || fail "ChatGPT plugin tests failed — run tests/test_chatgpt_plugin.sh to see which"
   bash "$REPO/tests/test_codex_profiles.sh" >/dev/null || fail "Codex profile tests failed — run tests/test_codex_profiles.sh to see which"
@@ -409,12 +419,16 @@ PREEXISTING_GUARD=0
 PREEXISTING_DEFAULTS=0
 PREEXISTING_CLOSEOUT=0
 PREEXISTING_LINTER=0
+PREEXISTING_ASSURANCE_ADAPTER=0
+PREEXISTING_ASSURANCE_ENGINE=0
 [ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
 [ -f "$HOOKS_DIR/lint_completion_claims.py" ] && { cp "$HOOKS_DIR/lint_completion_claims.py" "$BACKUP/"; PREEXISTING_LINTER=1; }
+[ -f "$HOOKS_DIR/agent-team-process-assurance.py" ] && { cp "$HOOKS_DIR/agent-team-process-assurance.py" "$BACKUP/"; PREEXISTING_ASSURANCE_ADAPTER=1; }
+[ -f "$HOOKS_DIR/process_assurance.py" ] && { cp "$HOOKS_DIR/process_assurance.py" "$BACKUP/"; PREEXISTING_ASSURANCE_ENGINE=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -468,6 +482,8 @@ restore() {
       agent-team-plugin-router.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-cost.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-process-assurance.py) cp "$b" "$HOOKS_DIR/" ;;
+      process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
       lint_completion_claims.py) cp "$b" "$HOOKS_DIR/" ;;
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
@@ -511,6 +527,8 @@ cleanup_fresh() {
   [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
   [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
   [ "$PREEXISTING_LINTER" -eq 0 ] && rm -f "$HOOKS_DIR/lint_completion_claims.py"
+  [ "$PREEXISTING_ASSURANCE_ADAPTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-process-assurance.py"
+  [ "$PREEXISTING_ASSURANCE_ENGINE" -eq 0 ] && rm -f "$HOOKS_DIR/process_assurance.py"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -529,6 +547,8 @@ if ! cp "$REPO/hooks/agent-team-audit.sh" "$HOOKS_DIR/"; then restore; cleanup_f
 if ! cp "$REPO/hooks/agent-team-plugin-router.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "plugin router copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-process-assurance.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "process assurance adapter copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/process_assurance.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "process assurance engine copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
 if ! cp "$REPO/tools/lint_completion_claims.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "completion linter copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
@@ -551,6 +571,8 @@ chmod +x "$HOOKS_DIR/agent-team-audit.sh" || { restore; cleanup_fresh; fail "chm
 chmod +x "$HOOKS_DIR/agent-team-plugin-router.sh" || { restore; cleanup_fresh; fail "chmod of plugin router failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-process-assurance.py" || { restore; cleanup_fresh; fail "chmod of process assurance adapter failed; rolled back"; }
+chmod +x "$HOOKS_DIR/process_assurance.py" || { restore; cleanup_fresh; fail "chmod of process assurance engine failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent_team_closeout.py" || { restore; cleanup_fresh; fail "chmod of closeout hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/lint_completion_claims.py" || { restore; cleanup_fresh; fail "chmod of completion linter failed; rolled back"; }
 

@@ -34,6 +34,14 @@ Apply these two questions to every design decision you make, regardless of the d
 
 Follow the preloaded `planning` discipline for every plan, including policy resolution and its self-review pass, proportional to tier.
 
+For a v1 plan, calibrate detail to evidence: distinguish **verified repository facts** from
+**builder-preflight hypotheses** and never turn an unverified helper, dependency, command, line
+range, or test seam into a fixed instruction. After ordinary coverage and consistency checks,
+self-review the plan through three explicit perspectives: **Architect intent:** fixed decisions
+and rationale survive; **Builder feasibility:** named mechanics are evidenced or delegated to
+preflight; **Verifier observability:** every acceptance behavior has reproducible evidence. This
+review is part of the architect dispatch, not a new gate.
+
 **Acceptance criteria are declared falsifiable.** Every acceptance criterion in a plan is one of two shapes:
 
 ```

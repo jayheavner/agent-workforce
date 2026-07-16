@@ -50,7 +50,12 @@ jq empty "$POLICY" >/dev/null 2>&1 || fail "codex/model-policy.json is not valid
 python3 "$REPO/scripts/render_codex_agents.py" --check \
   || fail "generated Codex profiles are stale; run scripts/render_codex_agents.py"
 
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-process-assurance.py process_assurance.py"
+
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent-team-process-assurance.py" || fail "process-assurance adapter failed Python syntax validation"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/process_assurance.py" || fail "process-assurance engine failed Python syntax validation"
 
 check_models() {
   [ -z "${AGENT_WORKFORCE_SKIP_MODEL_CHECK:-}" ] || return 0
