@@ -9,13 +9,42 @@ CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
 usage() {
   cat <<'EOF'
 Usage:
-  bin/agent-workforce-dispatch PROFILE PROMPT...
-  printf '%s' "PROMPT" | bin/agent-workforce-dispatch PROFILE
+  bin/agent-workforce-dispatch [--assurance-session ID] [--assurance-mode MODE] PROFILE PROMPT...
+  printf '%s' "PROMPT" | bin/agent-workforce-dispatch [options] PROFILE
 
 Runs a non-interactive specialist task with the installed model, effort,
 instructions, sandbox, and policy hook for PROFILE. The task fails if its final
 message omits the exact WORKFORCE_PROFILE marker.
+
+MODE is OFF, SHADOW, or ENFORCE and defaults to
+AGENT_TEAM_PROCESS_ASSURANCE_MODE or OFF. SHADOW/ENFORCE require one stable
+--assurance-session for every phase in the routed task.
 EOF
+}
+
+ASSURANCE_SESSION="${AGENT_WORKFORCE_ASSURANCE_SESSION:-}"
+ASSURANCE_MODE="${AGENT_TEAM_PROCESS_ASSURANCE_MODE:-OFF}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --assurance-session)
+      [ "$#" -ge 2 ] || { printf '%s\n' 'agent-workforce-dispatch: --assurance-session requires an ID' >&2; exit 1; }
+      ASSURANCE_SESSION="$2"; shift 2
+      ;;
+    --assurance-mode)
+      [ "$#" -ge 2 ] || { printf '%s\n' 'agent-workforce-dispatch: --assurance-mode requires OFF, SHADOW, or ENFORCE' >&2; exit 1; }
+      ASSURANCE_MODE="$2"; shift 2
+      ;;
+    --) shift; break ;;
+    -*) printf 'agent-workforce-dispatch: unknown option: %s\n' "$1" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+
+ASSURANCE_MODE="$(printf '%s' "$ASSURANCE_MODE" | tr '[:lower:]' '[:upper:]')"
+case "$ASSURANCE_MODE" in OFF|SHADOW|ENFORCE) ;; *) printf 'agent-workforce-dispatch: invalid assurance mode: %s\n' "$ASSURANCE_MODE" >&2; exit 1 ;; esac
+[ "$ASSURANCE_MODE" = "OFF" ] || [ -n "$ASSURANCE_SESSION" ] || {
+  printf 'agent-workforce-dispatch: %s requires --assurance-session\n' "$ASSURANCE_MODE" >&2
+  exit 1
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -61,6 +90,14 @@ fi
   exit 1
 }
 
+ASSURANCE_STATE="${AGENT_TEAM_PROCESS_ASSURANCE_STATE:-$CODEX_DIR/agent-workforce/process-assurance}"
+run_assurance() { # command, payload
+  [ "$ASSURANCE_MODE" = "OFF" ] && return 0
+  printf '%s' "$2" | AGENT_TEAM_PROCESS_ASSURANCE_MODE="$ASSURANCE_MODE" \
+    AGENT_TEAM_PROCESS_ASSURANCE_STATE="$ASSURANCE_STATE" \
+    python3 "$REPO/hooks/agent-team-process-assurance.py" "$1"
+}
+
 RESULT="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-dispatch.XXXXXX")"
 PREFLIGHT_RESULT="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-preflight-result.XXXXXX")"
 PREFLIGHT_AUDIT="$(mktemp "${TMPDIR:-/tmp}/agent-workforce-preflight-audit.XXXXXX")"
@@ -94,6 +131,15 @@ grep -q "role=$ROLE tool= decision=allow" "$PREFLIGHT_AUDIT" || {
   exit 1
 }
 
+DISPATCH_PAYLOAD="$(jq -cn \
+  --arg session "$ASSURANCE_SESSION" --arg role "$ROLE" --arg prompt "$PROMPT" --arg cwd "$PWD" \
+  '{session_id:$session,cwd:$cwd,tool_name:"Agent",tool_input:{subagent_type:$role,prompt:$prompt}}')"
+ASSURANCE_OUTPUT="$(run_assurance dispatch "$DISPATCH_PAYLOAD")" || exit $?
+if [ -n "$ASSURANCE_OUTPUT" ]; then
+  UPDATED_PROMPT="$(printf '%s' "$ASSURANCE_OUTPUT" | jq -r '.hookSpecificOutput.updatedInput.prompt // empty')"
+  [ -z "$UPDATED_PROMPT" ] || PROMPT="$UPDATED_PROMPT"
+fi
+
 "$CODEX" exec --profile "$PROFILE" -C "$PWD" --output-last-message "$RESULT" "$PROMPT"
 rc=$?
 [ "$rc" -eq 0 ] || exit "$rc"
@@ -102,3 +148,10 @@ grep -qF "$MARKER" "$RESULT" || {
   printf 'agent-workforce-dispatch: profile marker missing or mismatched; expected:\n%s\n' "$MARKER" >&2
   exit 1
 }
+
+# A process-audit reviewer result is admitted only through the strict
+# WORKFORCE_PROCESS_AUDIT_RESULT: marker parsed by the common state owner.
+STOP_PAYLOAD="$(jq -cn \
+  --arg session "$ASSURANCE_SESSION" --arg role "$ROLE" --rawfile message "$RESULT" \
+  '{session_id:$session,agent_type:$role,last_assistant_message:$message}')"
+run_assurance subagent-stop "$STOP_PAYLOAD" || exit $?
