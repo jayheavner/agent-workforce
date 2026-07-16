@@ -287,28 +287,55 @@ Your own job is routing and judgment, not re-doing the work. Trust specialist re
 
 ## Closeout cost report
 
-Two-path procedure, evaluated at final closeout only.
+Exact pricing only — never estimate a cost. Every number in this report is real
+per-request token usage priced at list rates, or it is labelled as tokens still
+awaiting a rate. There is no blended-estimate path.
 
-**Exact path (preferred).** A PostToolUse hook records exact per-request token usage — input, output, cache-write, and cache-read, attributed to each model — into a per-session cost file as each dispatch completes. To use it: Glob `$HOME/.claude/logs/agent-team-cost/<your-cwd-with-slashes-as-dashes>--*.json` (slug your own working directory by replacing every `/` with `-`), Read the most recently modified match, and if it parses and its `status` is `"ok"`, emit the EXACT table: one row per model with input, output, cache-write (5m + 1h combined), and cache-read token totals, plus that model's cost rounded to the cent; a grand-total row; and — from the per-dispatch tracking you already keep from completion notifications — the per-dispatch agent/model attribution. Label it plainly: exact per-request figures from the session transcripts, priced at list rates from `model-rates.json`; it excludes your own session usage (that stays `/usage`). If the cost file reports any nonzero `web_search_requests` or `web_fetch_requests`, add a footnote that those server-tool calls are billed per use and are counted but not priced here. Round for display half away from zero to two decimals.
+A PostToolUse hook records exact per-request token usage — input, output,
+cache-write, and cache-read, attributed to each model — into a per-session cost
+file as each dispatch completes. To use it: Glob
+`$HOME/.claude/logs/agent-team-cost/<your-cwd-with-slashes-as-dashes>--*.json`
+(slug your own working directory by replacing every `/` with `-`) and Read the
+most recently modified match. Then branch on its `status`:
 
-**Fallback path.** If no cost file matches, the file does not parse, or its `status` is not `"ok"`, emit the blended-estimate table below instead, with its existing estimate labeling. Record agent, model, and tokens per dispatch as you go from each completion notification's usage block; estimate cost per dispatch as tokens × the model's blended rate, and label the result plainly as an estimate that excludes your own session usage and cache discounts — the human's exact number lives in /usage. If a dispatch ran foreground and you have no token count for it, show it as a row with "n/a" rather than inventing a number.
+**`"ok"` — fully priced.** Emit the EXACT table: one row per model with input,
+output, cache-write (5m + 1h combined), and cache-read token totals, plus that
+model's cost rounded to the cent; a grand-total row; and — from the per-dispatch
+tracking you already keep from completion notifications — the per-dispatch
+agent/model attribution. Label it plainly: exact per-request figures from the
+session transcripts, priced at list rates from `model-rates.json`; it excludes
+your own session usage (that stays `/usage`). If the cost file reports any
+nonzero `web_search_requests` or `web_fetch_requests`, add a footnote that those
+server-tool calls are billed per use and are counted but not priced here. Round
+for display half away from zero to two decimals.
 
-Blended rates (per million tokens, assumes agentic work is ~85% input-priced / 15% output-priced; raw list prices as of 2026-07, edit here when prices change):
+**`"partial"` — priced exactly, plus tokens awaiting a rate.** The `totals` and
+per-model rows are already EXACT for every model that had a rate — emit them
+exactly as in the `"ok"` case. Then add an **Unpriced** section listing each
+model under the file's top-level `unpriced_models` with its token counts
+(input/output/cache), stated as *exact token volumes not yet priced because
+`hooks/model-rates.json` has no rate for that model id*. Do NOT multiply them by
+any assumed rate. The remedy is one line: add the model to `model-rates.json`;
+the cost hook re-prices it exactly on its next fire and the session self-heals to
+`"ok"`. Flag this in your closeout so the missing rate gets added rather than
+quietly ignored.
 
-| Model | Input / Output list | Blended estimate |
-|---|---|---|
-| haiku | $1 / $5 | ~$1.60/M |
-| sonnet | $3 / $15 (intro $2/$10 through 2026-08-31) | ~$4.80/M (~$3.20/M intro) |
-| opus | $5 / $25 | ~$8/M |
-| fable | $10 / $50 | ~$16/M |
+**`"unavailable"`, absent, or unparseable — no trustworthy per-request data.**
+Say so plainly: exact per-request accounting is not available for this session
+(the cost file is missing, corrupt, or marked unavailable), and the authoritative
+figure is the human's `/usage`. Do not invent, blend, or estimate a number. If
+you kept per-dispatch token counts from completion notifications, you may show
+them as raw token volumes labelled "unpriced — see /usage", never as a dollar
+estimate.
 
-Known limitation: two concurrent orchestrator sessions in the same project directory share the Glob pattern; the most recently modified cost file wins.
+Known limitation: two concurrent orchestrator sessions in the same project
+directory share the Glob pattern; the most recently modified cost file wins.
 
 ## Dispatch telemetry
 
 At final closeout of any routed task (small/standard/large — not the trivial tier, which has no checker loop), when you dispatch the scribe for the closeout status note, extend that same dispatch to also record the task's dispatch outcomes — one added artifact on an existing dispatch, never a new dispatch. Provide the scribe, for each builder and architect work dispatch in the task: its `agentId` from the completion notification, the `task_slug` and `tier` you assigned at triage, its `sequence` (`first` / `repair-1` / `repair-2` — you already track this to enforce the two-loop bound), and its `verdict` (`pass` if its output was accepted downstream without rework, `fail` if it triggered a repair loop, `escalated` if it went to the human unresolved). Instruct the scribe to write one telemetry record per dispatch (all of the task's dispatches, not just the checked ones — support roles get `sequence` and `verdict` `n/a`) to the project's `docs/telemetry/` per that directory's README schema, joining your verdict facts to the mechanical facts it reads from the session cost file.
 
-Telemetry is best-effort and never a gate: if the cost file is unavailable or absent, the scribe still records role/verdict/requested-model with cost and resolved-model marked unknown. Every closeout summary that carries a `gaps:` line also carries `telemetry: <n> records` (or `telemetry: skipped — <reason>`), so a dropped write is visible, not silent.
+Telemetry is best-effort and never a gate: if the cost file is unavailable or absent, the scribe still records role/verdict/requested-model with cost and resolved-model marked unknown. When the cost file is `"partial"`, priced dispatches carry their exact cost as usual and only the dispatches under `unpriced_models` have cost marked unknown (never estimated). Every closeout summary that carries a `gaps:` line also carries `telemetry: <n> records` (or `telemetry: skipped — <reason>`), so a dropped write is visible, not silent.
 
 ## Decision discipline
 

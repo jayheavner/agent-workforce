@@ -153,12 +153,58 @@ run_hook "$(payload "$MAL_CWD" "$MAL_TP" "$SID" cccc3333 researcher)"
 [ "$(jq -r '.status' "$MAL_CF")" = "unavailable" ] && ok || no "malformed -> status unavailable"
 [ -n "$(jq -r '.unavailable_reason // empty' "$MAL_CF")" ] && ok || no "malformed -> has a reason"
 
+# An unpriceable model is NOT session-fatal: the record's tokens are trustworthy,
+# only its rate is missing. status:"partial", the model's tokens are preserved
+# under unpriced_models (no cost invented), and NOTHING is estimated.
 UNK_TP="$FIXROOT/unknown/$SID.jsonl"
 UNK_CWD="/fake/unk"; UNK_SLUG="-fake-unk"
 UNK_CF="$(costfile_for "$UNK_CWD" "$UNK_SLUG" "$SID")"
 run_hook "$(payload "$UNK_CWD" "$UNK_TP" "$SID" dddd4444 verifier)"
 [ "$RC" -eq 0 ] && ok || no "unknown-model fire exits 0"
-[ "$(jq -r '.status' "$UNK_CF")" = "unavailable" ] && ok || no "unknown-model -> status unavailable"
+[ "$(jq -r '.status' "$UNK_CF")" = "partial" ] && ok || no "unknown-model -> status partial (not unavailable)"
+[ "$(jq -r '.unpriced_models."claude-nonexistent-9".input_tokens' "$UNK_CF")" = "100" ] && ok || no "unpriced model tokens preserved at session level"
+[ "$(jq -r '.unpriced_models."claude-nonexistent-9".output_tokens' "$UNK_CF")" = "10" ] && ok || no "unpriced model output tokens preserved"
+[ "$(jq -r '.dispatches.dddd4444.unpriced_models."claude-nonexistent-9".input_tokens' "$UNK_CF")" = "100" ] && ok || no "unpriced tokens preserved on the dispatch entry"
+[ "$(jq -r '.dispatches.dddd4444.models | length' "$UNK_CF")" = "0" ] && ok || no "unpriceable dispatch has no priced models"
+[ "$(jq -r '.totals.cost_usd' "$UNK_CF")" = "0" ] && ok || no "no cost invented for unpriced model"
+[ "$(jq -e '.dispatches.dddd4444.unpriced_models | has("cost_usd") | not' "$UNK_CF" >/dev/null 2>&1; echo $?)" = "0" ] && ok || no "unpriced entry carries NO cost field (no estimate)"
+
+# Fail-open: an unpriceable dispatch beside priceable ones leaves the priceable
+# ones EXACTLY priced (they are not blocked), and the session is partial.
+FO="$SCRATCH/failopen"
+mkdir -p "$FO/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$FO/$SID.jsonl"
+# good opus dispatch: input 1000, out 100, no cache -> (1000*5 + 100*25)/1e6 = 0.0075
+cat > "$FO/$SID/subagents/agent-good1111.jsonl" <<'EOF'
+{"type":"assistant","isSidechain":true,"agentId":"good1111","requestId":"req_G1","uuid":"g1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-opus-4-8","id":"msg_G1","type":"message","role":"assistant","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":100}}}
+EOF
+# unpriceable dispatch
+cat > "$FO/$SID/subagents/agent-badd2222.jsonl" <<'EOF'
+{"type":"assistant","isSidechain":true,"agentId":"badd2222","requestId":"req_B1","uuid":"b1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-madeup-42","id":"msg_B1","type":"message","role":"assistant","usage":{"input_tokens":500,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":50}}}
+EOF
+FO_CWD="/fake/fo"; FO_SLUG="-fake-fo"
+FO_CF="$(costfile_for "$FO_CWD" "$FO_SLUG" "$SID")"
+run_hook "$(payload "$FO_CWD" "$FO/$SID.jsonl" "$SID" good1111 architect)"
+[ "$(jq -r '.status' "$FO_CF")" = "partial" ] && ok || no "fail-open: mixed session is partial"
+[ "$(jq -r '.dispatches.good1111.models."claude-opus-4-8".cost_usd' "$FO_CF")" = "0.0075" ] && ok || no "fail-open: priceable sibling still exact 0.0075"
+[ "$(jq -r '.totals.cost_usd' "$FO_CF")" = "0.0075" ] && ok || no "fail-open: totals count only exactly-priced tokens"
+[ "$(jq -r '.unpriced_models."claude-madeup-42".input_tokens' "$FO_CF")" = "500" ] && ok || no "fail-open: unpriced model surfaced with its tokens"
+
+# Self-heal: add the missing rate; a later fire re-prices it EXACTLY -> status ok.
+HEAL_RATES="$SCRATCH/heal-rates.json"
+jq '.models."claude-madeup-42" = {input:5.00,output:25.00,cache_write_5m:6.25,cache_write_1h:10.00,cache_read:0.50}' \
+  "$REPO/hooks/model-rates.json" > "$HEAL_RATES"
+export AGENT_TEAM_RATES="$HEAL_RATES"
+run_hook "$(payload "$FO_CWD" "$FO/$SID.jsonl" "$SID" good1111 architect)"
+export AGENT_TEAM_RATES="$REPO/hooks/model-rates.json"
+[ "$(jq -r '.status' "$FO_CF")" = "ok" ] && ok || no "self-heal: partial re-prices to ok once rate added"
+[ "$(jq -e 'has("unpriced_models") | not' "$FO_CF" >/dev/null 2>&1; echo $?)" = "0" ] && ok || no "self-heal: unpriced_models cleared after healing"
+# madeup-42: (500*5 + 50*25)/1e6 = 3750/1e6 = 0.00375 ; grand = 0.0075 + 0.00375 = 0.01125
+[ "$(jq -r '.dispatches.badd2222.models."claude-madeup-42".cost_usd' "$FO_CF")" = "0.00375" ] && ok || no "self-heal: healed model prices to 0.00375"
+[ "$(jq -r '.totals.cost_usd' "$FO_CF")" = "0.01125" ] && ok || no "self-heal: grand total now 0.01125"
+
+# Partial is NOT sticky (unlike unavailable): a later fire can improve it (shown above).
+# Genuine corruption remains sticky-unavailable (covered by the mid-bad test below).
 
 # Sticky: after malformed, a fire over the GOOD tree at the SAME cost file stays unavailable.
 run_hook "$(payload "$MAL_CWD" "$GOOD_TP" "$SID" aaaa1111 architect)"
@@ -189,6 +235,25 @@ run_hook "$(payload "$WT_CWD" "$WT/$SID.jsonl" "$SID" ffff6666 researcher)"
 [ "$(jq -r '.totals.web_fetch_requests' "$WT_CF")" = "2" ] && ok || no "web_fetch_requests carried = 2"
 # cost is token-only: (100*5 + 10*25)/1e6 = 750/1e6 = 0.00075, unaffected by web counts
 [ "$(jq -r '.totals.cost_usd' "$WT_CF")" = "0.00075" ] && ok || no "web-tool request cost is token-only 0.00075"
+
+# --- Dated model IDs resolve to their priced family (rates table = source of truth) ---
+# A real usage record carries the dated release id (e.g. claude-haiku-4-5-20251001).
+# It must price against, and aggregate under, the un-dated rates key claude-haiku-4-5.
+DATED="$SCRATCH/dated"
+mkdir -p "$DATED/$SID/subagents"
+printf '%s\n' '{"type":"user"}' > "$DATED/$SID.jsonl"
+cat > "$DATED/$SID/subagents/agent-hhhh7777.jsonl" <<'EOF'
+{"type":"assistant","isSidechain":true,"agentId":"hhhh7777","requestId":"req_H1","uuid":"h1","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-07-08T10:00:00.000Z","message":{"model":"claude-haiku-4-5-20251001","id":"msg_H1","type":"message","role":"assistant","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":100}}}
+EOF
+DATED_CWD="/fake/dated"; DATED_SLUG="-fake-dated"
+DATED_CF="$(costfile_for "$DATED_CWD" "$DATED_SLUG" "$SID")"
+run_hook "$(payload "$DATED_CWD" "$DATED/$SID.jsonl" "$SID" hhhh7777 researcher)"
+[ "$RC" -eq 0 ] && ok || no "dated model fire exits 0"
+[ "$(jq -r '.status' "$DATED_CF")" = "ok" ] && ok || no "dated model prices ok (not 'model not in rates config')"
+# Aggregated under the canonical key, NOT the dated id.
+[ "$(jq -r '.dispatches.hhhh7777.models | keys | join(",")' "$DATED_CF")" = "claude-haiku-4-5" ] && ok || no "dated id aggregates under canonical claude-haiku-4-5"
+# cost = (1000*1.00 + 100*5.00)/1e6 = 0.0015
+[ "$(jq -r '.dispatches.hhhh7777.models."claude-haiku-4-5".cost_usd' "$DATED_CF")" = "0.0015" ] && ok || no "dated haiku prices to 0.0015 under canonical key"
 
 # --- Task 14: transient partial-read is skipped, not sticky (Amendment 2026-07-09) ---
 PART_TP="$FIXROOT/partial/$SID.jsonl"
