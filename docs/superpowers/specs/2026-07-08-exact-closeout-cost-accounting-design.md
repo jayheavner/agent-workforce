@@ -17,6 +17,42 @@
 > pick up once flushing completes. This amendment also folds in three review nits, noted inline in
 > Components 1, 5, and 6. No redesign; the two-path fallback, dedup, pricing, and schema are
 > unchanged.
+
+> **Amendment 2026-07-16 (exact-pricing-only: model-family resolution, fail-open per-record,
+> estimate fallback retired).** Field report: one dispatch recorded a dated model id
+> (`claude-haiku-4-5-20251001`) while `model-rates.json` keys are bare (`claude-haiku-4-5`). The
+> exact-string lookup missed, the hook wrote sticky `"unavailable"`, and a single unpriceable
+> record blocked exact accounting for all 32 dispatches in the session (31 priceable) — silently
+> degrading to the blended estimate, which undercounted by >2x because it ignores cache-read
+> volume. The directive from that report is **exact pricing only, never estimate**. Three changes,
+> all implemented in `hooks/agent-team-cost.sh` (see Component 1 step 5 and the schema section):
+>
+> 1. **Model-family resolution.** Before lookup, each recorded model id is resolved to its priced
+>    family: the rates table is the sole authority, and an id matches a key `K` when it equals `K`
+>    or begins with `K-` (longest match wins). Dated/variant releases (`…-YYYYMMDD`, `[1m]`) price
+>    the day they ship with no code change; the only maintenance is adding a genuinely new family
+>    as a one-line rates edit. No assumption is made about suffix shape.
+>
+> 2. **Fail-open per-record (new `"partial"` status).** An unpriceable model is no longer session-
+>    fatal — its token counts are trustworthy, only its rate is missing. The hook prices every
+>    priceable request EXACTLY and tallies the rest under a top-level and per-dispatch
+>    `unpriced_models` block (token counts only, deliberately no cost field — nothing is estimated).
+>    A session with any unpriced model is `"partial"`: `dispatches`/`totals` are present and exact
+>    for the priced portion. `"partial"` is NOT sticky and its dispatch entries carrying
+>    `unpriced_models` are re-parsed each fire, so adding the missing rate self-heals the session to
+>    `"ok"` with exact pricing. This extends the same "one bad record must not poison the whole
+>    session" principle the 2026-07-09 amendment applied to transient partial reads. Genuine
+>    structural corruption (unparseable line, malformed shape, dedup/split mismatch) is unchanged:
+>    it still writes sticky `"unavailable"`, because there the token numbers themselves cannot be
+>    trusted — that is a data-integrity failure, not a missing-rate one.
+>
+> 3. **Estimate fallback retired.** The Problem statement and §40–41 below describe a load-bearing
+>    blended-estimate fallback in the orchestrator's closeout. That fallback is removed: the closeout
+>    now emits exact pricing for priced models and lists unpriced models as *exact token volumes
+>    awaiting a rate*, and when no trustworthy data exists it points to `/usage` rather than emitting
+>    a blended number. `agents/orchestrator.md` §"Closeout cost report" is rewritten accordingly.
+>    The historical Problem/overview paragraphs below are left intact for context but are superseded
+>    by this amendment wherever they describe estimation as a fallback.
 **Relation to existing spec:** This ships the follow-on that `2026-07-07-ai-agent-team-design.md`
 §Scope explicitly deferred: "exact per-session cost accounting (a transcript-parsing PostToolUse
 hook summing per-request input/output/cache usage — the closeout's estimate table is the shipped
@@ -331,9 +367,11 @@ Behavior per fire (always exits 0, whatever happens):
 > **stdout**, and the scan loop relies on capturing it there (`entry="$(parse_dispatch …)"`). The
 > code is correct; the comment is wrong. Fix the comment to say stdout — do not change the code.
 
-**Unavailable-marker semantics.** On any recognition failure (step 5a–e, excluding the
-transient-partial cases which are skipped not marked — Amendment 2026-07-09 above), on an
-unreadable rates file, or on any internal jq error, the hook writes the cost file as:
+**Unavailable-marker semantics.** On any recognition failure (step 5a–d — note: 5e "model not in
+rates" is NO LONGER a recognition failure as of Amendment 2026-07-16; it is now fail-open `"partial"`
+with `unpriced_models`, not `"unavailable"`; excluding also the transient-partial cases which are
+skipped not marked — Amendment 2026-07-09 above), on an unreadable rates file, or on any internal jq
+error, the hook writes the cost file as:
 
 ```json
 {"version": 1, "session_id": "…", "cwd": "…", "updated_at": "…",
@@ -341,9 +379,14 @@ unreadable rates file, or on any internal jq error, the hook writes the cost fil
  "unavailable_reason": "agent-a1b2….jsonl: unparseable line 17"}
 ```
 
-and exits 0. It never writes partial or guessed numbers, never exits non-zero, and the marker is
-sticky for the session. The orchestrator treats `status != "ok"` — and equally a missing or
-unreadable file — as "no exact data": fall back to the estimate table.
+and exits 0. It never writes guessed numbers, never exits non-zero, and the `"unavailable"` marker is
+sticky for the session. (Amendment 2026-07-16: `"partial"` is a distinct, non-sticky status that DOES
+carry exact numbers for the priceable portion plus `unpriced_models` token counts — it is not covered
+by this "never writes partial numbers" rule, which concerns the corruption path only.) The
+orchestrator treats a missing/unreadable/`"unavailable"` file as "no exact data" and points to
+`/usage`; a `"partial"` file is emitted with its exact priced rows plus an unpriced section. The
+blended-estimate fallback referenced here is retired (Amendment 2026-07-16) — no cost is ever
+estimated.
 
 ### Component 2 — `hooks/model-rates.json` (new)
 
@@ -373,8 +416,11 @@ All prices are USD per million tokens; list prices as of the `as_of` date. Editi
 Schema rules: every model entry must carry all five rate keys (numbers); `intro` is optional and,
 when present, carries `ends` (ISO date) plus the same five keys. `claude-haiku-4-5` is included
 because the orchestrator downshifts researcher/scribe/ticketer/verifier dispatches to Haiku. A
-model missing from this file that appears in a transcript with usage → unavailable marker (spec
-rule 5e), which is the loud-failure path for future model additions.
+model missing from this file that appears in a transcript with usage → **fail-open `"partial"` with
+the model listed under `unpriced_models`** (Amendment 2026-07-16; formerly the `"unavailable"` marker
+via spec rule 5e). This is still the loud, actionable path for future model additions — the closeout
+surfaces the unpriced model and its exact token counts and the remedy is a one-line rates edit that
+self-heals the session to `"ok"` — but it no longer blocks exact pricing of the rest of the session.
 
 ### Component 3 — per-session cost file schema
 
@@ -423,7 +469,49 @@ When `status` is `"unavailable"`, `dispatches`/`totals` are omitted and `unavail
 present (see Component 1). `file_size` is the incremental bookkeeping key; `cost_usd` values are
 unrounded floats.
 
+**Amendment 2026-07-16 — `"partial"` status and `unpriced_models`.** When at least one recorded
+model has no rate, `status` is `"partial"`: `dispatches` and `totals` are present and EXACT for every
+priceable model (identical shape to `"ok"`), and a top-level `unpriced_models` object appears — plus
+a per-dispatch `unpriced_models` on each entry that had an unpriceable model. An `unpriced_models`
+value carries the five token-count keys (`input_tokens`, `output_tokens`, `cache_write_5m_tokens`,
+`cache_write_1h_tokens`, `cache_read_tokens`) and **deliberately no `cost_usd`** — the tokens are
+exact, the price is simply unknown until a rate is added. `"partial"` is not sticky; any entry
+carrying `unpriced_models` is re-parsed each fire so a newly-added rate self-heals to `"ok"`.
+
+```json
+{
+  "version": 1, "session_id": "…", "cwd": "…", "updated_at": "…",
+  "status": "partial",
+  "dispatches": {
+    "dddd4444": {
+      "agent_type": "verifier", "file": "…", "file_size": 512, "requests": 1,
+      "models": {},
+      "unpriced_models": {
+        "claude-nonexistent-9": {
+          "input_tokens": 100, "output_tokens": 10,
+          "cache_write_5m_tokens": 0, "cache_write_1h_tokens": 0, "cache_read_tokens": 0
+        }
+      },
+      "web_search_requests": 0, "web_fetch_requests": 0
+    }
+  },
+  "totals": { "models": {}, "cost_usd": 0, "web_search_requests": 0, "web_fetch_requests": 0 },
+  "unpriced_models": {
+    "claude-nonexistent-9": {
+      "input_tokens": 100, "output_tokens": 10,
+      "cache_write_5m_tokens": 0, "cache_write_1h_tokens": 0, "cache_read_tokens": 0
+    }
+  }
+}
+```
+
 ### Component 4 — orchestrator closeout changes (`agents/orchestrator.md`)
+
+> **Superseded by Amendment 2026-07-16.** The two-path (exact | blended-estimate) procedure below is
+> retired. The closeout is now exact-pricing-only with three branches on `status`: `"ok"` → exact
+> table; `"partial"` → exact table plus an Unpriced section (exact token volumes awaiting a rate, no
+> dollar estimate); `"unavailable"`/absent → point to `/usage`, never estimate. The blended-rate
+> table is removed from `agents/orchestrator.md`. The historical text below is retained for context.
 
 The frontmatter gains the hooks block (Component 1). The "Closeout cost report" section is
 rewritten to a two-path procedure:
