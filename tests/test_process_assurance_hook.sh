@@ -37,8 +37,11 @@ expect_rc 2 ENFORCE dispatch \
   "$(jq -cn '{session_id:"no-charter",tool_name:"Agent",tool_input:{subagent_type:"architect",prompt:"Design"}}')" \
   'ENFORCE rejects a session without a charter'
 
-python3 -m coverage run --source=hooks.process_assurance \
-  -m unittest tests/test_process_assurance.py >/dev/null || {
+(
+  cd "$ROOT" || exit 1
+  python3 -m coverage run --source=hooks.process_assurance \
+    -m unittest discover -s tests -p 'test_process_assurance.py'
+) >/dev/null || {
     printf 'FAIL: process assurance unit tests failed\n'
     exit 1
   }
