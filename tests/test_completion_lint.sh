@@ -84,6 +84,16 @@ else
   bad "PASS output is unchanged — no template appended (output=$PASS_OUTPUT)"
 fi
 
+# T9: gaps must be derived from the ledger; SHIPPABLE requires cost-report.
+expect_block gaps-none-contradicts-ledger.md C5 \
+  "gaps: none contradicts a ledger with a pending/fail/unchecked field"
+expect_block shippable-missing-cost-report.md C6 \
+  "SHIPPABLE receipt without cost-report blocks"
+expect_pass shippable.md \
+  "SHIPPABLE receipt with cost-report passes"
+expect_pass incomplete.md \
+  "NOT SHIPPABLE with pending fields and no cost-report is not newly blocked"
+
 set +e
 CLOSEOUT_JSON="$(bash "$AUDIT" --repo "$ROOT" --format json --completion-report "$FIXTURES/shippable.md" 2>&1)"
 CLOSEOUT_RC=$?

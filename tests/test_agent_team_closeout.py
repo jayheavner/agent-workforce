@@ -42,6 +42,7 @@ SHIPPABLE = """Closeout complete.
 - integration: not applicable
 - deployment: not applicable
 - cleanup: pass — task-created resources removed
+- cost-report: pass — see session cost file
 """
 
 NOT_SHIPPABLE = """Implemented, but an external release action remains blocked.

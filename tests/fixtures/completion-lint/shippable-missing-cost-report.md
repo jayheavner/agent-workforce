@@ -2,6 +2,8 @@
 
 The deployed-service change is complete.
 
+gaps: none
+
 ## Delivery receipt
 
 - delivery-target: deployed-service
@@ -14,4 +16,3 @@ The deployed-service change is complete.
 - integration: pass — production integration check returned 200
 - deployment: pass — release `2026.07.15.1` is live
 - cleanup: not applicable — no task-owned branch or worktree exists
-- cost-report: pass — see `~/.claude/logs/agent-team-cost/repo--session123.json`
