@@ -327,3 +327,41 @@ tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0. `bash
 tests/test_completion_contract.sh` — PASS=21 FAIL=0. No test in the repo pins
 the build-line wording text (grepped, none found), so the prose rewrite has
 no drift risk.
+
+## T15-worktree-hygiene-report
+
+**Preflight:** reviewed `tests/test_dispatch_guard.sh`'s fixture-construction
+style (mktemp-based, self-contained repo setup in `setUp`-equivalent shell)
+and reused the same pattern for the new test's fixture repo.
+
+**Implementation:** `tools/worktree-hygiene.sh <repo>` — no delete path
+exists anywhere in the script (enforced by omission, per the fixed
+invariant). For each `git worktree list --porcelain` entry: computes
+merged-into-main (`git merge-base --is-ancestor`), tree-clean
+(`git status --porcelain`), and last-commit age in days; classifies as
+`candidate` (merged AND clean AND not the current worktree, with its exact
+`git worktree remove <path>` command shown), `keep: current worktree`,
+`keep: unique commits`, or `keep: dirty tree`. Always exits 0. Base branch
+resolution prefers `main`, then `master`, then the current branch (mirrors
+the closeout hook's `_base_branch` logic). `agents/orchestrator.md`'s
+session-start section now runs it via the executor under the Trivial-tier
+rule when 3+ worktrees are registered, surfaces candidates with their exact
+removal command, and states that an environment-breaking artifact is always
+in scope to report regardless of ownership.
+
+**Note:** `git worktree list --porcelain` reports paths through its own
+symlink resolution (`/private/tmp/...` on macOS, not the `/tmp/...` alias) —
+the test fixture had to resolve worktree paths the same way (`cd ... && pwd
+-P`) to match the script's output; this was a test-authoring correction, not
+a script bug (confirmed by inspecting git's own porcelain output directly).
+
+**Verification:** fixture repo with one merged-clean worktree (asserted
+`candidate` with its exact removal command) and one diverged worktree
+(asserted `keep: unique commits`); a read-only invariant check (repo refs and
+worktree list byte-identical before/after the script runs). `bash
+tests/test_worktree_hygiene.sh` — PASS=7 FAIL=0. `shellcheck` not present in
+this environment — recorded per Discretion; `bash -n` syntax check passed.
+Sanity-run against this actual repo (3 registered worktrees) — correct
+output, exit 0, 0 candidates (all three are either current or have unique
+commits). Drift, frontmatter, and completion-contract suites re-verified
+green after the orchestrator.md edit.
