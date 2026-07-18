@@ -196,3 +196,28 @@ tests/test_completion_contract.sh` — PASS=21 FAIL=0; `bash
 tests/test_closeout_audit.sh` — PASS=23 FAIL=0; `bash
 tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0; `bash
 tests/test_agent_frontmatter.sh` — passed=31 failed=0.
+
+## T10-critic-tier-cap
+
+**Preflight:** `grep -n "one tier stronger" agents/orchestrator.md` located the
+rule at line 363 (plan estimated ~355; close enough, same rule). Ran
+`tests/test_decision_discipline_drift.sh` before editing: it pins an unrelated
+`<!-- two-questions:start/end -->` marker block (lines 350–356 in
+orchestrator.md, and corresponding blocks in architect.md/reviewer.md) — no
+overlap with the critic rule at line 363, confirmed by line-range check.
+
+**Implementation:** rewrote the critic-model rule: different model, same tier
+as the architect when a distinct same-tier model exists, else one tier
+weaker; never auto-escalates upward regardless of what the architect ran;
+`fable` is never chosen by rule for the critic (or any dispatch) — it requires
+a one-line stated reason before dispatch. Updated the model table's
+architect/reviewer `fable` upshift cells to read `fable (requires stated
+reason)`, and the Large-tier "consider fable for the reviewer" line to state
+the same requirement. `grep -rn "one tier stronger" agents/*.md` confirmed no
+other agent file pins the old rule text — no escalation needed.
+
+**Verification:** no automated seam for this prose-only task per plan design;
+`bash tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0 (unaffected, as
+predicted). `bash tests/test_agent_frontmatter.sh` — passed=31 failed=0 (model
+pins on agent files themselves untouched). `bash
+tests/test_completion_contract.sh` — PASS=21 FAIL=0.
