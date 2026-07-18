@@ -365,3 +365,35 @@ Sanity-run against this actual repo (3 registered worktrees) — correct
 output, exit 0, 0 candidates (all three are either current or have unique
 commits). Drift, frontmatter, and completion-contract suites re-verified
 green after the orchestrator.md edit.
+
+## T16-telemetry-from-cost-file
+
+**Preflight:** read a real cost file for this project
+(`~/.claude/logs/agent-team-cost/-Users-jay-claude-ai-agent-team--*.json`) —
+confirmed the `dispatches` map's per-entry fields (`agent_type`, `file`,
+`requests`, `models` keyed by model id with token counts + `cost_usd`,
+`web_search_requests`, `web_fetch_requests`) and the top-level `totals`,
+`status`, `version`. `docs/telemetry/README.md` exists and already specifies
+a v1 schema whose `dispatch_id` "joins to the cost file" — the derivation
+intent was already documented; the gap was the orchestrator's path being
+optional ("or the path the orchestrator gives you") and no rule forbidding
+free-typed unavailability.
+
+**Implementation:** `agents/orchestrator.md`'s Dispatch telemetry section now
+states the orchestrator resolves the cost file's exact path itself (same
+Glob pattern as the cost report) and MUST put it in the scribe's dispatch
+prompt — a telemetry dispatch without the resolved path is non-compliant.
+`agents/scribe.md` drops the optional-fallback wording ("default directory...
+or the path the orchestrator gives you") in favor of requiring the resolved
+path from the prompt, and forbids writing "cost file unavailable" without
+having read that path first.
+
+**Schema cross-check:** `jq` over the sampled cost file confirmed every
+dispatch used exactly one model (`max` model-key count = 1), consistent with
+the README's singular `resolved_model`/`tokens`/`cost_usd` fields — no schema
+gap to report per the task's Escalation clause.
+
+**Verification:** contract-text review (no automated seam per plan design).
+`bash tests/test_agent_frontmatter.sh` — passed=31 failed=0. `bash
+tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0. `bash
+tests/test_completion_contract.sh` — PASS=21 FAIL=0.
