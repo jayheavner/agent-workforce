@@ -74,6 +74,7 @@ COMPLETION_PATTERNS = (
     re.compile(r"\bmarking\s+(?:the\s+)?work\s+complete\b", re.IGNORECASE),
     re.compile(r"\bfinal gate\b.*\b(?:complete|completed|done)\b", re.IGNORECASE),
 )
+GAPS_NONE = re.compile(r"^\s*gaps:\s*none\s*$", re.IGNORECASE)
 UNFINISHED_PATTERNS = (
     re.compile(r"\bnot\s+deployed\b", re.IGNORECASE),
     re.compile(r"\bdeploy(?:ment)?\s+is\s+not\s+done\b", re.IGNORECASE),
@@ -163,6 +164,19 @@ def lint(path: Path, require_receipt: bool, require_shippable: bool) -> list[tup
         for field in ("integration", "deployment"):
             if status(entries.get(field, "")) == "not applicable":
                 blocks.append(("C4", f"deployed-service cannot mark {field}: not applicable"))
+
+    unresolved_ledger_fields = [
+        field for field in LEDGER_FIELDS if status(entries.get(field, "")) in {"fail", "pending", "unchecked"}
+    ]
+    if unresolved_ledger_fields and any(GAPS_NONE.match(line) for line in lines):
+        blocks.append((
+            "C5",
+            "gaps must be derived from the ledger: gaps: none contradicts unresolved fields "
+            + ", ".join(unresolved_ledger_fields),
+        ))
+
+    if verdict == "SHIPPABLE" and status(entries.get("cost-report", "")) is None:
+        blocks.append(("C6", "SHIPPABLE receipt is missing cost-report"))
 
     return blocks
 

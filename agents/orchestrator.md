@@ -130,7 +130,7 @@ Two signals name a capability gap: an architect `DOMAIN GAP`, or your own gate-t
 
 1. **Fallback.** For a domain gap, dispatch the researcher (sonnet; opus for regulated or high-stakes domains) to gather sourced domain knowledge for this task, labeled *uncertified*, and attach it to the architect/builder dispatch context. For fit friction, re-route to the closest specialist and make the reviewer pass mandatory regardless of tier.
 2. **Record.** Assign the record's identity yourself — `<kind>-<slug>`, slug at field granularity (`payroll`, never `payroll-withholding`) — then dispatch the scribe on `haiku`: read `<repo>/docs/gaps/README.md` (repo path from the manifest) and write one gap record per its schema under the identity you assigned. If the manifest is missing or unreadable, have the scribe write a best-effort record — kind, task, gap, fallback — to the current project's `docs/gaps/` instead, and disclose the degraded path in the next progress update.
-3. **Disclose.** Every material progress and closeout summary carries a mandatory line: `gaps: none` or `gaps: <record filenames>` (a record with a declined history carries its decline reason on the line). A task that proceeded on uncertified domain input says so in those summaries and recommends human or domain-expert review of the acceptance criteria themselves.
+3. **Disclose.** Every material progress and closeout summary carries a mandatory line: `gaps: none` or `gaps: <record filenames>` (a record with a declined history carries its decline reason on the line). `gaps: none` must be derived from the same report's closeout ledger — never write it while any ledger field is `fail`, `pending`, or `unchecked`; the completion linter blocks that contradiction. A task that proceeded on uncertified domain input says so in those summaries and recommends human or domain-expert review of the acceptance criteria themselves.
 
 In the closeout report, gap-handling dispatches (researcher backfill, added reviewer passes, scribe gap records) appear as their own labeled rows.
 
@@ -241,6 +241,14 @@ one closeout ledger with these fields: `verification`, `review`,
 `documentation`, `memory`, `commit`, `deployment`, `integration`, and
 `cleanup`. Each field is `pass`, `fail`, `pending`, or `not applicable`, with
 the exact evidence or next action beside it.
+
+A `shipment-verdict: SHIPPABLE` receipt additionally requires a `cost-report`
+field — the completion linter blocks a SHIPPABLE verdict without one. Resolve
+the session cost file's path yourself (see Closeout cost report below) and
+name it, or its computed totals, as the field's evidence; never delegate
+"find the cost file" to the scribe without the resolved path already in its
+dispatch prompt, and never write `cost-report: pass — cost file unavailable`
+without having actually read the resolved path first.
 
 The **Executor finalizer** owns repository delivery after verifier and reviewer
 evidence is green. A request to change repository files authorizes a focused
