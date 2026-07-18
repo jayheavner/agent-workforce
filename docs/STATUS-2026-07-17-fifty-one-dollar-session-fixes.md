@@ -433,7 +433,35 @@ test_process_assurance_integration, test_scoreboard, test_secrets_hook,
 test_worktree_hygiene (7/7), and `python3 tests/test_agent_team_closeout.py`
 (26/26) — all exit 0.
 
-**Not yet done (blocked on `gh` auth):** merge to main, `bash install.sh`
-run from main, post-install `install.sh --check` clean confirmation, and the
-fresh consumer-project session banner observation. These remain T17's open
-items until the human resolves GitHub authentication.
+**Pre-merge `install.sh --check` (this worktree, all commits through the
+codex-profile fix):**
+```
+check: STALE — repo agents/deployer.md changed since the last install; re-run install
+check: STALE — repo agents/ops.md changed since the last install; re-run install
+check: STALE — repo agents/orchestrator.md changed since the last install; re-run install
+check: STALE — repo agents/scribe.md changed since the last install; re-run install
+check: STALE — repo agents/verifier.md changed since the last install; re-run install
+check: STALE — repo hooks/agent-team-cost.sh changed since the last install; re-run install
+check: STALE — repo hooks/agent-team-dispatch-guard.sh changed since the last install; re-run install
+check: DRIFT — /Users/jay/.claude/hooks/agent_team_closeout.py differs from the last install (hand-edited under ~/.claude/?)
+check: STALE — repo hooks/agent_team_closeout.py changed since the last install; re-run install
+check: STALE — repo tools/lint_completion_claims.py changed since the last install; re-run install
+check: FAIL — drift detected (lines above). Reconcile any hand edits back into the repo, then re-run 'bash install.sh'
+```
+Every STALE line names exactly a file this plan modified (T5–T16); expected
+pre-install state, not a new problem. The DRIFT line is fact 2's pre-existing
+condition. Both clear once `bash install.sh` runs from main.
+
+**gh auth investigation:** `gh auth status` — `jheavner` active but its
+keyring token is invalid; `jayheavner` also invalid. `gh auth switch -h
+github.com -u jayheavner` fails at the keyring layer itself ("failed to move
+active token in keyring: exit status 161") — a macOS Keychain access issue,
+not a `gh` config problem correctable from this session. Reported to the
+user; no workaround attempted (per standing instruction against trying
+alternate credentials on an unexpected error).
+
+**Not yet done (blocked on `gh`/Keychain auth):** merge to main, `bash
+install.sh` run from main, post-install `install.sh --check` clean
+confirmation, and the fresh consumer-project session banner observation.
+These remain T17's open items until the human resolves GitHub/Keychain
+authentication.
