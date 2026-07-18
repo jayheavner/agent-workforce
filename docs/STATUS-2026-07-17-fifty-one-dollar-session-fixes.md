@@ -113,3 +113,29 @@ serialized dispatch in flight allows). `bash tests/test_dispatch_guard.sh` —
 PASS=37 FAIL=0. Full closeout suite, drift test, and frontmatter test
 re-verified green (orchestrator.md touched again). `shellcheck` not present
 in this environment — recorded per Discretion; `bash -n` syntax check passed.
+
+## T7-truthful-baseline-attribution
+
+**Preflight:** read the T4-reconciled restore logic — T4 rejected the
+blob/restore-hint mechanism entirely, so there was no restore logic to build
+on; this task starts from the plain baseline-diff message at (pre-edit) line
+378.
+
+**Implementation:** the uncommitted-changes block message in `_stop` no
+longer contains the literal string "Task-owned". Changed paths are split into
+`residue` (present in `baseline_dirty`) — labeled "changed since the session
+baseline (this hook cannot attribute which process wrote them)" — and
+`created` (absent from baseline) — labeled "created during this session —
+verify origin before committing". The commit-the-delta instruction is
+unchanged; only the false attribution is gone. `agents/orchestrator.md` gains
+a rule forbidding inferring file ownership from hook wording.
+
+**Verification:** 2 new red→green tests
+(`test_stop_never_attributes_ownership_it_cannot_know`,
+`test_stop_labels_new_file_as_created_this_session_not_task_owned`) plus one
+pre-existing test's case-sensitive assertion corrected for the new wording.
+`python3 tests/test_agent_team_closeout.py` — 26 tests, green.
+`bash tests/test_closeout_hook.sh` — 26 tests green, 90% coverage.
+`bash tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0.
+`bash tests/test_agent_frontmatter.sh` — passed=31 failed=0.
+`grep -c "Task-owned" hooks/agent_team_closeout.py` — 0 (acceptance grep met).
