@@ -51,6 +51,39 @@ expect_block premature-shippable.md C3 \
 expect_block invalid-na.md C4 \
   "deployed-service cannot mark deployment not applicable"
 
+# T8: every BLOCK run appends one exact fill-in receipt template so an agent
+# never has to guess the format across repeated retries.
+expect_template_once() { # $1 fixture, $2 label
+  local output count
+  set +e
+  output="$(python3 "$LINTER" --require-receipt "$FIXTURES/$1" 2>&1)"
+  set -u
+  count="$(printf '%s' "$output" | grep -cF -e 'Expected receipt format:')"
+  if [ "$count" -eq 1 ] \
+    && printf '%s' "$output" | grep -qF -e '## Delivery receipt' \
+    && printf '%s' "$output" | grep -qF -e '- delivery-target: <artifact|integrated-code|deployed-service>' \
+    && printf '%s' "$output" | grep -qF -e '- shipment-verdict: <SHIPPABLE|NOT SHIPPABLE>' \
+    && printf '%s' "$output" | grep -qF -e '- verification: <pass|fail|pending|unchecked|not applicable> — <evidence>' \
+    && printf '%s' "$output" | grep -qF -e '- cleanup: <pass|fail|pending|unchecked|not applicable> — <evidence>'; then
+    ok
+  else
+    bad "$2 (count=$count; output=$output)"
+  fi
+}
+expect_template_once stopping-short.txt \
+  "BLOCK output appends the exact fill-in receipt template exactly once"
+expect_template_once premature-shippable.md \
+  "BLOCK output appends the template even when a receipt already exists"
+
+set +e
+PASS_OUTPUT="$(python3 "$LINTER" --require-receipt "$FIXTURES/shippable.md" 2>&1)"
+set -u
+if ! printf '%s' "$PASS_OUTPUT" | grep -qF 'Expected receipt format:'; then
+  ok
+else
+  bad "PASS output is unchanged — no template appended (output=$PASS_OUTPUT)"
+fi
+
 set +e
 CLOSEOUT_JSON="$(bash "$AUDIT" --repo "$ROOT" --format json --completion-report "$FIXTURES/shippable.md" 2>&1)"
 CLOSEOUT_RC=$?

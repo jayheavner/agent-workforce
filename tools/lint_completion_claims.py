@@ -51,6 +51,20 @@ LEDGER_FIELDS = (
 )
 VALID_STATUS = {"pass", "fail", "pending", "unchecked", "not applicable"}
 
+RECEIPT_TEMPLATE = "\n".join(
+    [
+        "Expected receipt format:",
+        "## Delivery receipt",
+        "",
+        "- delivery-target: <artifact|integrated-code|deployed-service>",
+        "- shipment-verdict: <SHIPPABLE|NOT SHIPPABLE>",
+        *(
+            f"- {field}: <pass|fail|pending|unchecked|not applicable> — <evidence>"
+            for field in ("verification", "review", "documentation", "memory", "commit", "integration", "deployment", "cleanup")
+        ),
+    ]
+)
+
 COMPLETION_PATTERNS = (
     re.compile(
         r"\b(?:work|task|fix|implementation|change|delivery|shipment)\s+"
@@ -173,6 +187,7 @@ def main() -> int:
     if blocks:
         for rule, message in blocks:
             print(f"{args.report}: BLOCK {rule} {message}")
+        print(RECEIPT_TEMPLATE)
         return 1
 
     print(f"{args.report}: PASS completion claim is consistent with its delivery receipt")
