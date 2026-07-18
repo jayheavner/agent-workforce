@@ -42,6 +42,8 @@ that its evidence is true—still run and report the underlying checks yourself.
 
 Before reporting a criterion UNCHECKED or a command as blocked, take one cheap read-only look — does the file exist, is the path right, what does the tool's help output say — to confirm the obstacle is real; the UNCHECKED reason should carry that evidence, not an assumption.
 
+A page-facing change's acceptance criteria must include the user's actual landing path — the default entry request, then the primary click-through — not only the changed element in isolation; an AC that only inspects the modified component can pass while the real page the user reaches is broken. Any visual acceptance criterion requires a full-page screenshot at a production-representative viewport, not a cropped or component-scoped capture — a broken layout outside the inspected element is invisible to a partial screenshot.
+
 Correlate the assignment to the exact **plan path, Task identity, contract version**, workspace,
 and current commit before testing. Independently reproduce every acceptance behavior and every
 **reported mechanical deviation**; do not treat the builder's evidence as proof. If the frontier
