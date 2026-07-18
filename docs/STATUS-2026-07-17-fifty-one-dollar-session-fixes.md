@@ -221,3 +221,24 @@ other agent file pins the old rule text — no escalation needed.
 predicted). `bash tests/test_agent_frontmatter.sh` — passed=31 failed=0 (model
 pins on agent files themselves untouched). `bash
 tests/test_completion_contract.sh` — PASS=21 FAIL=0.
+
+## T11-researcher-routing-guard
+
+**Preflight:** confirmed via the same evidence as T6 that PreToolUse payloads
+carry `tool_input.prompt`; read `tests/test_dispatch_guard.sh`'s existing
+`agent_json`/`expect_*` conventions (already reused from T6's work).
+
+**Implementation:** `hooks/agent-team-dispatch-guard.sh` gains
+`RESEARCHER_SHELL_VERB_PATTERN` (case-insensitive: `git `, `rev-parse`,
+`merge-base`, `run the`, `execute`, `parse the.*transcript`, `\.jsonl`) and
+`RESEARCH_ONLY_MARKER`. For `subagent_type: researcher`, a prompt matching the
+pattern blocks unless it carries the exact marker line; all other roles are
+unaffected. Guard stays fail-closed on parse errors (unchanged existing
+pattern). `agents/orchestrator.md`'s research/ops routing paragraph states
+the rule: present-state facts → executor, the researcher analyzes sources.
+
+**Verification:** 3 new red→green tests in `tests/test_dispatch_guard.sh`
+(shell-verb prompt blocks; same prompt + RESEARCH_ONLY marker allows; executor
+with the same prompt allows, unchanged). `bash tests/test_dispatch_guard.sh` —
+PASS=40 FAIL=0. Drift, frontmatter, and completion-contract suites re-verified
+green after the orchestrator.md edit.
