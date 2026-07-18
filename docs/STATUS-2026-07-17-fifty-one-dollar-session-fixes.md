@@ -139,3 +139,24 @@ pre-existing test's case-sensitive assertion corrected for the new wording.
 `bash tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0.
 `bash tests/test_agent_frontmatter.sh` — passed=31 failed=0.
 `grep -c "Task-owned" hooks/agent_team_closeout.py` — 0 (acceptance grep met).
+
+## T8-linter-self-describing-blocks
+
+**Implementation:** `tools/lint_completion_claims.py` gains a `RECEIPT_TEMPLATE`
+constant (built from the existing `LEDGER_FIELDS` tuple, so it can never drift
+from the real field list) and `main()` prints it once, after all `BLOCK`
+lines, whenever any block fired. PASS output and existing check
+messages/exit codes are unchanged.
+
+**Note:** this environment's `grep` is aliased to `ugrep`; a literal pattern
+beginning with `-` (e.g. `- delivery-target: ...`) requires `-e` or `--`
+before it or `ugrep` misparses it as an option. Recorded here since it
+affected test-writing, not the linter itself.
+
+**Verification:** 3 new test cases in `tests/test_completion_lint.sh` (template
+appears exactly once on a receipt-less BLOCK, appears once even when a receipt
+already exists, absent entirely from PASS output). `bash
+tests/test_completion_lint.sh` — PASS=10 FAIL=0. `bash
+tests/test_completion_contract.sh` — PASS=21 FAIL=0. `bash
+tests/test_closeout_audit.sh` — PASS=23 FAIL=0 (downstream linter-output
+coupling unaffected).
