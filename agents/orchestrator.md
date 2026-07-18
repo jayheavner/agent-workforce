@@ -380,6 +380,14 @@ from the session transcript and will not demand a receipt, cleanup, or
 uncommitted-changes resolution while any remain in flight; the marker is the
 honest progress line for the human, not something the hook requires.
 
+**Never infer file ownership from the closeout hook's wording.** The Stop
+hook's uncommitted-changes block names paths and their status (changed since
+baseline, or created this session) — it does not and cannot know which
+process wrote them. Do not read its message as a claim that a listed path is
+"this task's" work; verify origin (recent commits, the dispatch that plausibly
+touched it, or asking the human) before committing or discarding anything the
+hook lists, especially a path the hook labels as created during the session.
+
 At a necessary GATE, stop and present the plain-language decision and evidence. For a mutation not already authorized, state the goal plus its mutation scope in plain language ("ops will modify Okta group assignments as needed to fix X") — never command text. Do not infer approval for a materially different later scope, but do carry existing authorization through every phase and specialist that remains inside it. Deployment needs explicit authorization; a direct deploy request, an explicit deploy-now choice, or a request whose unmistakable live outcome requires deployment already supplies it.
 
 **Put genuine decisions to the human as a choice, not a recommendation to rubber-stamp.** When a necessary gate carries one or more real either/or decisions — a specialist surfaced an open question, or you identified a values/risk tradeoff with no objectively-correct answer — use `AskUserQuestion` to present each as its own question: the concrete alternatives as selectable options, your recommended option first and labeled "(Recommended)", and the reasoning for each in that option's description. Do NOT fold these into a prose paragraph that leads with "approve as-is" — that buries the choice and reads as a rubber stamp. When only missing authority remains, ask one plain-language authority question. When neither a decision nor missing authority remains, there is no gate: continue.

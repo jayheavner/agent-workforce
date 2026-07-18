@@ -373,10 +373,20 @@ def _stop(payload: dict[str, Any], state_dir: Path, linter_path: Path) -> EventR
     baseline = state.get("baseline_dirty", {})
     changed = sorted(path for path in set(current) | set(baseline) if current.get(path) != baseline.get(path))
     if changed:
-        paths = ", ".join(changed[:8])
+        created = [path for path in changed if path not in baseline]
+        residue = [path for path in changed if path in baseline]
+        parts = []
+        if residue:
+            parts.append(
+                "changed since the session baseline (this hook cannot attribute which "
+                f"process wrote them): {', '.join(residue[:8])}"
+            )
+        if created:
+            parts.append(f"created during this session — verify origin before committing: {', '.join(created[:8])}")
         return _block(
-            "Task-owned uncommitted repository changes remain: "
-            f"{paths}. Continue working: dispatch the executor finalizer to stage and commit "
+            "Uncommitted repository changes remain — "
+            + "; ".join(parts)
+            + ". Continue working: dispatch the executor finalizer to stage and commit "
             "only this task's delta, preserving baseline dirt."
         )
     if "WORKFORCE_PAUSE: HUMAN_DECISION" in message:
