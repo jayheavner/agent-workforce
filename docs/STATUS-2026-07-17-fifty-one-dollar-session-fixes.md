@@ -273,3 +273,28 @@ far (orchestrator.md, agent-team-cost.sh, agent-team-dispatch-guard.sh,
 agent_team_closeout.py, lint_completion_claims.py), DRIFT still present on
 the hand-edited installed closeout hook (T17's job), no new/unexpected drift
 introduced by the new budgets file itself.
+
+## T13-deploy-ops-verifier-contracts
+
+**Preflight:** read each agent file's existing verification/rollback sections
+to anchor placement; `bash tests/test_agent_frontmatter.sh` baseline —
+passed=31 failed=0 before editing.
+
+**Implementation:** (a) `agents/ops.md` and `agents/deployer.md` each gain a
+MUST-level line: any production DATA mutation (object overwrite, snapshot
+rebuild — not infrastructure config) requires capturing pre-mutation rollback
+identifiers (e.g., S3 version IDs, prior snapshot ARN) before mutating. (b)
+`agents/deployer.md`'s smoke-check step always includes the page's default
+entry request (no parameters, unauthenticated) with an explicit status-class
+rule: 401 proves liveness and auth-gating only, never acceptance evidence;
+404/5xx is broken. (c) `agents/verifier.md` gains two rules: a page-facing
+change's ACs must include the user's landing path (default request, then
+primary click-through), and any visual acceptance criterion requires a
+full-page screenshot at a production-representative viewport, not a cropped
+capture.
+
+**Verification:** `bash tests/test_agent_frontmatter.sh` — passed=31 failed=0
+(unchanged, no frontmatter/model pins touched). Grep checks per rule keyword:
+`rollback identifier` in both ops.md and deployer.md (1 each); `401` in
+deployer.md (1); `full-page screenshot` and `landing path` in verifier.md (1
+each). `bash tests/test_completion_contract.sh` — PASS=21 FAIL=0.
