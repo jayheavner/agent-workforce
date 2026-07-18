@@ -33,6 +33,27 @@ agent_json_with_transcript() { # $1 subagent_type $2 transcript_path $3 prompt
     '{tool_name:"Agent",transcript_path:$tp,tool_input:{subagent_type:$t,prompt:$p}}'
 }
 
+# Build a fixture transcript with N resolved (paired) Agent dispatches, for
+# T12's budget-ratchet ground truth: count = all Agent dispatches, resolved
+# or not, regardless of role.
+write_resolved_dispatches_transcript() { # $1 count -> prints path
+  local count="$1"
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-budget.XXXXXX")"
+  : > "$path"
+  local i=0
+  while [ "$i" -lt "$count" ]; do
+    jq -cn --arg id "toolu_budget_$i" \
+      '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:$id,name:"Agent",input:{subagent_type:"scribe"}}]}}' \
+      >> "$path"
+    jq -cn --arg id "toolu_budget_$i" \
+      '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:$id,content:[{type:"text",text:"done"}]}]}}' \
+      >> "$path"
+    i=$((i + 1))
+  done
+  printf '%s' "$path"
+}
+
 expect() { # $1 expected_rc, $2 json, $3 label
   run "$2"
   if [ "$RC" -eq "$1" ]; then
@@ -117,6 +138,30 @@ expect_allow \
 expect_allow \
   "$(prompt_json executor "verify 8332d6a8 is on origin/main with git merge-base")" \
   "executor + any prompt allows (unchanged)"
+
+# T12: dispatch-count budget ratchet. Default checkpoint 10 (from
+# hooks/agent-team-budgets.json). This is the incoming dispatch: transcript
+# holds N PRIOR dispatches, and the guard evaluates the (N+1)th attempt.
+NINE_PRIOR="$(write_resolved_dispatches_transcript 9)"
+expect_block \
+  "$(agent_json_with_transcript scribe "$NINE_PRIOR" "write the status note")" \
+  "10th dispatch attempt without ack blocks at checkpoint 10"
+
+expect_allow \
+  "$(agent_json_with_transcript scribe "$NINE_PRIOR" "WORKFORCE_BUDGET_ACK: 10 dispatches — continuing because standard-tier route mid-build")" \
+  "10th dispatch attempt with WORKFORCE_BUDGET_ACK allows"
+
+TEN_PRIOR="$(write_resolved_dispatches_transcript 10)"
+expect_allow \
+  "$(agent_json_with_transcript scribe "$TEN_PRIOR" "write the status note")" \
+  "11th dispatch attempt (past the 10th) without ack allows"
+
+EIGHTEEN_PRIOR="$(write_resolved_dispatches_transcript 18)"
+expect_allow \
+  "$(agent_json_with_transcript scribe "$EIGHTEEN_PRIOR" "write the status note")" \
+  "19th dispatch attempt without ack allows (next checkpoint is 20)"
+
+rm -f "$NINE_PRIOR" "$TEN_PRIOR" "$EIGHTEEN_PRIOR"
 
 echo "dispatch-guard tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
