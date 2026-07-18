@@ -298,3 +298,32 @@ capture.
 `rollback identifier` in both ops.md and deployer.md (1 each); `401` in
 deployer.md (1); `full-page screenshot` and `landing path` in verifier.md (1
 each). `bash tests/test_completion_contract.sh` — PASS=21 FAIL=0.
+
+## T14-install-freshness-check
+
+**Preflight:** `jq keys ~/.claude/agent-team-manifest.json` confirmed
+`commit` and `repo` keys exist (plus `files`, `installed_at`,
+`skills_framework_revision`). Confirmed the orchestrator's snapshot-mode tool
+list (line 6) has Read/Glob/Grep only, no Bash — so the mechanism must be
+Read-based, not a `git rev-parse` shell command. Resolved the mechanism: Read
+`<repo>/.git/HEAD` → branch ref name (e.g. `ref: refs/heads/main`), then Read
+`<repo>/.git/refs/heads/<branch>` → the commit SHA directly. Verified this
+matches `git -C <repo> rev-parse HEAD` exactly for the common case (checked
+out branch, loose ref, no packed-refs) — both returned `75c306d3c5...` for
+this repo's main. Both Read-based steps resolved cleanly; no escalation to
+the fallback (`install.sh --check` recommendation) was needed.
+
+**Implementation:** `agents/orchestrator.md`'s session-start section (line
+42 region) gains the freshness check for snapshot mode only (live plugin mode
+runs the checkout directly, so it's exempt): read-only, never blocks startup;
+an unreadable ref (packed, detached HEAD) skips the check rather than
+guessing. On mismatch, the build line gains `— BEHIND framework HEAD
+<short-sha>; run bash install.sh`.
+
+**Verification:** no automated seam per plan design — verification is this
+preflight's SHA-match confirmation plus the T17 walkthrough. `bash
+tests/test_agent_frontmatter.sh` — passed=31 failed=0. `bash
+tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0. `bash
+tests/test_completion_contract.sh` — PASS=21 FAIL=0. No test in the repo pins
+the build-line wording text (grepped, none found), so the prose rewrite has
+no drift risk.
