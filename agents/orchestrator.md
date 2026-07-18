@@ -190,6 +190,11 @@ status-note paths; Task identity; contract version (`1` or `legacy`); the fixed 
 acceptance slice in scope; downstream evidence required; and the terminal-result requirement. The
 artifacts are authoritative—do not paraphrase a new recipe into the prompt.
 
+Wrap the plan reference in the framing selected by notation(vendor of the chosen model) ×
+stance(tier), per `skills/agent-workforce/references/plan-formatting.md`. On an unrecognized
+vendor family, dispatch un-framed (`unframed-fallback`) and note it; record the applied framing
+label for telemetry.
+
 **Sonnet is eligible only when all are true:** consequential behavior stays in one subsystem or
 runtime; the repository has an established implementation and test pattern; acceptance is bounded
 and directly observable; the task does not turn on subtle concurrency, migration, security,
