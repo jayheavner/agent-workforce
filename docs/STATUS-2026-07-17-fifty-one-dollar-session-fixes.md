@@ -160,3 +160,39 @@ tests/test_completion_lint.sh` — PASS=10 FAIL=0. `bash
 tests/test_completion_contract.sh` — PASS=21 FAIL=0. `bash
 tests/test_closeout_audit.sh` — PASS=23 FAIL=0 (downstream linter-output
 coupling unaffected).
+
+## T9-derived-gaps-and-cost-report
+
+**Preflight:** "the same report" scope is the whole report's `lines` list (a
+new `GAPS_NONE` regex scans every line, not just the `## Delivery receipt`
+block's `entries`), matching the orchestrator's actual usage — `gaps:` is
+written as its own prose line in closeout summaries, not inside the receipt.
+
+**Implementation:** new C5 check in `tools/lint_completion_claims.py` — if any
+`LEDGER_FIELDS` value is `fail`/`pending`/`unchecked` and a `gaps: none` line
+appears anywhere in the report, BLOCK naming the contradicting fields.
+`LEDGER_FIELDS` stays 8 fields; `cost-report` is verdict-conditional (new C6):
+a `SHIPPABLE` receipt with no `cost-report` field BLOCKs; `NOT SHIPPABLE`
+receipts are unaffected. `agents/orchestrator.md` gains the derivation rule in
+Gap flags and a `cost-report` requirement in Completion closeout, stating the
+orchestrator resolves the cost-file path itself before any scribe dispatch —
+never delegated blind, and never "cost file unavailable" without reading the
+resolved path first.
+
+**Side effects surfaced and fixed:** the pre-existing `shippable.md` fixture
+and the `SHIPPABLE` constant embedded in `tests/test_agent_team_closeout.py`
+were both legitimately incomplete under the new C6 check (real SHIPPABLE
+receipts without cost-report) — both updated to add the field, which is the
+intended behavior change working as designed, not a regression.
+
+**Verification:** 2 new fixtures
+(`gaps-none-contradicts-ledger.md`, `shippable-missing-cost-report.md`) and 4
+new test cases in `tests/test_completion_lint.sh`. Full suite run: `python3
+tests/test_agent_team_closeout.py` — 26 green; `bash
+tests/test_closeout_hook.sh` — 26 green, 90% coverage; `bash
+tests/test_dispatch_guard.sh` — PASS=37 FAIL=0; `bash
+tests/test_completion_lint.sh` — PASS=14 FAIL=0; `bash
+tests/test_completion_contract.sh` — PASS=21 FAIL=0; `bash
+tests/test_closeout_audit.sh` — PASS=23 FAIL=0; `bash
+tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0; `bash
+tests/test_agent_frontmatter.sh` — passed=31 failed=0.
