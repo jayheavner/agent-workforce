@@ -397,3 +397,43 @@ gap to report per the task's Escalation clause.
 `bash tests/test_agent_frontmatter.sh` — passed=31 failed=0. `bash
 tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0. `bash
 tests/test_completion_contract.sh` — PASS=21 FAIL=0.
+
+## T17-integrate-and-reinstall (blocked — status as of this session)
+
+**Preflight:** `gh auth status` — BOTH `jheavner` and `jayheavner` GitHub
+accounts report "Failed to log in... The token in keyring is invalid."
+Neither account is currently usable. Per standing instruction, this halts
+before any merge/push; no attempt was made to re-authenticate, refresh
+tokens, or use an alternate credential path — that decision belongs to the
+user.
+
+**Full suite run (every `tests/test_*.sh` plus `python3
+tests/test_agent_team_closeout.py`) in this worktree, prior to merge:**
+
+One failure surfaced on the first pass: `tests/test_codex_profiles.sh`
+(PASS=14 FAIL=8) — `scripts/render_codex_agents.py --check` reported the
+checked-in Codex `.toml` profiles under `codex/agents/` and `codex/profiles/`
+as stale. Root cause: T13 and T16 edited `agents/ops.md`, `deployer.md`,
+`verifier.md`, and `scribe.md` (source files the generator renders from)
+without regenerating the derived profiles. Fixed by running `python3
+scripts/render_codex_agents.py` (regenerated 14 files, matching exactly the
+four agent files this plan touched) and committing the result
+(`chore(codex): regenerate profiles after T13/T16 agent-contract edits`).
+Rerun: `codex-profile tests: PASS=22 FAIL=0`.
+
+**Full suite result after the fix — every suite green:**
+test_acceptance_lint, test_agent_frontmatter, test_audit_hook,
+test_chatgpt_plugin, test_closeout_audit, test_closeout_hook,
+test_codex_profiles (22/22 after fix), test_completion_contract,
+test_completion_lint, test_cost_hook, test_decision_discipline_drift,
+test_dispatch_guard (44/44), test_execution_handoff_text, test_gap_loop_text,
+test_install_retire, test_install_skills, test_orchestrator_autonomy,
+test_plugin_mode, test_process_assurance_cli, test_process_assurance_hook,
+test_process_assurance_integration, test_scoreboard, test_secrets_hook,
+test_worktree_hygiene (7/7), and `python3 tests/test_agent_team_closeout.py`
+(26/26) — all exit 0.
+
+**Not yet done (blocked on `gh` auth):** merge to main, `bash install.sh`
+run from main, post-install `install.sh --check` clean confirmation, and the
+fresh consumer-project session banner observation. These remain T17's open
+items until the human resolves GitHub authentication.
