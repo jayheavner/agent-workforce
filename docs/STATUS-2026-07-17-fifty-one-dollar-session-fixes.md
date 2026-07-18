@@ -87,3 +87,29 @@ in flight). `python3 tests/test_agent_team_closeout.py` — 24 tests, green.
 `bash tests/test_closeout_hook.sh` — 24 tests green, 90% coverage.
 `bash tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0.
 `bash tests/test_agent_frontmatter.sh` — passed=31 failed=0.
+
+## T6-serialize-mutating-dispatches
+
+**Preflight:** confirmed via docs and direct transcript inspection (same
+evidence as T5) that PreToolUse payloads carry both `transcript_path` and
+`tool_input.prompt` for Agent dispatches.
+
+**Implementation:** `hooks/agent-team-dispatch-guard.sh` gains
+`GIT_SERIALIZED_ROLES="builder executor deployer"` (a new constant — does not
+repurpose the closeout hook's `MUTATING_ROLES`, which serves baseline-capture
+logic and includes `architect`/`scribe` instead). For a dispatch whose
+`subagent_type` is in that set: the exact prompt line `PARALLEL_SAFE: no git
+mutation in this dispatch` exempts it; otherwise the guard scans
+`transcript_path` (same unresolved-tool_use/tool_result pairing jq logic as
+T5) for any unresolved Agent dispatch whose `subagent_type` is also in the
+serialized set, and blocks naming that role if found. Non-serialized roles
+and dispatches with no serialized role in flight are unaffected. Added the
+routing rule to `agents/orchestrator.md`'s Rules section with the exact
+marker line.
+
+**Verification:** 3 new red→green tests in `tests/test_dispatch_guard.sh`
+(unresolved builder blocks executor; PARALLEL_SAFE marker allows; no
+serialized dispatch in flight allows). `bash tests/test_dispatch_guard.sh` —
+PASS=37 FAIL=0. Full closeout suite, drift test, and frontmatter test
+re-verified green (orchestrator.md touched again). `shellcheck` not present
+in this environment — recorded per Discretion; `bash -n` syntax check passed.
