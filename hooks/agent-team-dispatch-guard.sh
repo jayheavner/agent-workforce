@@ -11,6 +11,11 @@
 set -u
 
 readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer"
+# Git-mutating dispatches are serialized per checkout; MUTATING_ROLES in the
+# closeout hook serves baseline-capture logic and is a different set — do not
+# conflate the two.
+readonly GIT_SERIALIZED_ROLES="builder executor deployer"
+readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: no git mutation in this dispatch"
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'agent-team dispatch guard: jq is not available, so this guard cannot parse the dispatch payload. Blocking rather than failing open.\n' >&2
@@ -54,11 +59,57 @@ esac
 # Exact equality against each of the ten names only — no substring/containment
 # matching, so a compound value like "architect builder" cannot bypass by
 # matching two adjacent tokens in a space-padded list.
+VALID=0
 for name in $VALID_SPECIALISTS; do
   if [ "$TYPE" = "$name" ]; then
-    exit 0
+    VALID=1
+    break
   fi
 done
 
-printf 'agent-team dispatch guard: subagent_type "%s" is not a team specialist. Use exactly one of: architect, builder, debugger, verifier, reviewer, deployer, executor, researcher, ops, scribe, ticketer. (The harness default "general-purpose" is not a team agent and will hard-fail.)\n' "$TYPE" >&2
-exit 2
+if [ "$VALID" -ne 1 ]; then
+  printf 'agent-team dispatch guard: subagent_type "%s" is not a team specialist. Use exactly one of: architect, builder, debugger, verifier, reviewer, deployer, executor, researcher, ops, scribe, ticketer. (The harness default "general-purpose" is not a team agent and will hard-fail.)\n' "$TYPE" >&2
+  exit 2
+fi
+
+# T6: serialize git-mutating dispatches ({builder, executor, deployer}) per
+# checkout. Only these roles are policed; skip the scan entirely otherwise.
+IS_SERIALIZED_ROLE=0
+for name in $GIT_SERIALIZED_ROLES; do
+  if [ "$TYPE" = "$name" ]; then
+    IS_SERIALIZED_ROLE=1
+    break
+  fi
+done
+
+if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
+  PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
+  case "$PROMPT" in
+    *"$PARALLEL_SAFE_MARKER"*) exit 0 ;;
+  esac
+  TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
+  if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+    UNRESOLVED_ROLE="$(
+      jq -rs --arg roles "$GIT_SERIALIZED_ROLES" '
+        ($roles | split(" ")) as $serialized
+        | reduce .[] as $line ({};
+            ($line.message.content // [])[] as $block
+            | if ($block.type == "tool_use" and $block.name == "Agent")
+              then .[$block.id] = ($block.input.subagent_type // "")
+              elif ($block.type == "tool_result" and $block.tool_use_id != null)
+              then del(.[$block.tool_use_id])
+              else . end
+          )
+        | to_entries[]
+        | select(.value as $r | $serialized | index($r))
+        | .value
+      ' "$TRANSCRIPT" 2>/dev/null | head -n1
+    )"
+    if [ -n "$UNRESOLVED_ROLE" ]; then
+      printf 'agent-team dispatch guard: serialize git-mutating dispatches: %s still in flight. Wait for it to resolve, or include the exact prompt line "%s" if this dispatch makes no git mutation.\n' "$UNRESOLVED_ROLE" "$PARALLEL_SAFE_MARKER" >&2
+      exit 2
+    fi
+  fi
+fi
+
+exit 0
