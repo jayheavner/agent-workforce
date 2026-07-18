@@ -42,6 +42,7 @@ SHIPPABLE = """Closeout complete.
 - integration: not applicable
 - deployment: not applicable
 - cleanup: pass — task-created resources removed
+- cost-report: pass — see session cost file
 """
 
 NOT_SHIPPABLE = """Implemented, but an external release action remains blocked.
@@ -111,17 +112,64 @@ class CloseoutHookTest(unittest.TestCase):
         )
         self.assertEqual(result.exit_code, 0, result.stderr)
 
-    def stop(self, message: str = SHIPPABLE):
+    def stop(self, message: str = SHIPPABLE, transcript_path: str = ""):
         """Evaluate a main-agent Stop event."""
-        return self.event(
-            "stop",
-            {
-                "session_id": "session-1",
-                "cwd": str(self.repo),
-                "stop_hook_active": False,
-                "last_assistant_message": message,
-            },
-        )
+        payload = {
+            "session_id": "session-1",
+            "cwd": str(self.repo),
+            "stop_hook_active": False,
+            "last_assistant_message": message,
+        }
+        if transcript_path:
+            payload["transcript_path"] = transcript_path
+        return self.event("stop", payload)
+
+    def write_transcript(self, *, resolved: bool) -> str:
+        """Write a fixture JSONL transcript with one Agent dispatch.
+
+        `resolved=False` leaves the tool_use without a matching tool_result
+        (an in-flight subagent dispatch); `resolved=True` pairs it.
+        """
+        path = Path(self.temp.name) / "transcript.jsonl"
+        tool_use_id = "toolu_fixture0000000000000000000001"
+        lines = [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": tool_use_id,
+                                "name": "Agent",
+                                "input": {"subagent_type": "builder"},
+                            }
+                        ],
+                    },
+                }
+            )
+        ]
+        if resolved:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": [{"type": "text", "text": "done"}],
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return str(path)
 
     def subagent_stop(self, role: str, message: str):
         """Record one specialist terminal response."""
@@ -145,8 +193,33 @@ class CloseoutHookTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.stderr)
         decision = json.loads(result.stdout)
         self.assertEqual(decision["decision"], "block")
-        self.assertIn("uncommitted", decision["reason"])
+        self.assertIn("uncommitted", decision["reason"].lower())
         self.assertIn("executor", decision["reason"].lower())
+
+    def test_stop_never_attributes_ownership_it_cannot_know(self) -> None:
+        """The hook cannot know which process wrote a changed baseline-dirty path."""
+        (self.repo / "README.md").write_text("user dirt\n", encoding="utf-8")
+        self.dispatch("scribe")
+        (self.repo / "README.md").write_text("user dirt plus task edit\n", encoding="utf-8")
+
+        result = self.stop()
+
+        decision = json.loads(result.stdout)
+        self.assertIn("README.md", decision["reason"])
+        self.assertNotIn("Task-owned", decision["reason"])
+        self.assertIn("cannot attribute", decision["reason"].lower())
+
+    def test_stop_labels_new_file_as_created_this_session_not_task_owned(self) -> None:
+        """A path absent at baseline is reported as created, never claimed as task-owned."""
+        self.dispatch()
+        (self.repo / "newfile.png").write_bytes(b"\x89PNG\r\n")
+
+        result = self.stop()
+
+        decision = json.loads(result.stdout)
+        self.assertIn("newfile.png", decision["reason"])
+        self.assertIn("created during this session", decision["reason"])
+        self.assertNotIn("Task-owned", decision["reason"])
 
     def test_stop_requires_delivery_receipt_for_active_repository_task(self) -> None:
         """An active task cannot end with an unstructured completion report."""
@@ -167,6 +240,42 @@ class CloseoutHookTest(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_stop_allows_waiting_on_inflight_dispatch_despite_dirty_tree(self) -> None:
+        """An unresolved subagent dispatch is waiting, not a completion claim."""
+        self.dispatch("builder")
+        (self.repo / "docs.md").write_text("task artifact\n", encoding="utf-8")
+        transcript = self.write_transcript(resolved=False)
+
+        result = self.stop("", transcript_path=transcript)
+
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+
+    def test_stop_blocks_normally_once_dispatch_resolves(self) -> None:
+        """Once the tool_result lands, ordinary Stop enforcement resumes."""
+        self.dispatch("builder")
+        (self.repo / "docs.md").write_text("task artifact\n", encoding="utf-8")
+        transcript = self.write_transcript(resolved=True)
+
+        result = self.stop("", transcript_path=transcript)
+
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+
+    def test_shippable_verdict_blocked_while_dispatch_in_flight(self) -> None:
+        """A SHIPPABLE claim cannot be final while a dispatch is still running."""
+        self.dispatch("builder")
+        (self.repo / "feature.py").write_text("VALUE = 1\n", encoding="utf-8")
+        self.git("add", "feature.py")
+        self.git("commit", "-qm", "feat: add fixture feature")
+        transcript = self.write_transcript(resolved=False)
+
+        result = self.stop(SHIPPABLE, transcript_path=transcript)
+
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("flight", decision["reason"].lower())
 
     def test_shippable_builder_work_requires_fresh_verifier(self) -> None:
         """A committed Builder change is not shippable before verification."""

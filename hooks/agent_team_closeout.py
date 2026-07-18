@@ -312,24 +312,83 @@ def _record_subagent(payload: dict[str, Any], state_dir: Path) -> EventResult:
     return EventResult()
 
 
+def _inflight_dispatches(transcript_path: str) -> int:
+    """Count Agent tool_use blocks in the transcript with no matching tool_result.
+
+    Ground truth from the session JSONL: an unresolved dispatch is still
+    running, so Stop is waiting, not claiming completion. An unreadable or
+    missing transcript fails closed to 0 (today's strict behavior).
+    """
+    if not transcript_path:
+        return 0
+    path = Path(transcript_path)
+    if not path.is_file():
+        return 0
+    pending: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                content = entry.get("message", {}).get("content", [])
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_use" and block.get("name") == "Agent":
+                        tool_use_id = block.get("id")
+                        if tool_use_id:
+                            pending.add(tool_use_id)
+                    elif block.get("type") == "tool_result":
+                        pending.discard(block.get("tool_use_id"))
+    except OSError:
+        return 0
+    return len(pending)
+
+
 def _stop(payload: dict[str, Any], state_dir: Path, linter_path: Path) -> EventResult:
     """Block stopping when the worktree differs from its task baseline."""
     session_id = str(payload.get("session_id", ""))
     state = _load_state(state_dir, session_id) if session_id else None
     if not state:
         return EventResult()
+    inflight = _inflight_dispatches(str(payload.get("transcript_path", "")))
+    message = str(payload.get("last_assistant_message", ""))
+    verdict = _shipment_verdict(message)
+    if inflight > 0 and verdict == "SHIPPABLE":
+        return _block(
+            f"{inflight} dispatch(es) in flight — a completion claim cannot be final. "
+            "Wait for the outstanding dispatch(es) to resolve before reporting SHIPPABLE."
+        )
+    if inflight > 0:
+        return EventResult()
     repo = Path(state["repo"])
     current = _dirty_snapshot(repo)
     baseline = state.get("baseline_dirty", {})
     changed = sorted(path for path in set(current) | set(baseline) if current.get(path) != baseline.get(path))
     if changed:
-        paths = ", ".join(changed[:8])
+        created = [path for path in changed if path not in baseline]
+        residue = [path for path in changed if path in baseline]
+        parts = []
+        if residue:
+            parts.append(
+                "changed since the session baseline (this hook cannot attribute which "
+                f"process wrote them): {', '.join(residue[:8])}"
+            )
+        if created:
+            parts.append(f"created during this session — verify origin before committing: {', '.join(created[:8])}")
         return _block(
-            "Task-owned uncommitted repository changes remain: "
-            f"{paths}. Continue working: dispatch the executor finalizer to stage and commit "
+            "Uncommitted repository changes remain — "
+            + "; ".join(parts)
+            + ". Continue working: dispatch the executor finalizer to stage and commit "
             "only this task's delta, preserving baseline dirt."
         )
-    message = str(payload.get("last_assistant_message", ""))
     if "WORKFORCE_PAUSE: HUMAN_DECISION" in message:
         return EventResult()
     lint_error = _lint_report(message, linter_path)
@@ -338,7 +397,6 @@ def _stop(payload: dict[str, Any], state_dir: Path, linter_path: Path) -> EventR
             "The final response does not have a valid delivery receipt. Continue working and "
             f"repair the closeout report: {lint_error}"
         )
-    verdict = _shipment_verdict(message)
     current_head = os.fsdecode(_git(repo, "rev-parse", "HEAD").stdout).strip()
     current_branch = _current_branch(repo)
     switched_to_preexisting_branch = (

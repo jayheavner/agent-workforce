@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent-team-process-assurance.py process_assurance.py agent_team_closeout.py model-rates.json agent-model-defaults.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent-team-process-assurance.py process_assurance.py agent_team_closeout.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -421,6 +421,7 @@ PREEXISTING_CLOSEOUT=0
 PREEXISTING_LINTER=0
 PREEXISTING_ASSURANCE_ADAPTER=0
 PREEXISTING_ASSURANCE_ENGINE=0
+PREEXISTING_BUDGETS=0
 [ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
@@ -429,6 +430,7 @@ PREEXISTING_ASSURANCE_ENGINE=0
 [ -f "$HOOKS_DIR/lint_completion_claims.py" ] && { cp "$HOOKS_DIR/lint_completion_claims.py" "$BACKUP/"; PREEXISTING_LINTER=1; }
 [ -f "$HOOKS_DIR/agent-team-process-assurance.py" ] && { cp "$HOOKS_DIR/agent-team-process-assurance.py" "$BACKUP/"; PREEXISTING_ASSURANCE_ADAPTER=1; }
 [ -f "$HOOKS_DIR/process_assurance.py" ] && { cp "$HOOKS_DIR/process_assurance.py" "$BACKUP/"; PREEXISTING_ASSURANCE_ENGINE=1; }
+[ -f "$HOOKS_DIR/agent-team-budgets.json" ] && { cp "$HOOKS_DIR/agent-team-budgets.json" "$BACKUP/"; PREEXISTING_BUDGETS=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -488,6 +490,7 @@ restore() {
       lint_completion_claims.py) cp "$b" "$HOOKS_DIR/" ;;
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-model-defaults.json) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-budgets.json) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -529,6 +532,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_LINTER" -eq 0 ] && rm -f "$HOOKS_DIR/lint_completion_claims.py"
   [ "$PREEXISTING_ASSURANCE_ADAPTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-process-assurance.py"
   [ "$PREEXISTING_ASSURANCE_ENGINE" -eq 0 ] && rm -f "$HOOKS_DIR/process_assurance.py"
+  [ "$PREEXISTING_BUDGETS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-budgets.json"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -553,6 +557,7 @@ if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanu
 if ! cp "$REPO/tools/lint_completion_claims.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "completion linter copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch budgets copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done

@@ -16,6 +16,44 @@ run() { # $1 json
 
 agent_json() { jq -cn --arg t "$1" '{tool_name:"Agent",tool_input:{subagent_type:$t}}'; }
 
+# Build a fixture transcript with one unresolved Agent tool_use for the named
+# subagent_type (T6: serialize-mutating-dispatches ground truth).
+write_unresolved_transcript() { # $1 subagent_type -> prints path
+  local role="$1"
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-transcript.XXXXXX")"
+  jq -cn --arg role "$role" \
+    '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"toolu_fixture_serialize_1",name:"Agent",input:{subagent_type:$role}}]}}' \
+    > "$path"
+  printf '%s' "$path"
+}
+
+agent_json_with_transcript() { # $1 subagent_type $2 transcript_path $3 prompt
+  jq -cn --arg t "$1" --arg tp "$2" --arg p "$3" \
+    '{tool_name:"Agent",transcript_path:$tp,tool_input:{subagent_type:$t,prompt:$p}}'
+}
+
+# Build a fixture transcript with N resolved (paired) Agent dispatches, for
+# T12's budget-ratchet ground truth: count = all Agent dispatches, resolved
+# or not, regardless of role.
+write_resolved_dispatches_transcript() { # $1 count -> prints path
+  local count="$1"
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-budget.XXXXXX")"
+  : > "$path"
+  local i=0
+  while [ "$i" -lt "$count" ]; do
+    jq -cn --arg id "toolu_budget_$i" \
+      '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:$id,name:"Agent",input:{subagent_type:"scribe"}}]}}' \
+      >> "$path"
+    jq -cn --arg id "toolu_budget_$i" \
+      '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:$id,content:[{type:"text",text:"done"}]}]}}' \
+      >> "$path"
+    i=$((i + 1))
+  done
+  printf '%s' "$path"
+}
+
 expect() { # $1 expected_rc, $2 json, $3 label
   run "$2"
   if [ "$RC" -eq "$1" ]; then
@@ -62,6 +100,68 @@ expect_block "{" "truncated JSON blocks"
 # substring containment against the space-padded VALID list.
 expect_block "$(agent_json 'architect builder')" "compound 'architect builder' blocks"
 expect_block "$(agent_json ' architect ')" "padded exact-looking value blocks"
+
+# T6: serialize git-mutating dispatches ({builder, executor, deployer}) per
+# checkout while one is unresolved, unless the new dispatch's prompt carries
+# the exact PARALLEL_SAFE marker.
+BUILDER_TRANSCRIPT="$(write_unresolved_transcript builder)"
+
+expect_block \
+  "$(agent_json_with_transcript executor "$BUILDER_TRANSCRIPT" "run the finalizer")" \
+  "unresolved builder blocks executor without marker"
+
+expect_allow \
+  "$(agent_json_with_transcript executor "$BUILDER_TRANSCRIPT" "PARALLEL_SAFE: no git mutation in this dispatch")" \
+  "unresolved builder allows executor with PARALLEL_SAFE marker"
+
+NO_MUTATING_TRANSCRIPT="$(write_unresolved_transcript researcher)"
+expect_allow \
+  "$(agent_json_with_transcript executor "$NO_MUTATING_TRANSCRIPT" "run the finalizer")" \
+  "no unresolved serialized dispatch allows"
+
+rm -f "$BUILDER_TRANSCRIPT" "$NO_MUTATING_TRANSCRIPT"
+
+# T11: block researcher dispatches whose prompt asks for present-state shell
+# verification; RESEARCH_ONLY exempts genuine document analysis.
+prompt_json() { # $1 subagent_type $2 prompt
+  jq -cn --arg t "$1" --arg p "$2" '{tool_name:"Agent",tool_input:{subagent_type:$t,prompt:$p}}'
+}
+
+expect_block \
+  "$(prompt_json researcher "verify 8332d6a8 is on origin/main with git merge-base")" \
+  "researcher + shell-verb prompt blocks"
+
+expect_allow \
+  "$(prompt_json researcher "verify 8332d6a8 is on origin/main with git merge-base. RESEARCH_ONLY: sources provided in prompt")" \
+  "researcher + shell-verb prompt + RESEARCH_ONLY marker allows"
+
+expect_allow \
+  "$(prompt_json executor "verify 8332d6a8 is on origin/main with git merge-base")" \
+  "executor + any prompt allows (unchanged)"
+
+# T12: dispatch-count budget ratchet. Default checkpoint 10 (from
+# hooks/agent-team-budgets.json). This is the incoming dispatch: transcript
+# holds N PRIOR dispatches, and the guard evaluates the (N+1)th attempt.
+NINE_PRIOR="$(write_resolved_dispatches_transcript 9)"
+expect_block \
+  "$(agent_json_with_transcript scribe "$NINE_PRIOR" "write the status note")" \
+  "10th dispatch attempt without ack blocks at checkpoint 10"
+
+expect_allow \
+  "$(agent_json_with_transcript scribe "$NINE_PRIOR" "WORKFORCE_BUDGET_ACK: 10 dispatches — continuing because standard-tier route mid-build")" \
+  "10th dispatch attempt with WORKFORCE_BUDGET_ACK allows"
+
+TEN_PRIOR="$(write_resolved_dispatches_transcript 10)"
+expect_allow \
+  "$(agent_json_with_transcript scribe "$TEN_PRIOR" "write the status note")" \
+  "11th dispatch attempt (past the 10th) without ack allows"
+
+EIGHTEEN_PRIOR="$(write_resolved_dispatches_transcript 18)"
+expect_allow \
+  "$(agent_json_with_transcript scribe "$EIGHTEEN_PRIOR" "write the status note")" \
+  "19th dispatch attempt without ack allows (next checkpoint is 20)"
+
+rm -f "$NINE_PRIOR" "$TEN_PRIOR" "$EIGHTEEN_PRIOR"
 
 echo "dispatch-guard tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -51,6 +51,20 @@ LEDGER_FIELDS = (
 )
 VALID_STATUS = {"pass", "fail", "pending", "unchecked", "not applicable"}
 
+RECEIPT_TEMPLATE = "\n".join(
+    [
+        "Expected receipt format:",
+        "## Delivery receipt",
+        "",
+        "- delivery-target: <artifact|integrated-code|deployed-service>",
+        "- shipment-verdict: <SHIPPABLE|NOT SHIPPABLE>",
+        *(
+            f"- {field}: <pass|fail|pending|unchecked|not applicable> — <evidence>"
+            for field in ("verification", "review", "documentation", "memory", "commit", "integration", "deployment", "cleanup")
+        ),
+    ]
+)
+
 COMPLETION_PATTERNS = (
     re.compile(
         r"\b(?:work|task|fix|implementation|change|delivery|shipment)\s+"
@@ -60,6 +74,7 @@ COMPLETION_PATTERNS = (
     re.compile(r"\bmarking\s+(?:the\s+)?work\s+complete\b", re.IGNORECASE),
     re.compile(r"\bfinal gate\b.*\b(?:complete|completed|done)\b", re.IGNORECASE),
 )
+GAPS_NONE = re.compile(r"^\s*gaps:\s*none\s*$", re.IGNORECASE)
 UNFINISHED_PATTERNS = (
     re.compile(r"\bnot\s+deployed\b", re.IGNORECASE),
     re.compile(r"\bdeploy(?:ment)?\s+is\s+not\s+done\b", re.IGNORECASE),
@@ -150,6 +165,19 @@ def lint(path: Path, require_receipt: bool, require_shippable: bool) -> list[tup
             if status(entries.get(field, "")) == "not applicable":
                 blocks.append(("C4", f"deployed-service cannot mark {field}: not applicable"))
 
+    unresolved_ledger_fields = [
+        field for field in LEDGER_FIELDS if status(entries.get(field, "")) in {"fail", "pending", "unchecked"}
+    ]
+    if unresolved_ledger_fields and any(GAPS_NONE.match(line) for line in lines):
+        blocks.append((
+            "C5",
+            "gaps must be derived from the ledger: gaps: none contradicts unresolved fields "
+            + ", ".join(unresolved_ledger_fields),
+        ))
+
+    if verdict == "SHIPPABLE" and status(entries.get("cost-report", "")) is None:
+        blocks.append(("C6", "SHIPPABLE receipt is missing cost-report"))
+
     return blocks
 
 
@@ -173,6 +201,7 @@ def main() -> int:
     if blocks:
         for rule, message in blocks:
             print(f"{args.report}: BLOCK {rule} {message}")
+        print(RECEIPT_TEMPLATE)
         return 1
 
     print(f"{args.report}: PASS completion claim is consistent with its delivery receipt")
