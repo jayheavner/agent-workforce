@@ -59,3 +59,31 @@ version (repo-wins, per the fixed rule). No other files diverge.
 
 **Verification:** `python3 tests/test_agent_team_closeout.py` — 21 tests, green,
 unchanged (no behavior touched). `bash install.sh --check` output captured above.
+
+## T5-inflight-aware-stop
+
+**Preflight:** confirmed via Claude Code docs (code.claude.com/docs/en/hooks)
+that Stop payloads carry `transcript_path`. Inspected a real transcript JSONL
+in this repo's own project directory to confirm the pairing shape: an
+`assistant`-typed line's `message.content[]` holds a `tool_use` block with
+`name: "Agent"` and an `id`; the paired `user`-typed line's
+`message.content[]` holds a `tool_result` block whose `tool_use_id` matches.
+An Agent dispatch with no later matching `tool_result` is in flight.
+
+**Implementation:** `_inflight_dispatches(transcript_path) -> int` scans the
+JSONL for unresolved Agent `tool_use` ids; malformed lines are skipped,
+missing/unreadable transcript returns 0 (fail-closed to prior strict
+behavior). In `_stop`: inflight > 0 with a SHIPPABLE verdict blocks ("dispatch
+in flight — a completion claim cannot be final"); inflight > 0 otherwise
+allows with no receipt/uncommitted/cleanup demand, checked before all other
+Stop logic. Added `WORKFORCE_WAITING: <n> dispatch(es) in flight` to
+`agents/orchestrator.md` as the orchestrator's honest progress vocabulary
+(the hook does not require it).
+
+**Verification:** 3 new red→green tests added to
+`tests/test_agent_team_closeout.py` covering the three executable examples
+(waiting despite dirty tree, blocks once resolved, SHIPPABLE blocked while
+in flight). `python3 tests/test_agent_team_closeout.py` — 24 tests, green.
+`bash tests/test_closeout_hook.sh` — 24 tests green, 90% coverage.
+`bash tests/test_decision_discipline_drift.sh` — PASS=3 FAIL=0.
+`bash tests/test_agent_frontmatter.sh` — passed=31 failed=0.
