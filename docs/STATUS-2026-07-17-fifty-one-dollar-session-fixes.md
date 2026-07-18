@@ -242,3 +242,34 @@ the rule: present-state facts → executor, the researcher analyzes sources.
 with the same prompt allows, unchanged). `bash tests/test_dispatch_guard.sh` —
 PASS=40 FAIL=0. Drift, frontmatter, and completion-contract suites re-verified
 green after the orchestrator.md edit.
+
+## T12-dispatch-budget-ratchet
+
+**Preflight:** confirmed `transcript_path` is present on PreToolUse (same
+evidence as T6). Measured jq scan wall time on a 4000-line/2000-dispatch
+fixture transcript: ~14ms — well under any hook timeout.
+
+**Implementation:** new `hooks/agent-team-budgets.json`
+(`{"schema":1,"dispatch_checkpoint":10}`). The guard counts ALL Agent
+`tool_use` blocks in the transcript (same jq shape as T5/T6, resolved or not
+— stateless, no counter file); when the incoming dispatch's own number is a
+multiple of the checkpoint, it blocks unless its prompt carries
+`WORKFORCE_BUDGET_ACK: <that exact number> dispatches — continuing because
+<reason>`. Missing/invalid config falls back to checkpoint 10.
+`agents/orchestrator.md`'s Rules section documents the ack format and that
+the reason must state tier and proportionality. `install.sh` now ships
+`agent-team-budgets.json` — added to `HOOK_FILES`, the copy step, the
+preexisting-backup capture, the `restore()` case statement, and the
+partial-install cleanup, matching every other hook config file's pattern.
+
+**Verification:** 4 new red→green tests in `tests/test_dispatch_guard.sh`
+(10th dispatch blocks without ack; 10th with ack allows; 11th without ack
+allows; 19th without ack allows — next checkpoint is 20). `bash
+tests/test_dispatch_guard.sh` — PASS=44 FAIL=0. `bash
+tests/test_install_skills.sh` — PASS=36 FAIL=0. `bash
+tests/test_install_retire.sh` — passed=9 failed=0. `bash install.sh --check`
+run after these changes: correctly STALE on every file this plan touched so
+far (orchestrator.md, agent-team-cost.sh, agent-team-dispatch-guard.sh,
+agent_team_closeout.py, lint_completion_claims.py), DRIFT still present on
+the hand-edited installed closeout hook (T17's job), no new/unexpected drift
+introduced by the new budgets file itself.
