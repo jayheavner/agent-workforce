@@ -1,8 +1,12 @@
-# Plan: $51-session fixes — remediation + framework hardening
+# Plan: $51-session fixes — agent-workforce framework hardening
 
 execution-contract: 1
 plan-id: 2026-07-17-fifty-one-dollar-session-fixes
-status: v1 (approved for execution on handoff)
+status: v2 (approved for execution on handoff)
+scope: the agent-workforce framework (this repository) ONLY. v2 removed tasks T1–T3, which
+remediated the innovation-awards project — out of this plan's scope. Task IDs T4–T17 are
+kept stable. innovation-awards appears below solely as incident evidence, never as a work
+target; no task may touch that repository.
 
 ## How to execute this plan (read first)
 
@@ -15,11 +19,12 @@ task if one exists. Never expand scope beyond a task's named files without an am
 
 ## Goal
 
-Close out the 2026-07-17 "$51 session" incident completely: (Phase A) repair the damage it
-left in `/Users/jay/claude/innovation-awards` and the local environment, and (Phase B) fix
-the agent-workforce framework generators that produced the failures — receipt spam, hook/
-finalizer races, false ownership attribution, unbounded spend, wrong-specialist routing,
-missing entry-path verification, silent install drift, and hand-authored accounting.
+Fix the agent-workforce framework generators that the 2026-07-17 "$51 session" exposed —
+receipt spam, hook/finalizer races, false ownership attribution, unbounded spend,
+wrong-specialist routing, missing entry-path verification, silent install drift, and
+hand-authored accounting. The incident transcript ran this framework against the
+innovation-awards project; that project is the evidence source for these failures and
+nothing more. Every change in this plan lands in this repository.
 
 ## Architecture
 
@@ -29,7 +34,7 @@ Enforcement is hook-based: `hooks/hooks.json` routes PreToolUse(Agent) → dispa
 closeout `dispatch` mode, PostToolUse(Agent) → cost hook, SubagentStop → closeout
 `subagent-stop`, Stop → closeout `stop`. The closeout hook keeps per-session state and lints
 final receipts via `tools/lint_completion_claims.py`. Orchestrator behavior is prose policy
-in `agents/orchestrator.md`. All Phase B changes stay inside these existing components — no
+in `agents/orchestrator.md`. All changes stay inside these existing components — no
 new subsystems.
 
 ## Tech stack
@@ -41,15 +46,13 @@ cost hook, shell tests under `tests/`), Markdown agent contracts. No new depende
 
 - policy:workspace-isolation (source: `~/.claude/skills/project-policy/SKILL.md`): "the
   project checkout or worktree selected when the orchestrator session starts is the task
-  workspace… Run only one code-writing task in a checkout at a time." Phase B work happens
-  in a worktree of `ai-agent-team` (warden makes the shared checkout read-only to shells).
-  Phase A work happens directly in `/Users/jay/claude/innovation-awards`.
+  workspace… Run only one code-writing task in a checkout at a time." All work happens in
+  a worktree of `ai-agent-team` (warden makes the shared checkout read-only to shells).
 - policy:dependency-freshness: not applicable — this plan adds no dependencies.
 - Security pass (pre-implementation): no secrets in code, logs, tests, or commit messages;
   hook inputs parsed fail-closed (keep the dispatch guard's existing jq-parse-or-block
   pattern); all new hook error text must not echo file contents, only paths.
-- Git identities: pushes to `ai-agent-team` require the `jayheavner` gh account;
-  `innovation-awards` pushes go through the `jheavner` account (cta-claude-code org). Run
+- Git identities: pushes to `ai-agent-team` require the `jayheavner` gh account. Run
   `gh auth status` before any push and switch accounts explicitly.
 - Conventional Commits. New code files stay under ~300 lines. No time estimates anywhere.
 
@@ -90,151 +93,14 @@ cost hook, shell tests under `tests/`), Markdown agent contracts. No new depende
 10. Test seams exist: `tests/test_agent_team_closeout.py`, `tests/test_completion_lint.sh`,
     `tests/test_dispatch_guard.sh`, `tests/test_cost_hook.sh`, `tests/test_install_skills.sh`.
 
-## Human-only steps (not tasks; Jay executes)
-
-- H1. Warden: enforcement was disabled 2026-07-17 during the incident and appears re-enabled
-  now (it blocks shared-checkout shells again). Confirm with the warden status command; if
-  disabled, run `sudo warden enable`.
-- H2. Final visual confirmation of the deployed Review Queue layout fix (authenticated Okta
-  login — no headless path exists). Record the outcome in the innovation-awards status note.
-
----
-
-# Phase A — remediation of innovation-awards
-
-## T1-recover-layout-plan
-
-**Outcome:** `docs/product/bugfix-plan-review-queue-layout-css.md` (and its README index
-rows) exist on innovation-awards `main` and `origin/main`; branch
-`fix/review-queue-layout-css` is deleted.
-
-**Acceptance mapping:** incident finding "199-line layout plan stranded off main" →
-evidence: `git cat-file -e main:docs/product/bugfix-plan-review-queue-layout-css.md`
-succeeds on both local and origin main; `git branch --list 'fix/review-queue-layout-css'`
-is empty.
-
-**Files:** Modify (via cherry-pick): `docs/product/bugfix-plan-review-queue-layout-css.md`,
-`docs/product/README.md` — both in `/Users/jay/claude/innovation-awards`.
-
-**Interfaces/invariants:** use `git cherry-pick 7528476d` onto main — do not retype the
-content. Touch nothing else on main. Do not force-push. Preserve any baseline dirty files
-unstaged.
-
-**Executable example:** Given main at its current tip and branch
-`fix/review-queue-layout-css` at 7528476d — When 7528476d is cherry-picked onto main and
-pushed — Then `git log main --oneline -- docs/product/bugfix-plan-review-queue-layout-css.md`
-shows exactly one commit, and deleting the branch afterward loses no unique content
-(`git log fix/review-queue-layout-css --not main` is empty).
-
-**Preflight:** `git -C /Users/jay/claude/innovation-awards status` (note dirty paths — leave
-them); confirm fact 7 still holds (`git branch --contains 7528476d`); `gh auth status`
-shows the jheavner account active for this repo; confirm no other session is writing (no
-recent mtime churn in `.git/`; if the tree or HEAD moves during work, stop).
-
-**TDD/verification:** no test seam (git surgery). Verification is the acceptance evidence
-above plus `git push` output showing main updated, re-checked against origin with
-`git fetch && git rev-parse main origin/main` equal. Also verify branch
-`fix/review-queue-layout-css-v2` state: if it still exists local or origin despite being
-merged via PR #38, delete it with the same no-unique-content check.
-
-**Discretion:** resolving a trivial cherry-pick conflict in `docs/product/README.md` index
-ordering. Nothing else.
-
-**Escalation:** cherry-pick conflicts in the plan doc itself; 7528476d unreachable; any
-concurrent write observed mid-task; push rejected.
-
-**Commit intent:** the cherry-picked commit itself (original message preserved) — paths:
-the two files above.
-
-## T2-remove-stale-worktree
-
-**Outcome:** the `screening-gibberish-human-review-c861de` worktree is unregistered and
-removed, and its branch deleted, with proof no unique content was lost.
-
-**Acceptance mapping:** incident findings "E2BIG from worktree bloat" and "closeout refused
-to remove it" → evidence: `git worktree list` no longer shows the path; branch gone;
-a recorded uniqueness check.
-
-**Files:** innovation-awards `.claude/worktrees/screening-gibberish-human-review-c861de`
-(remove), branch `claude/screening-gibberish-human-review-c861de` (delete).
-
-**Interfaces/invariants:** evidence-based removal only (this is the lease-aware rule the
-framework will adopt in T15): before removing, prove (a) the worktree's tree is clean, and
-(b) `git log <branch> --not main` is empty OR every unique commit's content already exists
-on main (`git diff main <branch> -- <paths>` empty for the docs it carried). If either
-proof fails, stop and report — do not force.
-
-**Executable example:** Given the worktree registered at 1f54f0a3 — When both proofs pass
-and `git worktree remove <path> && git branch -D <branch>` run — Then
-`git worktree list` shows only the main checkout, and `git worktree prune` reports nothing.
-
-**Preflight:** worktree dirty state (`git -C <worktree-path> status --porcelain`); unique
-commit check as above; confirm no live session has the worktree as cwd (`lsof +D` or ps).
-
-**TDD/verification:** acceptance evidence above; attach the uniqueness-check output to the
-task report.
-
-**Discretion:** using `git worktree remove --force` ONLY for untracked scratch files proven
-to be build artifacts (node_modules, dist). Not for any tracked-content difference.
-
-**Escalation:** unique commits found whose content is not on main; worktree dirty with
-tracked changes; a process currently running inside the worktree.
-
-**Commit intent:** none (repository administration; no commit).
-
-## T3-regenerate-telemetry
-
-**Outcome:** `docs/telemetry/review-queue-issue-28-and-404-fix.csv` on innovation-awards
-main contains one row per work dispatch of session 0feb9d24… with exact model, token, and
-cost figures, plus a header note naming the source; no `null` cost fields remain.
-
-**Acceptance mapping:** incident findings "telemetry null" and "6 rows vs ~45 transcripts" →
-evidence: row count matches the dispatch count in the session cost file; `grep -c null`
-on the CSV returns 0.
-
-**Files:** Modify: `docs/telemetry/review-queue-issue-28-and-404-fix.csv`. Source (read
-only): the session cost file matching `~/.claude/logs/agent-team-cost/*innovation-awards*--0feb9d24*.json`
-(candidate — confirm exact name in preflight).
-
-**Interfaces/invariants:** keep the existing CSV header schema (fact 9 columns:
-task_slug, tier, role, sequence, verdict, resolved_model, requested_model, cost_usd,
-cost_available, input/output/cache token columns). Costs come from the cost file's
-`dispatches` map — computed, never estimated. If the cost file's status is `unavailable`,
-recompute per-dispatch from the session's subagent transcripts priced at
-`hooks/model-rates.json` (the method that produced the exact $51 figure), and say so in the
-header note.
-
-**Executable example:** Given the cost file lists a dispatch with model
-claude-fable-5, cache_read 3,286,199 — When the CSV is regenerated — Then that dispatch's
-row carries those exact integers and a cost_usd consistent with model-rates.json to the cent.
-
-**Preflight:** locate the cost file (Glob above); confirm the `dispatches` map has per-
-dispatch entries with token integers; if the file is missing entirely, locate the session's
-subagent transcript directory (`~/.claude/projects/-Users-jay-claude-innovation-awards/
-<session>/subagents/` — candidate) before starting.
-
-**TDD/verification:** write the generator as a small one-off script in the innovation-awards
-`temp/` directory (project-local temp per policy; delete after use); verify row count ==
-dispatch count and spot-check two rows against the raw source; commit CSV only.
-
-**Discretion:** column value formatting (integer vs quoted), sequence numbering scheme,
-grouping label for the small haiku commit dispatches — provided every dispatch gets a row.
-
-**Escalation:** cost file AND transcripts both unavailable (report: exact accounting is
-irrecoverable; do not fabricate); dispatch count cannot be established.
-
-**Commit intent:** `docs(telemetry): regenerate issue-28/404 session telemetry with exact per-dispatch figures` — path: the CSV.
-
----
-
-# Phase B — framework hardening (ai-agent-team; work in a worktree; TDD)
+# Tasks (all in this repository; work in a worktree; TDD)
 
 ## T4-reconcile-installed-drift
 
 **Outcome:** the repo is the single source of truth again: every behavioral difference in
 `~/.claude/hooks/agent_team_closeout.py` (571 lines) vs repo `hooks/agent_team_closeout.py`
 (442 lines) is either committed to the repo (if it is behavior later tasks build on) or
-explicitly rejected in the task report; `install.sh --check` runs clean after Phase B's
+explicitly rejected in the task report; `install.sh --check` runs clean after the plan's
 final install.
 
 **Acceptance mapping:** new finding "installed hook contains never-committed code" →
@@ -263,7 +129,7 @@ before and after; any adopted behavior gets its own test first.
 
 **Discretion:** classifying individual diff hunks as adopt/reject within the fixed rule.
 
-**Escalation:** the diff reveals installed behavior that Phase B tasks contradict in a way
+**Escalation:** the diff reveals installed behavior that later tasks in this plan contradict in a way
 not already decided here; `--check` reveals divergence in files this plan does not touch.
 
 **Commit intent:** `fix(closeout): reconcile installed-copy drift into the repo` — path:
@@ -740,7 +606,7 @@ exists in this repo.
 
 ## T17-integrate-and-reinstall
 
-**Outcome:** all Phase B commits are merged to `ai-agent-team` main and installed:
+**Outcome:** all of this plan's commits are merged to `ai-agent-team` main and installed:
 `bash install.sh` run once, `bash install.sh --check` clean (fact 2's drift gone), the full
 test suite green on main, and the session banner in a fresh consumer-project session shows
 the new build with no BEHIND warning.
@@ -758,7 +624,7 @@ Full suite = every `tests/test_*.sh` plus `python3 tests/test_agent_team_closeou
 onto main; full suite green in the worktree first.
 
 **TDD/verification:** suite output attached; `--check` output attached; one fresh session
-banner observed (H2-adjacent — may be done by Jay).
+banner observed (may be done by Jay).
 
 **Discretion:** merge mechanism (PR vs local merge) per repo convention.
 
@@ -777,8 +643,9 @@ missed — stop and report them); any test red on main that was green in the wor
   lane exists and needs mechanical teeth, which T12 provides), shared-checkout corruption
   (T6, T7 — with the corrected self-race diagnosis), rollback/entry-path/visual
   verification (T13), stale install + never-committed drift (T4, T14, T17), E2BIG (T15),
-  telemetry/accounting (T3, T16), stranded plan doc (T1), stale worktree (T2), warden (H1),
-  final UAT (H2). Deliberately excluded: B's full "lifecycle state machine" rewrite —
+  telemetry/accounting (T16). Remediating the innovation-awards project itself (its
+  stranded doc, stale worktree, telemetry CSV) is OUT OF SCOPE: this plan improves the
+  orchestration only — the orchestration deals with other projects. Deliberately excluded: B's full "lifecycle state machine" rewrite —
   T5+T6 deliver its enforcement value inside the existing hook without a new subsystem
   (YAGNI); revisit only if the transcript-scan mechanism fails preflight.
 - Placeholders: none; every candidate path is labeled and has a preflight step.
