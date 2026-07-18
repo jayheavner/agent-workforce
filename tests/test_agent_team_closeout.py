@@ -192,8 +192,33 @@ class CloseoutHookTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.stderr)
         decision = json.loads(result.stdout)
         self.assertEqual(decision["decision"], "block")
-        self.assertIn("uncommitted", decision["reason"])
+        self.assertIn("uncommitted", decision["reason"].lower())
         self.assertIn("executor", decision["reason"].lower())
+
+    def test_stop_never_attributes_ownership_it_cannot_know(self) -> None:
+        """The hook cannot know which process wrote a changed baseline-dirty path."""
+        (self.repo / "README.md").write_text("user dirt\n", encoding="utf-8")
+        self.dispatch("scribe")
+        (self.repo / "README.md").write_text("user dirt plus task edit\n", encoding="utf-8")
+
+        result = self.stop()
+
+        decision = json.loads(result.stdout)
+        self.assertIn("README.md", decision["reason"])
+        self.assertNotIn("Task-owned", decision["reason"])
+        self.assertIn("cannot attribute", decision["reason"].lower())
+
+    def test_stop_labels_new_file_as_created_this_session_not_task_owned(self) -> None:
+        """A path absent at baseline is reported as created, never claimed as task-owned."""
+        self.dispatch()
+        (self.repo / "newfile.png").write_bytes(b"\x89PNG\r\n")
+
+        result = self.stop()
+
+        decision = json.loads(result.stdout)
+        self.assertIn("newfile.png", decision["reason"])
+        self.assertIn("created during this session", decision["reason"])
+        self.assertNotIn("Task-owned", decision["reason"])
 
     def test_stop_requires_delivery_receipt_for_active_repository_task(self) -> None:
         """An active task cannot end with an unstructured completion report."""
