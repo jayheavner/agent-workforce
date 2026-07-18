@@ -36,6 +36,17 @@ validated at boundaries, and errors sanitized before display.
 A task is the smallest independently reviewable acceptance slice with its own test cycle. Assign
 each task a stable identity unique within the plan.
 
+Four of a task's subsections are load-bearing contract blocks: `Interfaces and invariants`,
+`Acceptance mapping`, `Executable examples`, and `Escalation triggers`. Write each as an explicitly
+delimited block a reader can extract unambiguously — a bounded block, not a prose paragraph folded
+under a heading.
+
+### Model-neutral by design
+
+The plan carries no model reference. Per-model framing is applied by the orchestrator at dispatch
+time, not authored into the plan. See `skills/agent-workforce/references/plan-formatting.md` for
+the framing rationale.
+
 ### Task identity
 
 Use `T<number>-<short-slug>`. Builder results, status notes, verifier findings, reviewer findings,
