@@ -16,6 +16,23 @@ run() { # $1 json
 
 agent_json() { jq -cn --arg t "$1" '{tool_name:"Agent",tool_input:{subagent_type:$t}}'; }
 
+# Build a fixture transcript with one unresolved Agent tool_use for the named
+# subagent_type (T6: serialize-mutating-dispatches ground truth).
+write_unresolved_transcript() { # $1 subagent_type -> prints path
+  local role="$1"
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-transcript.XXXXXX")"
+  jq -cn --arg role "$role" \
+    '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"toolu_fixture_serialize_1",name:"Agent",input:{subagent_type:$role}}]}}' \
+    > "$path"
+  printf '%s' "$path"
+}
+
+agent_json_with_transcript() { # $1 subagent_type $2 transcript_path $3 prompt
+  jq -cn --arg t "$1" --arg tp "$2" --arg p "$3" \
+    '{tool_name:"Agent",transcript_path:$tp,tool_input:{subagent_type:$t,prompt:$p}}'
+}
+
 expect() { # $1 expected_rc, $2 json, $3 label
   run "$2"
   if [ "$RC" -eq "$1" ]; then
@@ -62,6 +79,26 @@ expect_block "{" "truncated JSON blocks"
 # substring containment against the space-padded VALID list.
 expect_block "$(agent_json 'architect builder')" "compound 'architect builder' blocks"
 expect_block "$(agent_json ' architect ')" "padded exact-looking value blocks"
+
+# T6: serialize git-mutating dispatches ({builder, executor, deployer}) per
+# checkout while one is unresolved, unless the new dispatch's prompt carries
+# the exact PARALLEL_SAFE marker.
+BUILDER_TRANSCRIPT="$(write_unresolved_transcript builder)"
+
+expect_block \
+  "$(agent_json_with_transcript executor "$BUILDER_TRANSCRIPT" "run the finalizer")" \
+  "unresolved builder blocks executor without marker"
+
+expect_allow \
+  "$(agent_json_with_transcript executor "$BUILDER_TRANSCRIPT" "PARALLEL_SAFE: no git mutation in this dispatch")" \
+  "unresolved builder allows executor with PARALLEL_SAFE marker"
+
+NO_MUTATING_TRANSCRIPT="$(write_unresolved_transcript researcher)"
+expect_allow \
+  "$(agent_json_with_transcript executor "$NO_MUTATING_TRANSCRIPT" "run the finalizer")" \
+  "no unresolved serialized dispatch allows"
+
+rm -f "$BUILDER_TRANSCRIPT" "$NO_MUTATING_TRANSCRIPT"
 
 echo "dispatch-guard tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
