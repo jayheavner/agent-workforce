@@ -24,6 +24,7 @@ Spec: `docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`. Query wi
   "model_drift": "boolean, or null when either side is unknown",
   "sequence": "first | repair-1 | repair-2 | n/a",
   "verdict": "pass | fail | escalated | n/a",
+  "framing": "claude-xml | gpt-markdown | outcome-first | unframed-fallback | n/a",
   "tokens": "number or null",
   "cost_usd": "number or null",
   "cost_available": "boolean"
@@ -33,6 +34,12 @@ Spec: `docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`. Query wi
 `sequence` and `verdict` are populated only for builder and architect work dispatches
 (the roles with a checker loop); every other role gets `n/a` on both. `first_try_pass`
 is never stored — it is derived at query time as `sequence == "first" AND verdict == "pass"`.
+
+`framing` records which dispatch envelope framing the orchestrator applied, per
+`skills/agent-workforce/references/plan-formatting.md`. It is populated only for builder
+work dispatches (the framing target); every other role gets `n/a`. Telemetry stays
+best-effort: a missing framing label is written `n/a`, never guessed, and never blocks
+closeout.
 
 ## `requested_model` resolution order
 
