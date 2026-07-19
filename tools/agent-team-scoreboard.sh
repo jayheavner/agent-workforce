@@ -58,13 +58,15 @@ cat "$ROOT"/*.jsonl | jq -R -s -r --slurpfile rates "$RATES" '
   (if ($quarantined | length) > 0
    then "unattributed: \($quarantined | length) record(s) — resolved_model unset, synthetic, or not in the rates file"
    else empty end),
-  (if $malformed > 0 then "skipped: \($malformed) malformed line(s)" else empty end)
+  (if $malformed > 0 then "skipped: \($malformed) malformed line(s)" else empty end),
+  ( $good | map(select(.role == "builder" and (.framing // "n/a") != "n/a"))
+    | group_by(.framing) | map("framing \(.[0].framing): \(length)") | .[] )
 ' | {
   # pretty columns without disturbing the footer lines
   header
   while IFS= read -r line; do
     case "$line" in
-      unattributed:*|skipped:*) printf '%s\n' "$line" ;;
+      unattributed:*|skipped:*|framing\ *:*) printf '%s\n' "$line" ;;
       *) printf '%s\n' "$line" | awk -F'\t' '{printf "%-10s %-18s %-9s %4s %10s %7s %8s %6s\n", $1,$2,$3,$4,$5,$6,$7,$8}' ;;
     esac
   done
