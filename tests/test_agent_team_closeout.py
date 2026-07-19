@@ -260,14 +260,22 @@ class CloseoutStopHookTest(unittest.TestCase):
         (repo / "residue.txt").write_text("left behind\n", encoding="utf-8")
         return repo
 
+    def build_and_verify(self) -> list[dict[str, object]]:
+        """builder then verifier, both resolved — the contract-correct shape."""
+        return [
+            self.dispatch("tu_1", "builder"),
+            self.result("tu_1"),
+            self.dispatch("tu_2", "verifier"),
+            self.result("tu_2"),
+        ]
+
     def test_dirty_tree_after_mutating_dispatch_blocks(self) -> None:
         """(g) builder ran, tree dirty, final message silent -> block mentions it."""
         repo = self._make_dirty_repo()
         transcript = self.write_transcript(
             [
                 self.assistant_text("Dispatching now.", "msg_1"),
-                self.dispatch("tu_1", "builder"),
-                self.result("tu_1"),
+                *self.build_and_verify(),
                 self.assistant_text("Feature finished.", "msg_2"),
             ]
         )
@@ -283,8 +291,7 @@ class CloseoutStopHookTest(unittest.TestCase):
         transcript = self.write_transcript(
             [
                 self.assistant_text("Dispatching now.", "msg_1"),
-                self.dispatch("tu_1", "builder"),
-                self.result("tu_1"),
+                *self.build_and_verify(),
                 self.assistant_text(
                     "Feature finished. residue.txt remains uncommitted because the "
                     "human opted out of the commit.\n\n## Cost report\n\n"
@@ -294,6 +301,184 @@ class CloseoutStopHookTest(unittest.TestCase):
             ]
         )
         result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    # --- the delivery ledger: machine-verifiable checks only --------------
+
+    def _make_clean_repo(self) -> Path:
+        repo = self._make_dirty_repo()
+        subprocess.run(["git", "-C", str(repo), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "test: residue"],
+                       check=True, capture_output=True)
+        return repo
+
+    def closeout_text(self, extra: str = "") -> str:
+        return (
+            "Delivered. " + extra + "\n\n## Cost report\n\n| Model | Cost |\n"
+        )
+
+    def test_builder_without_verifier_blocks(self) -> None:
+        """(h) Code work with no fresh verification -> block demands the verifier."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "builder"),
+                self.result("tu_1"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("verifier", decision["reason"])
+
+    def test_builder_then_verifier_allows(self) -> None:
+        """(h) Verifier dispatched after the last builder -> no ledger block."""
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_verifier_before_final_builder_blocks(self) -> None:
+        """(h) Verification predating the last code edit is stale."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "verifier"),
+                self.result("tu_1"),
+                self.dispatch("tu_2", "builder"),
+                self.result("tu_2"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("verifier", decision["reason"])
+
+    def test_pause_marker_skips_verify_requirement(self) -> None:
+        """(h) An intentional WORKFORCE_PAUSE is not a completion claim."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "builder"),
+                self.result("tu_1"),
+                self.assistant_text(
+                    "WORKFORCE_PAUSE: HUMAN_DECISION — awaiting the gate."
+                    "\n\n## Cost report\n\n| Model | Cost |\n",
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_phantom_commit_hash_blocks(self) -> None:
+        """(i) A claimed commit hash absent from the object store -> block."""
+        repo = self._make_clean_repo()
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text("Committed as deadbee12345."), "msg_2"
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("deadbee12345", decision["reason"])
+
+    def test_real_commit_hash_allows(self) -> None:
+        """(i) A hash that exists in the checkout passes."""
+        repo = self._make_clean_repo()
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text(f"Committed as {head}."), "msg_2"
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_missing_status_note_blocks(self) -> None:
+        """(j) A cited docs/STATUS-*.md that is not on disk -> block."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+                self.assistant_text(
+                    self.closeout_text("Status note: docs/STATUS-csv-tool.md."),
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("docs/STATUS-csv-tool.md", decision["reason"])
+
+    def test_existing_status_note_allows(self) -> None:
+        """(j) The cited status note exists -> no ledger block."""
+        (self.cwd_dir / "docs").mkdir()
+        (self.cwd_dir / "docs" / "STATUS-csv-tool.md").write_text(
+            "outcome\n", encoding="utf-8"
+        )
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+                self.assistant_text(
+                    self.closeout_text("Status note: docs/STATUS-csv-tool.md."),
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_deployed_claim_without_deployer_blocks(self) -> None:
+        """(k) "deployed" with no deployer dispatch -> block."""
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text("Deployed to production."), "msg_2"
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("deployer", decision["reason"])
+
+    def test_deployed_claim_with_deployer_allows(self) -> None:
+        """(k) "deployed" after an actual deployer dispatch passes."""
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.dispatch("tu_3", "deployer"),
+                self.result("tu_3"),
+                self.assistant_text(
+                    self.closeout_text("Deployed and smoke-checked."), "msg_2"
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 

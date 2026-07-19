@@ -2,8 +2,9 @@
 """agent_team_closeout.py — Stop hook: the priced closeout that cannot be skipped.
 
 Fires on Stop in orchestrator sessions (wired via agent frontmatter in snapshot
-mode, via hooks.json + the plugin router in live plugin mode). It enforces
-exactly two things, both mechanical:
+mode, via hooks.json + the plugin router in live plugin mode). Everything it
+enforces is mechanical — checked against the transcript, git, or the
+filesystem, never self-reported:
 
 1. Any turn that ends after dispatched work must carry the exact cost report.
    The hook COMPUTES the report itself (cost_report.py, whole session including
@@ -12,6 +13,12 @@ exactly two things, both mechanical:
 2. If git-mutating specialists ran and the working tree is dirty, the final
    message must acknowledge the uncommitted state (commit via the executor or
    say plainly what remains and why).
+3. The delivery ledger (ledger_checks): builder work needs a verifier dispatch
+   after the last builder; claimed commit hashes must exist in the checkout;
+   claimed docs/STATUS-*.md files must exist; a "deployed" claim requires a
+   deployer dispatch. Reality-checked descendants of the 2026-07-15 receipt
+   ledger, whose self-reported fields produced rote compliance (67 receipts,
+   2026-07-17) and were deleted.
 
 Design rules learned from the previous generation (see
 docs/superpowers/specs/2026-07-18-autonomy-first-redesign.md):
@@ -25,6 +32,7 @@ docs/superpowers/specs/2026-07-18-autonomy-first-redesign.md):
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -62,15 +70,16 @@ def save_state(session_id, state):
 
 
 def scan_transcript(path):
-    """One pass: dispatch count, in-flight set, roles seen, last assistant text."""
+    """One pass: dispatch count, in-flight set, roles seen (ordered), last text."""
     total = 0
     in_flight = {}
     roles = set()
+    order = []
     last_text = ""
     try:
         f = open(path, encoding="utf-8", errors="replace")
     except OSError:
-        return 0, {}, set(), ""
+        return 0, {}, set(), [], ""
     with f:
         for line in f:
             try:
@@ -97,9 +106,10 @@ def scan_transcript(path):
                     stype = stype.split(":")[-1]
                     in_flight[block_.get("id")] = stype
                     roles.add(stype)
+                    order.append(stype)
                 elif block_.get("type") == "tool_result" and block_.get("tool_use_id") in in_flight:
                     del in_flight[block_["tool_use_id"]]
-    return total, in_flight, roles, last_text
+    return total, in_flight, roles, order, last_text
 
 
 def cost_report_cmd(transcript, session_id, cwd, extra=()):
@@ -132,6 +142,81 @@ def git_dirty(cwd):
         return out.returncode == 0 and bool(out.stdout.strip())
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def git_object_exists(cwd, sha):
+    """False only when git positively says the object is absent (fail-open)."""
+    try:
+        out = subprocess.run(["git", "-C", cwd, "cat-file", "-e", sha],
+                             capture_output=True, timeout=10)
+        return out.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
+def in_git_repo(cwd):
+    try:
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--is-inside-work-tree"],
+                             capture_output=True, text=True, timeout=10)
+        return out.returncode == 0 and out.stdout.strip() == "true"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def ledger_checks(last_text, roles, order, cwd):
+    """The resurrected delivery ledger — machine-verifiable checks ONLY.
+
+    Every check compares a claim in the final message (or a contract duty)
+    against reality the hook can read itself: dispatch order in the
+    transcript, git's object store, the filesystem. Nothing here asks the
+    model to fill in a schema — that failure mode is documented (2026-07-17:
+    67 rote receipts) and must not return.
+    """
+    problems = []
+
+    # 1. Fresh verification after the last code edit (builder work only —
+    #    executor one-shots stay inside the proportionality floor).
+    if "builder" in roles and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
+        last_builder = max(i for i, r in enumerate(order) if r == "builder")
+        if not any(r == "verifier" for r in order[last_builder + 1:]):
+            problems.append(
+                "A builder ran after the last verifier dispatch (or no verifier "
+                "ran at all). Fresh verification must follow the final code "
+                "edit: dispatch the verifier against the delivered work before "
+                "closing out.")
+
+    # 2. Every commit hash claimed in the final message must exist in this
+    #    checkout's object store.
+    if in_git_repo(cwd):
+        for line in last_text.splitlines():
+            if not re.search(r"\bcommit(s|ted|ting)?\b", line, re.IGNORECASE):
+                continue
+            for sha in re.findall(r"\b[0-9a-f]{7,40}\b", line):
+                if not git_object_exists(cwd, sha):
+                    problems.append(
+                        f"The final message cites commit {sha}, which does not "
+                        "exist in this checkout. Correct the hash, or state "
+                        "which repository it belongs to.")
+
+    # 3. Every status-note path claimed in the final message must exist.
+    for rel in set(re.findall(r"docs/STATUS-[\w.-]+\.md", last_text)):
+        if not os.path.isfile(os.path.join(cwd, rel)):
+            problems.append(
+                f"The final message references {rel}, which does not exist. "
+                "Dispatch the scribe to write it, or remove the claim.")
+
+    # 4. A "deployed" claim requires that a deployer actually ran.
+    lowered = last_text.lower()
+    if (re.search(r"\bdeployed\b", lowered)
+            and not re.search(r"\bnot\s+deployed\b", lowered)
+            and "deployer" not in roles):
+        problems.append(
+            'The final message says "deployed" but no deployer dispatch ran '
+            "this session. Route the deploy through the deployer, or restate "
+            "the delivery honestly (e.g. \"implemented and locally verified; "
+            "deploy not authorized\").")
+
+    return problems
 
 
 def write_telemetry(transcript, session_id, cwd):
@@ -168,7 +253,7 @@ def main():
     if not session_id or not os.path.isfile(transcript):
         allow()
 
-    total, in_flight, roles, last_text = scan_transcript(transcript)
+    total, in_flight, roles, order, last_text = scan_transcript(transcript)
 
     # No dispatched work this session -> nothing to enforce (plain Q&A turn).
     if total == 0:
@@ -199,6 +284,8 @@ def main():
                 "`bin/agent-workforce-cost-report --transcript " + transcript +
                 "` (or have the executor run it) and include its output "
                 "verbatim under '" + COST_MARKER + "'.")
+
+    missing.extend(ledger_checks(last_text, roles, order, cwd))
 
     if roles & MUTATING_ROLES and git_dirty(cwd):
         acked = any(w.lower() in last_text.lower() for w in DIRTY_ACK_WORDS)
