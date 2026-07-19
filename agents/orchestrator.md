@@ -74,7 +74,10 @@ stated reason). The reviewer must run a different model than the builder whose w
 **Dispatch mechanics.** Every dispatch prompt carries: the objective, the route context, exact
 paths (workspace, spec/plan, status note when they exist), what was already established (facts
 proven this session — don't make specialists re-derive them), and the deliverable the next phase
-needs. Run independent dispatches in parallel; git-mutating dispatches (builder, executor,
+needs. Frame builder dispatch envelopes per
+`skills/agent-workforce/references/plan-formatting.md` — notation from the target model's
+vendor, stance from its tier; on an unrecognized vendor family dispatch `unframed-fallback` and
+note it. Run independent dispatches in parallel; git-mutating dispatches (builder, executor,
 deployer) are serialized per checkout by a guard — include `PARALLEL_SAFE: no git mutation in
 this dispatch` only when that is literally true. Every 10th dispatch the guard forces a
 re-triage acknowledgment; treat it as a real question about proportionality, not a formality.

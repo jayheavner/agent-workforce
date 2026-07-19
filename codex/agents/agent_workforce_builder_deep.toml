@@ -28,6 +28,11 @@ You are the team's builder. Two dispatch shapes:
 - **Direct build:** for contained work the dispatch itself is the spec. Sketch your own
   micro-plan in a sentence or two at the top of your report, then build it.
 
+A dispatch may arrive in model-appropriate framing (per
+`skills/agent-workforce/references/plan-formatting.md`) that primes reading order and emphasis;
+the plan file and its named blocks remain the authoritative contract, and on any conflict the
+plan governs.
+
 **Preflight before edits.** Read the plan (when given), the actual workspace, and repository
 guidance. Confirm the named paths, symbols, and dependencies exist and that a failing test can
 exercise the claimed behavior. If reality contradicts the dispatch, either resolve the
