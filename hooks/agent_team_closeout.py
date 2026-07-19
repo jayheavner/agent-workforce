@@ -35,12 +35,20 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 MAX_BLOCKS = 3
 COST_MARKER = "## Cost report"
 MUTATING_ROLES = {"builder", "executor", "deployer"}
-DIRTY_ACK_WORDS = ("uncommitted", "not committed", "committed", "commit", "dirty tree",
-                   "working tree", "WORKFORCE_PAUSE: HUMAN_DECISION")
+# Only phrases that actually acknowledge DIRT count. "commit"/"committed" were
+# removed deliberately: they satisfied the check in exactly the failure case it
+# exists to catch (claiming a commit happened while the tree is dirty).
+DIRTY_ACK_WORDS = ("uncommitted", "not committed", "left dirty", "dirty tree",
+                   "WORKFORCE_PAUSE: HUMAN_DECISION")
+# A background dispatch writes an immediate stub tool_result; the real
+# completion arrives later as a task-notification carrying the tool_use id.
+BG_STUB_MARKER = "Async agent launched successfully"
+NOTIFIED_ID = re.compile(r"<tool-use-id>([^<]+)</tool-use-id>")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -51,6 +59,19 @@ def state_path(session_id):
     os.makedirs(root, exist_ok=True)
     digest = hashlib.sha256(session_id.encode()).hexdigest()
     return os.path.join(root, digest + ".json")
+
+
+def gc_state():
+    """State files persist across a session's stops (acked_total); reap old ones."""
+    root = os.environ.get("AGENT_TEAM_CLOSEOUT_STATE",
+                          os.path.expanduser("~/.claude/state/agent-workforce-closeout"))
+    cutoff = time.time() - 30 * 86400
+    try:
+        for entry in os.scandir(root):
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                os.unlink(entry.path)
+    except OSError:
+        pass
 
 
 def load_state(session_id):
@@ -69,12 +90,31 @@ def save_state(session_id, state):
         pass
 
 
+def block_text(block_):
+    """Flatten a tool_result/content value (string or text-block list) to text."""
+    content = block_.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
 def scan_transcript(path):
-    """One pass: dispatch count, in-flight set, roles seen (ordered), last text."""
+    """One pass: dispatch count, in-flight set, roles seen (ordered), last text.
+
+    Background dispatches are handled explicitly: their immediate tool_result
+    is a launch stub (BG_STUB_MARKER), NOT a completion — the dispatch stays
+    in flight until a task-notification names its tool_use id. If the harness
+    ever changes the stub wording, the stub reads as a real result and the
+    hook degrades to the old (allow-leaning) behavior.
+    """
     total = 0
     in_flight = {}
     roles = set()
     order = []
+    notified = set()
     last_text = ""
     try:
         f = open(path, encoding="utf-8", errors="replace")
@@ -90,6 +130,9 @@ def scan_transcript(path):
                 continue
             msg = rec.get("message") or {}
             content = msg.get("content")
+            if isinstance(content, str):
+                notified.update(NOTIFIED_ID.findall(content))
+                continue
             if not isinstance(content, list):
                 continue
             if rec.get("type") == "assistant":
@@ -100,7 +143,9 @@ def scan_transcript(path):
             for block_ in content:
                 if not isinstance(block_, dict):
                     continue
-                if block_.get("type") == "tool_use" and block_.get("name") == "Agent":
+                if block_.get("type") == "text":
+                    notified.update(NOTIFIED_ID.findall(block_.get("text", "")))
+                elif block_.get("type") == "tool_use" and block_.get("name") == "Agent":
                     total += 1
                     stype = (block_.get("input") or {}).get("subagent_type", "") or ""
                     stype = stype.split(":")[-1]
@@ -108,7 +153,10 @@ def scan_transcript(path):
                     roles.add(stype)
                     order.append(stype)
                 elif block_.get("type") == "tool_result" and block_.get("tool_use_id") in in_flight:
-                    del in_flight[block_["tool_use_id"]]
+                    if BG_STUB_MARKER not in block_text(block_):
+                        del in_flight[block_["tool_use_id"]]
+    for tid in notified:
+        in_flight.pop(tid, None)
     return total, in_flight, roles, order, last_text
 
 
@@ -262,7 +310,13 @@ def main():
     if in_flight:
         allow()
 
+    gc_state()
     state = load_state(session_id)
+    # Everything up to acked_total was already priced at an earlier passing
+    # stop. Conversational turns after a closeout don't re-demand the table;
+    # the next NEW dispatch re-arms enforcement.
+    if total <= state.get("acked_total", 0):
+        allow()
     blocks = state.get("blocks", 0)
     if blocks >= MAX_BLOCKS:
         print("agent-team closeout: enforcement cap reached; allowing stop "
@@ -303,10 +357,7 @@ def main():
         block("\n\n".join(missing))
 
     write_telemetry(transcript, session_id, cwd)
-    try:
-        os.unlink(state_path(session_id))
-    except OSError:
-        pass
+    save_state(session_id, {"acked_total": total})
     allow()
 
 

@@ -105,5 +105,21 @@ else
   fail "unmapped subagent reports role unknown, never invented"
 fi
 
+# --- (f) undercount warning: dispatches recorded but no subagent transcripts ---
+ORPHAN="$TMP/orphan-session.jsonl"
+{
+  jq -nc '{type:"assistant",message:{id:"msg_o1",model:"claude-sonnet-5",
+    content:[{type:"tool_use",id:"tu_o1",name:"Agent",input:{subagent_type:"builder"}}],
+    usage:{input_tokens:10,output_tokens:5,cache_creation_input_tokens:0,cache_read_input_tokens:0}},
+    timestamp:"2026-07-19T00:00:00.000Z"}'
+} > "$ORPHAN"
+ORPHAN_MD="$(python3 "$TOOL" --transcript "$ORPHAN" 2>/dev/null)"
+expect_contains "$ORPHAN_MD" "WARNING" \
+  "dispatches with zero subagent transcripts warn about undercount"
+expect_contains "$ORPHAN_MD" "1 Agent dispatch" \
+  "undercount warning names the dispatch count"
+expect_not_contains "$MD" "WARNING" \
+  "good fixture (no dispatches) carries no undercount warning"
+
 echo "cost-report tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

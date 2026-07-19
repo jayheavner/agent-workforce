@@ -41,8 +41,17 @@ closest existing definition in `agents/` and change what the gap demands: identi
 (smallest set that does the job), model and effort (cheapest tier that is honest about the
 work), permission posture (mutating roles carry the secrets + audit hooks; read-only roles get
 no Write/Edit), and a description that says when the orchestrator should dispatch it. Mark the
-body's first line `Provisional agent — created <date> for <task>; awaiting human review.` The
-orchestrator can dispatch it next session once installed; note that in the disclosure.
+body's first line `Provisional agent — created <date> for <task>; awaiting human review.`
+
+A new agent is dispatchable only after ALL THREE touchpoints change, plus an install and a new
+session — the drift test pins them to each other:
+
+1. `agents/<name>.md` — the definition itself.
+2. `agents/orchestrator.md` frontmatter `tools:` — add `Agent(<name>)`.
+3. `hooks/agent-team-dispatch-guard.sh` `VALID_SPECIALISTS` — add `<name>`, or the guard
+   hard-blocks the dispatch.
+
+Note in the disclosure that the agent activates next session, and which touchpoints changed.
 
 ## Disclosure — the non-negotiable step
 

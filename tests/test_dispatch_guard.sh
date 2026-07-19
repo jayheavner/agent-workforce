@@ -114,6 +114,37 @@ expect_allow \
   "$(agent_json_with_transcript executor "$BUILDER_TRANSCRIPT" "PARALLEL_SAFE: no git mutation in this dispatch")" \
   "unresolved builder allows executor with PARALLEL_SAFE marker"
 
+# Background dispatch: builder tool_use answered only by a launch STUB — the
+# dispatch is still in flight, so a second mutating dispatch must serialize.
+write_bg_stub_transcript() { # $1 subagent_type [$2 with_notification] -> prints path
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-transcript.XXXXXX")"
+  jq -nc --arg role "$1" \
+    '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"toolu_bg_1",name:"Agent",input:{subagent_type:$role}}]}}' \
+    >"$path"
+  jq -nc \
+    '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"toolu_bg_1",content:[{type:"text",text:"Async agent launched successfully. agentId: abc"}]}]}}' \
+    >>"$path"
+  if [ "${2:-}" = "with_notification" ]; then
+    jq -nc \
+      '{type:"user",message:{role:"user",content:[{type:"text",text:"<task-notification>\n<tool-use-id>toolu_bg_1</tool-use-id>\n<status>completed</status>\n</task-notification>"}]}}' \
+      >>"$path"
+  fi
+  printf '%s' "$path"
+}
+
+BG_STUB_TRANSCRIPT="$(write_bg_stub_transcript builder)"
+expect_block \
+  "$(agent_json_with_transcript executor "$BG_STUB_TRANSCRIPT" "run the finalizer")" \
+  "background builder (launch stub only) still serializes"
+
+BG_DONE_TRANSCRIPT="$(write_bg_stub_transcript builder with_notification)"
+expect_allow \
+  "$(agent_json_with_transcript executor "$BG_DONE_TRANSCRIPT" "run the finalizer")" \
+  "background builder resolved by task-notification allows"
+
+rm -f "$BG_STUB_TRANSCRIPT" "$BG_DONE_TRANSCRIPT"
+
 NO_MUTATING_TRANSCRIPT="$(write_unresolved_transcript researcher)"
 expect_allow \
   "$(agent_json_with_transcript executor "$NO_MUTATING_TRANSCRIPT" "run the finalizer")" \
@@ -144,6 +175,23 @@ expect_allow \
   "19th dispatch attempt without ack allows (next checkpoint is 20)"
 
 rm -f "$NINE_PRIOR" "$TEN_PRIOR" "$EIGHTEEN_PRIOR"
+
+# --- roster drift: the guard allowlist, agents/, and the orchestrator's
+# Agent(...) tools must name exactly the same specialists, or a grown agent
+# silently becomes undispatchable (three-touchpoint rule in growing-the-team).
+GUARD_ROSTER="$(grep '^readonly VALID_SPECIALISTS=' "$GUARD" | sed 's/.*"\(.*\)".*/\1/' | tr ' ' '\n' | sort)"
+AGENT_ROSTER="$(cd "$HERE/../agents" && ls *.md | sed 's/\.md$//' | grep -v '^orchestrator$' | sort)"
+ORCH_ROSTER="$(grep -o 'Agent([a-z-]*)' "$HERE/../agents/orchestrator.md" | sed 's/Agent(\(.*\))/\1/' | sort -u)"
+if [ "$GUARD_ROSTER" = "$AGENT_ROSTER" ]; then
+  PASS=$((PASS+1))
+else
+  FAIL=$((FAIL+1)); echo "FAIL [roster]: guard VALID_SPECIALISTS != agents/*.md"
+fi
+if [ "$ORCH_ROSTER" = "$AGENT_ROSTER" ]; then
+  PASS=$((PASS+1))
+else
+  FAIL=$((FAIL+1)); echo "FAIL [roster]: orchestrator Agent(...) != agents/*.md"
+fi
 
 echo "dispatch-guard tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

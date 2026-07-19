@@ -206,8 +206,8 @@ class CloseoutStopHookTest(unittest.TestCase):
         state = json.loads(self.state_file().read_text(encoding="utf-8"))
         self.assertEqual(state["blocks"], 1)
 
-    def test_cost_report_marker_allows_and_clears_state(self) -> None:
-        """(e) Final message carrying the marker -> allow, state removed."""
+    def test_cost_report_marker_allows_and_acks(self) -> None:
+        """(e) Final message carrying the marker -> allow, dispatch count acked."""
         self.seed_state(blocks=1)
         transcript = self.write_transcript(
             [
@@ -222,7 +222,96 @@ class CloseoutStopHookTest(unittest.TestCase):
         result = self.run_hook(self.payload(transcript))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertFalse(self.state_file().exists(), "state must be cleared")
+        state = json.loads(self.state_file().read_text(encoding="utf-8"))
+        self.assertEqual(state, {"acked_total": 1}, "pass must ack and reset blocks")
+
+    def test_chat_turn_after_acked_closeout_allows(self) -> None:
+        """(e2) No NEW dispatches since the priced stop -> no table demanded."""
+        self.state_file().write_text(json.dumps({"acked_total": 1}), encoding="utf-8")
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+                self.assistant_text("It's in src/parser.js, line 40.", "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_new_dispatch_after_ack_rearms_enforcement(self) -> None:
+        """(e2) A dispatch AFTER the acked stop re-demands the table."""
+        self.state_file().write_text(json.dumps({"acked_total": 1}), encoding="utf-8")
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+                self.dispatch("tu_2", "scribe"),
+                self.result("tu_2"),
+                self.assistant_text("Second task done.", "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("Cost report", decision["reason"])
+
+    # --- background dispatches --------------------------------------------
+
+    BG_STUB = ("Async agent launched successfully. (This tool result is "
+               "internal metadata...)\nagentId: abc123")
+
+    def bg_result(self, tool_id: str) -> dict[str, object]:
+        return {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tool_id,
+                     "content": self.BG_STUB}
+                ]
+            },
+        }
+
+    def notification(self, tool_id: str) -> dict[str, object]:
+        return {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "text",
+                     "text": "<task-notification>\n<task-id>abc123</task-id>\n"
+                             f"<tool-use-id>{tool_id}</tool-use-id>\n"
+                             "<status>completed</status>\n</task-notification>"}
+                ]
+            },
+        }
+
+    def test_background_stub_is_still_in_flight(self) -> None:
+        """(c2) A background launch stub is a wait, not a resolution."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "builder"),
+                self.bg_result("tu_1"),
+                self.assistant_text("Builder is running in the background.", "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_background_completion_notification_resolves(self) -> None:
+        """(c2) The task-notification resolves the dispatch -> closeout is due."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "scribe"),
+                self.bg_result("tu_1"),
+                self.notification("tu_1"),
+                self.assistant_text("All done.", "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("Cost report", decision["reason"])
 
     def test_block_cap_fails_open(self) -> None:
         """(f) After MAX_BLOCKS blocks the hook allows rather than wedging."""
@@ -281,6 +370,29 @@ class CloseoutStopHookTest(unittest.TestCase):
         )
         result = self.run_hook(self.payload(transcript, cwd=str(repo)))
         self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("uncommitted", decision["reason"])
+
+    def test_dirty_tree_commit_claim_does_not_count_as_ack(self) -> None:
+        """(g2) Saying "committed" while the tree is dirty is the lie the check
+        exists to catch — it must NOT satisfy the acknowledgment."""
+        repo = self._make_dirty_repo()
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    f"Feature finished. Committed as {head}."
+                    "\n\n## Cost report\n\n| Model | Cost |\n",
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
         decision = json.loads(result.stdout)
         self.assertEqual(decision["decision"], "block")
         self.assertIn("uncommitted", decision["reason"])

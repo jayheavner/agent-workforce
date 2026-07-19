@@ -82,7 +82,7 @@ is decided and disclosed at closeout.
 | Audit log | `hooks/agent-team-audit.sh` | One line per shell command per role → `~/.claude/logs/agent-team-audit.log` |
 | Dispatch guard | `hooks/agent-team-dispatch-guard.sh` | Valid `subagent_type` only; serializes git-mutating dispatches; every 10th dispatch requires a budget acknowledgment (the $51 stop-loss) |
 | Cost collection | `hooks/agent-team-cost.sh` | Exact per-dispatch token/cost file per session (PostToolUse) |
-| Priced closeout | `hooks/agent_team_closeout.py` | Stop hook: computes the whole-session cost report and blocks the final message until it is included; requires dirty-tree honesty; bounded at 3 blocks (never wedges); writes telemetry mechanically |
+| Priced closeout | `hooks/agent_team_closeout.py` | Stop hook: computes the whole-session cost report and blocks the final message until it is included; requires dirty-tree honesty; enforces the delivery ledger (verifier after last builder, claimed commits exist, claimed status notes exist, "deployed" needs a deployer) — every check verified against transcript/git/filesystem, never self-reported; bounded at 3 blocks (never wedges); writes telemetry mechanically |
 | Cost report | `bin/agent-workforce-cost-report` | Prints the exact session table on demand — **including the orchestrator's own usage** |
 
 There is no estimate path anywhere. A model with no rate in `hooks/model-rates.json` is reported

@@ -91,19 +91,31 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
   esac
   TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
   if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+    # Background dispatches: the immediate tool_result is a launch stub
+    # ("Async agent launched successfully"); the dispatch is only resolved by
+    # a later task-notification carrying its tool_use id. A stub therefore
+    # does NOT clear in-flight status; a notification does.
     UNRESOLVED_ROLE="$(
       jq -rs --arg roles "$GIT_SERIALIZED_ROLES" '
         ($roles | split(" ")) as $serialized
+        | ([ .[] | .. | strings
+             | match("<tool-use-id>([^<]+)</tool-use-id>"; "g")
+             | .captures[0].string ] | unique) as $notified
         | reduce .[] as $line ({};
-            ($line.message.content // [])[] as $block
+            ((($line.message.content // []) | if type == "array" then . else [] end))[] as $block
             | if ($block.type == "tool_use" and $block.name == "Agent")
               then .[$block.id] = ($block.input.subagent_type // "")
-              elif ($block.type == "tool_result" and $block.tool_use_id != null)
+              elif ($block.type == "tool_result" and $block.tool_use_id != null
+                    and (([$block.content] | flatten
+                          | map(if type == "object" then (.text // "") else tostring end)
+                          | join(" "))
+                         | contains("Async agent launched successfully") | not))
               then del(.[$block.tool_use_id])
               else . end
           )
         | to_entries[]
-        | select(.value as $r | $serialized | index($r))
+        | select((.key as $k | $notified | index($k) | not)
+                 and (.value as $r | $serialized | index($r)))
         | .value
       ' "$TRANSCRIPT" 2>/dev/null | head -n1
     )"

@@ -142,6 +142,30 @@ def load_agent_types(cost_file):
         return {}
 
 
+def count_dispatches(transcript):
+    """Agent tool_use blocks in the main transcript — the ground truth for how
+    many subagent transcripts SHOULD exist beside it."""
+    n = 0
+    try:
+        f = open(transcript, encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    with f:
+        for line in f:
+            if '"Agent"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            content = ((rec or {}).get("message") or {}).get("content")
+            if isinstance(content, list):
+                n += sum(1 for b in content
+                         if isinstance(b, dict) and b.get("type") == "tool_use"
+                         and b.get("name") == "Agent")
+    return n
+
+
 def collect(transcript, rates):
     """Parse main + subagent transcripts. Returns (main_reqs, {agent_id: reqs})."""
     main_reqs = parse_transcript(transcript, rates.keys())
@@ -158,7 +182,7 @@ def fmt_tokens(n):
     return f"{n:,}"
 
 
-def markdown_report(main_reqs, subs, rates, agent_types):
+def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
     all_reqs = list(main_reqs)
     for reqs in subs.values():
         all_reqs.extend(reqs)
@@ -203,6 +227,13 @@ def markdown_report(main_reqs, subs, rates, agent_types):
     if ws or wf:
         lines.append(f"Server tools (billed per use, counted not priced): "
                      f"web_search x{ws}, web_fetch x{wf}.")
+        lines.append("")
+    if dispatches > 0 and not subs:
+        lines.append(
+            f"WARNING: the transcript records {dispatches} Agent dispatch(es) "
+            "but no subagent transcripts were found beside it — subagent usage "
+            "is MISSING from this table (the transcript layout may have "
+            "changed; totals above are an undercount).")
         lines.append("")
     lines.append("Exact per-request figures from session transcripts at list rates "
                  "(model-rates.json), main session included.")
@@ -253,15 +284,18 @@ def main():
 
     main_reqs, subs = collect(args.transcript, rates)
     agent_types = load_agent_types(args.cost_file) if args.cost_file else {}
+    dispatches = count_dispatches(args.transcript)
 
     if args.format == "json":
         all_reqs = list(main_reqs) + [r for reqs in subs.values() for r in reqs]
         priced, unpriced, total, ws, wf = aggregate(all_reqs, rates)
         print(json.dumps({"total_cost_usd": round(total, 6), "models": priced,
                           "unpriced_models": unpriced,
-                          "web_search_requests": ws, "web_fetch_requests": wf}, default=int))
+                          "web_search_requests": ws, "web_fetch_requests": wf,
+                          "dispatches": dispatches,
+                          "subagent_transcripts_found": len(subs)}, default=int))
     else:
-        report, _ = markdown_report(main_reqs, subs, rates, agent_types)
+        report, _ = markdown_report(main_reqs, subs, rates, agent_types, dispatches)
         print(report)
 
     if args.telemetry_dir and args.session_id:
