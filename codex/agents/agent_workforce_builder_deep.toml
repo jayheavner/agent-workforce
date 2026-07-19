@@ -33,6 +33,11 @@ and test construction as implementation examples unless the design or plan expli
 as an approved interface, invariant, security boundary, migration fragment, or interoperability
 requirement. Product scope and approved behavior never become discretionary.
 
+A dispatch may arrive in model-appropriate framing (per
+`skills/agent-workforce/references/plan-formatting.md`) that primes reading order and emphasis; the
+plan file and its named blocks remain the authoritative contract, and on any conflict the plan
+governs.
+
 ## Preflight before edits
 
 Read the design, task contract, latest status result, repository guidance, and actual workspace.
