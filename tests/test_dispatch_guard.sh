@@ -121,24 +121,6 @@ expect_allow \
 
 rm -f "$BUILDER_TRANSCRIPT" "$NO_MUTATING_TRANSCRIPT"
 
-# T11: block researcher dispatches whose prompt asks for present-state shell
-# verification; RESEARCH_ONLY exempts genuine document analysis.
-prompt_json() { # $1 subagent_type $2 prompt
-  jq -cn --arg t "$1" --arg p "$2" '{tool_name:"Agent",tool_input:{subagent_type:$t,prompt:$p}}'
-}
-
-expect_block \
-  "$(prompt_json researcher "verify 8332d6a8 is on origin/main with git merge-base")" \
-  "researcher + shell-verb prompt blocks"
-
-expect_allow \
-  "$(prompt_json researcher "verify 8332d6a8 is on origin/main with git merge-base. RESEARCH_ONLY: sources provided in prompt")" \
-  "researcher + shell-verb prompt + RESEARCH_ONLY marker allows"
-
-expect_allow \
-  "$(prompt_json executor "verify 8332d6a8 is on origin/main with git merge-base")" \
-  "executor + any prompt allows (unchanged)"
-
 # T12: dispatch-count budget ratchet. Default checkpoint 10 (from
 # hooks/agent-team-budgets.json). This is the incoming dispatch: transcript
 # holds N PRIOR dispatches, and the guard evaluates the (N+1)th attempt.

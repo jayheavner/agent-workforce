@@ -1,5 +1,12 @@
 # Gap records
 
+> **Note (2026-07-18):** as of the autonomy-first redesign, the primary path for a
+> capability gap met mid-task is the `growing-the-team` skill: **create** the missing
+> skill or agent as a draft in the workforce repo (marked `provenance: provisional`),
+> **use** it immediately for the task at hand, and **disclose** it at closeout for
+> human review and possible upstreaming. This directory remains for gap records a
+> session could not act on. The record schema below is unchanged.
+
 One file per detected capability gap, written by the scribe on the orchestrator's
 dispatch. Filename: `GAP-<YYYYMMDD>-<kind>-<slug>.md`. The orchestrator assigns
 `<kind>-<slug>` in the dispatch — slug at field granularity (`payroll`, never

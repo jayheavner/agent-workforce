@@ -1,76 +1,68 @@
 # Dispatch telemetry records
 
-One JSONL file per session, written by the scribe on the orchestrator's closeout
-dispatch. Filename: `<project-slug>--<session-id>.jsonl` (the cost file's slug scheme:
-the project cwd with every `/` replaced by `-`). One line per dispatch outcome record.
+Machine-written model-routing telemetry: one JSONL file per session, one record per
+subagent dispatch. No model, dispatch, or memory step is involved in producing it —
+the closeout Stop hook (`hooks/agent_team_closeout.py`) runs
+`hooks/cost_report.py --telemetry-dir` on the final, passing stop of any session that
+dispatched work, and every field is computed from the session's transcripts.
 
-Spec: `docs/superpowers/specs/2026-07-13-dispatch-telemetry-design.md`. Query with
-`tools/agent-team-scoreboard.sh` or the jq one-liner in the top-level README.
+Filename: `<cwd-slug>--<session-id>.jsonl` — the session's project cwd with every `/`
+replaced by `-`, then the session id. Records land in `docs/telemetry/` of the project
+the session ran in; the hook writes only when that directory already exists, so a
+project opts in by having it. The file is rewritten whole from transcripts at
+closeout, so it is always the complete, deduplicated picture of that session.
 
-## Schema (v1)
+Spec context: `docs/superpowers/specs/2026-07-18-autonomy-first-redesign.md`
+(mechanism 4, "Machine telemetry"). Query with `tools/agent-team-scoreboard.sh`.
+
+## Schema
+
+One JSON object per line, one line per subagent dispatch:
 
 ```json
 {
-  "schema": 1,
-  "logged_at": "2026-07-13T18:20:05Z",
-  "session_id": "<uuid>",
-  "project": "<cwd>",
-  "task_slug": "<orchestrator-assigned>",
-  "tier": "small | standard | large",
-  "dispatch_id": "<agentId, joins to the cost file>",
-  "role": "<one of the nine specialists>",
-  "requested_model": "<see resolution order below, or null>",
-  "resolved_model": "<harness-reported, from the cost file's model keys, or null>",
-  "model_drift": "boolean, or null when either side is unknown",
-  "sequence": "first | repair-1 | repair-2 | n/a",
-  "verdict": "pass | fail | escalated | n/a",
-  "framing": "claude-xml | gpt-markdown | outcome-first | unframed-fallback | n/a",
-  "tokens": "number or null",
-  "cost_usd": "number or null",
-  "cost_available": "boolean"
+  "agent_id": "a1b2c3",
+  "role": "builder",
+  "resolved_models": ["claude-sonnet-5"],
+  "requests": 12,
+  "tokens": {"input": 84120, "output": 9310, "cw5m": 41200, "cw1h": 0, "cread": 512000},
+  "cost_usd": 0.734210,
+  "session_id": "<uuid>"
 }
 ```
 
-`sequence` and `verdict` are populated only for builder and architect work dispatches
-(the roles with a checker loop); every other role gets `n/a` on both. `first_try_pass`
-is never stored — it is derived at query time as `sequence == "first" AND verdict == "pass"`.
+- `agent_id` — the harness subagent id; joins to the session cost file and to the
+  subagent transcript.
+- `role` — the dispatched agent type, taken from the session cost file;
+  `"unknown"` when the cost file could not attribute the dispatch.
+- `resolved_models` — every model that actually served requests in the dispatch, as
+  the harness reported them (sorted, deduplicated). Usually one entry; a mid-dispatch
+  model change yields more.
+- `requests` — logical API requests (usage snapshots deduplicated by message id).
+- `tokens` — exact token totals: `input`, `output`, `cw5m` / `cw1h` (5-minute and
+  1-hour cache writes), `cread` (cache reads).
+- `cost_usd` — the dispatch's exact cost at list rates from `hooks/model-rates.json`.
+  Tokens for a model with no rate entry are counted but contribute no cost — never an
+  estimate.
+- `session_id` — the session the dispatch belonged to.
 
-`framing` records which dispatch envelope framing the orchestrator applied, per
-`skills/agent-workforce/references/plan-formatting.md`. It is populated only for builder
-work dispatches (the framing target); every other role gets `n/a`. Telemetry stays
-best-effort: a missing framing label is written `n/a`, never guessed, and never blocks
-closeout.
+There are no tier, sequence, or verdict fields. Those were remembered facts a dispatch
+had to write down at the moment of maximum context exhaustion, and they were never
+reliably written; everything recorded here is mechanical.
 
-## `requested_model` resolution order
+## What it is for
 
-1. The dispatch's `requested_override` from the session cost file (the per-dispatch
-   `model` parameter the orchestrator passed, captured by the cost hook).
-2. Else the role's pin from `~/.claude/hooks/agent-model-defaults.json`.
-3. Else `null` (and `model_drift` is then `null`, never guessed).
-
-`model_drift` = normalized `requested_model` != normalized `resolved_model`
-(normalization strips a trailing `[1m]`). Drift is surfaced, never credited: the
-scoreboard buckets every record by `resolved_model`.
-
-## Rules for the scribe
-
-- Mechanical facts (`role`, `resolved_model`, `requested_override`, `tokens`,
-  `cost_usd`) come from the session cost file, matched by `dispatch_id`. Verdict facts
-  (`task_slug`, `tier`, `sequence`, `verdict`) come from the orchestrator's dispatch
-  prompt. Never invent a number: anything the cost file cannot supply is `null` with
-  `cost_available: false`.
-- Append to this session's file if it exists; never edit or delete an existing line or
-  file. Records are evidence.
-- Test-fixture model names live only under `tests/fixtures/` and must never be written
-  here.
+Model-routing calibration: which roles ran on which models at what cost, so a human
+can recalibrate the roster's model pins and the orchestrator's downshift/upshift
+habits. `tools/agent-team-scoreboard.sh <telemetry-dir>` aggregates to one row per
+(role, model) with dispatch count and total cost, sorted by cost.
 
 ## Semantics
 
-- **Quarantine:** records whose `resolved_model` is null, `<synthetic>`, or absent from
-  `hooks/model-rates.json` are excluded from pass-rate aggregation and reported on the
-  scoreboard's `unattributed` line — surfaced, never folded into a real model's row.
-- **Canonical main or it doesn't count.** Records flow to the canonical repo by
-  ordinary git, exactly like `docs/gaps/` records, and count for routing-table
-  recalibration only once merged to canonical main.
-- **Evidence, not workflow.** Nothing reads these records automatically; changing the
-  orchestrator's routing table is a human edit informed by the scoreboard.
+- **Derived data.** Every record is recomputable from the session transcripts, which
+  remain the source of truth. Losing a telemetry file loses convenience, not evidence.
+- **Best-effort.** The hook writes telemetry after closeout enforcement has passed and
+  swallows its own failures. Nothing blocks, retries, or asks a human because a
+  telemetry write failed or a directory was absent.
+- **Never load-bearing.** Nothing reads these records automatically; changing a model
+  pin is a human edit informed by the scoreboard.

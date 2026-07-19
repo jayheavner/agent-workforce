@@ -18,13 +18,6 @@ got (a half-wired call site with a TODO is frontier; describe it as
 precisely as a finished one). A handoff that only describes committed
 work hands off the wrong thing.
 
-## Contract identity and ordering
-
-Plan path plus Task identity is the stable correlation key. Record the execution-contract version,
-workspace, base and current commit, latest `RESULT_ID`, and `SUPERSEDES_RESULT`. State whether the
-frontier is complete, incomplete with a typed stop, or stale. A next session must never have to
-guess which plan task or result the dirty tree belongs to.
-
 ## Next actions, executable
 
 The first section a reader acts on: the immediate next step as an exact

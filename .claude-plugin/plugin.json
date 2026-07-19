@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "agent-workforce",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "displayName": "AI Agent Workforce",
   "description": "A Claude Code workforce — an orchestrator and eleven specialists; requested work runs unattended until a genuinely new decision or authority boundary appears.",
   "author": {

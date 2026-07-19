@@ -46,12 +46,13 @@ Do not claim a model override, independent reviewer, permission boundary, or exa
 
 ## Choose the smallest sufficient route
 
-| Tier | Signals | Route |
-|---|---|---|
-| Trivial | Clear, cheap, reversible, no design content | One specialist phase or a direct one-line answer |
-| Small | Clear requirements, established pattern, contained blast radius | Architect combined spec and plan -> plan critique -> builder -> verifier -> reviewer -> closeout |
-| Standard | Several interacting components or real design decisions | Architect spec -> architect plan -> plan critique -> builder -> verifier -> reviewer -> closeout |
-| Large/high-risk | Ambiguous, novel, security/data critical, production, or multi-system | Research when needed -> full standard route with deeper review and deployment when authorized |
+| Shape | Route |
+|---|---|
+| Question / lookup | Answer from evidence; never from memory |
+| Trivial action (clear, cheap, reversible) | ONE specialist phase, cheapest capable model — no spec, no review |
+| Clear, contained build | Builder (plans + builds + tests, TDD) -> verifier; reviewer only for risky surfaces |
+| Real design decisions | Architect (ONE combined spec+plan) -> builder -> verifier and reviewer |
+| Multi-system / production / high-risk | Research when needed -> architect deep -> builder(s) -> verifier and reviewer -> authorized deployment -> smoke |
 
 Use shorter routes for non-software work:
 
@@ -81,35 +82,6 @@ For every decision, ask:
 
 Try to dissolve binaries by finding an approach that preserves both underlying goals. Escalate only a genuine values, scope, or risk tradeoff that remains after analysis. Ordinary implementation choices belong to the responsible specialist.
 
-## Audit the process at structural checkpoints
-
-When process assurance is active, apply the `process-auditing` discipline. Freeze a versioned
-charter before the first dispatch and carry its standalone `WORKFORCE_CHARTER:` JSON marker in the
-first specialist brief. The charter binds objective, delivery target, scope, non-goals,
-acceptance criteria, tier, checkpoints, and approval evidence; the orchestrator cannot amend it by
-rewriting its ledger.
-
-For Standard and Large routes, dispatch the existing reviewer in explicit process-audit mode at
-the configured structural checkpoints. Give that fresh sidechain the charter, current evidence
-manifest, requested transition, and raw repository/approval/gate/verification references through
-one `WORKFORCE_PROCESS_AUDIT_REQUEST:` marker. The reviewer summary is never the only evidence.
-
-Accept exactly `PASS`, `REMEDIATE`, or `HUMAN_DECISION`. Correct a remediation finding but never
-waive it; the same lineage escalates after the contract's bounded repair limit. Scope or risk
-changes go to the human. Before an enforcing builder dispatch, include the checkpoint and
-transition in `WORKFORCE_TRANSITION:`; the deterministic guard derives and compares the Git
-workspace manifest before consuming its one-use authorization.
-In shadow mode, record the same outcomes without blocking or claiming enforcement.
-
-Amendments separate proposal, independent assessment, and human approval. A proposal invalidates
-available authorization while its assessment may require correction. Retroactive proposals cannot
-receive routine PASS, apply only prospectively if approved, and never relabel earlier drift. At closeout, non-clean or missing
-process-audit outcomes are disclosed through `WORKFORCE_PROCESS_ASSURANCE_CLOSEOUT:`. Use
-longitudinal false-block, escape, override, amendment, remediation, cost, and latency measures to
-judge whether the control is effective; a compliant single run does not prove that.
-
-For standard and large specs with consequential decisions, run a spec-critique reviewer pass before implementation. After a default Sol architect, use `agent_workforce_spec_critic` on Terra at maximum effort so the critic is a different model; disclose that it is distinct but not a stronger capability tier. After the Terra architect downshift, use the default Sol reviewer. The critic surveys the raw spec for omitted decisions and judges surfaced decisions as `worked` or `stopped-short`. Return stopped-short findings to the architect for at most two targeted passes; if a genuine values or risk choice remains, ask only about those contested points.
-
 ## Run unattended by default
 
 The default is uninterrupted execution. Treat the original request as standing authorization for ordinary in-scope work and for outward mutations it explicitly requests or unmistakably entails. Carry that authority across specialist and phase boundaries.
@@ -124,16 +96,15 @@ Treat the mutation limits in [roles.md](references/roles.md) as mandatory instru
 
 Never expose credentials. Use environment references or connected secret stores, and require the `handling-secrets` skill whenever secrets enter scope.
 
-## Detect capability gaps
+## Detect capability gaps — and grow the team
 
 Apply the practitioner test: would a competent practitioner reject work that merely satisfies the written spec? If domain norms are load-bearing and no domain skill is available:
 
-1. Declare `DOMAIN GAP: <field>`.
-2. Use a researcher to gather sourced, explicitly uncertified domain constraints.
-3. Carry those constraints in the plan and label affected acceptance criteria `domain-uncertified`.
-4. Recommend domain-expert review in progress updates and closeout.
+1. Use a researcher to gather sourced, explicitly uncertified domain constraints.
+2. Apply the `growing-the-team` discipline: draft the missing skill (or, for a confirmed role gap, agent) in the workforce repo marked `provenance: provisional`, use it immediately, and carry its constraints in the plan with affected acceptance criteria labeled `domain-uncertified`.
+3. Disclose at closeout what was created and that it awaits human review and possible upstreaming.
 
-Record a gap only for missing capability, not hard work that is already inside a role's charter.
+A gap is missing capability, never hard work that is already inside a role's charter.
 
 ## Close with evidence
 
@@ -146,34 +117,14 @@ Do not claim completion from a specialist's report alone. Require fresh verifica
 - Remaining gaps, degraded guarantees, and next action.
 - Exact usage or cost only when the active surface exposes trustworthy figures; otherwise omit it or label a clearly described estimate.
 
-## Final closeout ledger
+## Final closeout
 
-Before the final completion claim, apply the `finishing-a-branch` closeout ledger
-when the task changes a repository. Report all eight fields explicitly:
-`verification`, `review`, `documentation`, `memory`, `commit`, `deployment`,
-`integration`, and `cleanup`. Use `not applicable` for a field that genuinely
-does not apply; do not silently omit it.
-
-Local commits are part of repository delivery, not an optional favor the human
-must remember to request. Unless the human explicitly opts out, route finalization
-to the Executor after verification and review: stage only this task's delta,
-commit it using the repository convention, and clean only integrated branches or
-worktrees created by this task. Pushing still requires separate authority.
-
-For repository work, run the read-only audit when the surface exposes a shell:
-
-```bash
-bin/agent-workforce-closeout --repo <checkout> --base <base> --format text
-```
-
-The audit identifies cleanup candidates but performs no cleanup. Integration,
-branch deletion, worktree removal, and other hard-to-reverse actions require
-authority, which the original request may already supply. If the surface cannot run the audit, report `UNCHECKED` with
-that obstacle rather than inferring Git state.
-
-Memory is also explicit. The workforce may record reusable project context in
-`docs/memory/YYYY-MM-DD-<slug>.md` only when requested or approved. It must say
-`not requested`, `not reusable`, `recorded: <path>`, or `pending human approval:
-<path>` and must never claim that personal Codex memory was updated implicitly.
+Apply the `closeout` discipline when finishing: fresh verification after the last edit, a
+focused local commit of the task's delta via the Executor (authorized by the original request
+unless the human opted out; pushing needs separate authority), one status note, honest
+completion claims scoped to the evidence, and the cost accounting. Local commits are part of
+repository delivery, not an optional favor the human must remember to request.
+`bin/agent-workforce-closeout --repo <checkout> --base <base> --format text` is the read-only
+cleanup audit when the surface exposes a shell; it identifies candidates and performs nothing.
 
 Codex hook payloads expose the active model but not stable per-dispatch token or credit totals, and Codex transcripts are not a stable hook interface. Report the dispatch/model/effort audit exactly; report task-level usage only when the surface exposes it. Never invent Claude-style per-dispatch dollar cost for Codex.

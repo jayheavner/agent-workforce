@@ -11,43 +11,19 @@ changes, sweeping in unrelated ones, or integrating anything unverified.
 "Done coding" and "integrated" are different states; this skill is the
 path between them.
 
-## Closeout ledger
-
-Before reporting the work complete, write one short ledger in the status note
-with these fields: `verification`, `review`, `documentation`, `memory`,
-`commit`, `deployment`, `integration`, and `cleanup`. Each field is `pass`,
-`fail`, `pending`, or `not applicable`, followed by the command, artifact path,
-approval, or remaining action that supports the state. A specialist report is
-evidence for the ledger, not a substitute for reading the actual output.
-
-The `memory` field is explicit: use `not requested`, `not reusable`,
-`recorded: docs/memory/<file>.md`, or `pending human approval:
-docs/memory/<proposed-file>.md`. Project-memory records follow
-`docs/memory/README.md`; they do not claim to update personal Codex memory.
-
-Name the delivery target before offering the branch: integrated code or a
-deployed service. The target decides whether integration, deployment, and
-post-deploy smoke evidence are required. A passing local suite makes the branch
-eligible for the next delivery step; it does not make the user-visible outcome
-complete. If a required field remains pending, fails, or is unchecked, report
-`NOT SHIPPABLE` and the next exact action instead of calling the work done or
-complete.
-
 ## The finish gate
 
 Before any commit is finalized or integration offered:
 
-- Run the work's stated acceptance criteria fresh after the last edit, per
-  `verifying`. For every code change, run the full suite too. The feature's own
-  tests passing is not the gate; the *suite* is. A sibling test the change broke
-  is this work's bug.
+- Run the work's stated acceptance criteria — or the full test suite when
+  no criteria exist — fresh, after the last edit, per `verifying`. The
+  feature's own tests passing is not the gate; the *suite* is. A sibling
+  test the change broke is this work's bug.
 - Red means stop: fix it here if the cause is this branch's change, and
   re-run the gate; report it as blocking if it isn't. Nothing merges,
   pushes, or becomes a PR while the gate is red.
 - Read the full diff against the base branch per `reviewing` before
   offering the work for integration.
-- If a reviewer-triggered repair changed code, run the verification gate again
-  after that final edit; a re-review alone cannot establish a fresh green suite.
 
 ## Committing only this work
 
@@ -55,11 +31,6 @@ Start from `git status`, not from `git add -A`. Stage the hunks that
 belong to this work; anything else in the tree is surfaced to the human —
 left uncommitted, stashed with a note, or offered as a separate commit —
 never swept into the feature commit and never silently discarded.
-
-A request to implement repository changes authorizes a focused local commit as
-the default delivery step unless the human explicitly says not to commit. This
-standing authority does not include pushing, publishing, or mixing unrelated
-work into the commit.
 
 Resolve `policy:git-conventions` from the project policy and state the
 resolved value and its source — project policy / user policy / judgment
@@ -89,20 +60,6 @@ branch, remove the working tree if one was created for this work
 (resolve `policy:workspace-isolation` for where work happens; where no
 policy defines it: leave existing worktrees as found), and report the end
 state — base branch, landed commit, and anything left uncommitted and why.
-
-Before proposing cleanup, run the read-only closeout audit:
-
-```bash
-bin/agent-workforce-closeout --repo <checkout> --base <base> --format text
-```
-
-Treat its branch and worktree candidates as evidence only. A candidate is
-eligible for cleanup only when it is merged into the confirmed base, clean, not
-the current checkout, and was created for this work. When cleanup is inside the
-standing authorization, remove eligible task-created targets without a
-ceremonial confirmation; an explicit hold wins. Otherwise ask once for the
-missing authority. Never delete by age, remove a dirty worktree, or delete a
-branch this work did not create.
 
 If the tree holds unrelated changes, a conflict touches code this branch
 doesn't own, or there is no remote where the human expected one: say so

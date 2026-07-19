@@ -32,12 +32,14 @@ grep -qi "approval" "$AGENTS/executor.md" 2>/dev/null && ok || no "executor has 
 grep -q "Agent(executor)" "$AGENTS/orchestrator.md" && ok || no "orchestrator tools include Agent(executor)"
 grep -q "executor" "$HERE/../hooks/agent-team-dispatch-guard.sh" && ok || no "dispatch guard admits executor"
 
-grep -q 'agent_team_closeout.py" dispatch' "$AGENTS/orchestrator.md" \
-  && ok || no "orchestrator records closeout state before dispatch"
-grep -q 'agent_team_closeout.py" subagent-stop' "$AGENTS/orchestrator.md" \
-  && ok || no "orchestrator records verifier/reviewer terminal markers"
-grep -q 'agent_team_closeout.py" stop' "$AGENTS/orchestrator.md" \
-  && ok || no "orchestrator blocks incomplete terminal closeout"
+# The closeout hook is a single Stop-hook entrypoint (payload on stdin, no
+# subcommands) wired in the orchestrator's frontmatter.
+grep -qE '^  Stop:' "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator frontmatter has a Stop hook section"
+grep -q 'agent_team_closeout.py' "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator wires the closeout Stop hook"
+grep -qE 'agent_team_closeout\.py" (dispatch|subagent-stop|stop)' "$AGENTS/orchestrator.md" \
+  && no "orchestrator still invokes retired closeout subcommands" || ok
 
 # The stale escape hatch is gone: no agent tells the human to run commands.
 grep -qi "faster from the human's own shell" "$AGENTS/orchestrator.md" && no "orchestrator still has the own-shell escape hatch" || ok
