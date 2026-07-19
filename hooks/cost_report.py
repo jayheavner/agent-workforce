@@ -17,6 +17,7 @@ says so plainly). Exit 2 only on operator error (bad arguments, unreadable
 rates file).
 """
 import argparse
+import datetime
 import glob
 import json
 import os
@@ -29,7 +30,20 @@ TOKEN_FIELDS = ("input", "output", "cw5m", "cw1h", "cread")
 def load_rates(path):
     with open(path) as f:
         doc = json.load(f)
-    return doc["models"]
+    doc["models"]  # missing key -> KeyError -> operator error at the call site
+    return doc
+
+
+def rates_staleness_note(as_of, max_age_days=60):
+    """A visible nudge when the rates file has not been re-verified lately."""
+    try:
+        age = (datetime.date.today() - datetime.date.fromisoformat(as_of)).days
+    except (TypeError, ValueError):
+        return None
+    if age > max_age_days:
+        return (f"NOTE: model-rates.json as_of {as_of} is {age} days old — "
+                "re-verify list prices before trusting the dollar figures.")
+    return None
 
 
 def canon_model(model_id, rate_keys):
@@ -105,7 +119,8 @@ def price_request(req, rates):
         return None
     r = fam
     intro = fam.get("intro")
-    if intro and req["ts"][:10] <= intro["ends"]:
+    # An undated request cannot claim intro pricing; standard rates apply.
+    if intro and req["ts"] and req["ts"][:10] <= intro["ends"]:
         r = intro
     return (req["input"] * r["input"] + req["output"] * r["output"]
             + req["cw5m"] * r["cache_write_5m"] + req["cw1h"] * r["cache_write_1h"]
@@ -277,10 +292,12 @@ def main():
 
     rates_path = os.environ.get("AGENT_TEAM_RATES", args.rates)
     try:
-        rates = load_rates(rates_path)
+        rates_doc = load_rates(rates_path)
     except (OSError, ValueError, KeyError) as e:
         print(f"cost_report: cannot read rates file {rates_path}: {e}", file=sys.stderr)
         return 2
+    rates = rates_doc["models"]
+    stale_note = rates_staleness_note(rates_doc.get("as_of"))
 
     main_reqs, subs = collect(args.transcript, rates)
     agent_types = load_agent_types(args.cost_file) if args.cost_file else {}
@@ -293,10 +310,13 @@ def main():
                           "unpriced_models": unpriced,
                           "web_search_requests": ws, "web_fetch_requests": wf,
                           "dispatches": dispatches,
-                          "subagent_transcripts_found": len(subs)}, default=int))
+                          "subagent_transcripts_found": len(subs),
+                          "rates_as_of": rates_doc.get("as_of")}, default=int))
     else:
         report, _ = markdown_report(main_reqs, subs, rates, agent_types, dispatches)
         print(report)
+        if stale_note:
+            print("\n" + stale_note)
 
     if args.telemetry_dir and args.session_id:
         write_telemetry(args.telemetry_dir, args.session_id, args.cwd or os.getcwd(),

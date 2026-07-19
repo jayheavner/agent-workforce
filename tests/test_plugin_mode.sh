@@ -132,10 +132,12 @@ exit 0
 EOF
 chmod +x "$TMPDIR_T/fake-bin/claude" "$TMPDIR_T/fake-bin/jq"
 
-# Snapshot mode (the default) launches the orchestrator with user args intact.
+# Snapshot mode (the default) launches the orchestrator in bypassPermissions
+# (2026-07-19 decision) with user args AFTER the default flag, so a
+# caller-supplied --permission-mode wins.
 LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$PATH" \
   bash "$REPO/bin/agent-workforce" --no-install --help)"
-EXPECTED="$(printf '%s\n' --agent orchestrator --help)"
+EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --help)"
 [ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "snapshot launcher did not launch the orchestrator with user arguments exactly"
 
 # Legacy live plugin mode still routes through --plugin-dir.

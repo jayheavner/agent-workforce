@@ -94,4 +94,9 @@ if [ "$SKIP_INSTALL" -eq 0 ] && needs_install; then
   fi
 fi
 
-exec claude --agent orchestrator "${ARGS[@]}"
+# The orchestrator's main session runs bypassPermissions by decision
+# (2026-07-19): the human is not watching, every specialist already bypasses,
+# and prompts wedge autonomy. The contract + audit log remain the controls on
+# the orchestrator's read-only shell. A flag passed by the caller comes later
+# on the command line and therefore wins.
+exec claude --agent orchestrator --permission-mode bypassPermissions "${ARGS[@]}"

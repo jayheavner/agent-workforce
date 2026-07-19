@@ -121,5 +121,12 @@ expect_contains "$ORPHAN_MD" "1 Agent dispatch" \
 expect_not_contains "$MD" "WARNING" \
   "good fixture (no dispatches) carries no undercount warning"
 
+# --- (g) rates staleness note ---
+OLD_RATES="$TMP/old-rates.json"
+jq '.as_of = "2026-01-01"' "$ROOT/hooks/model-rates.json" > "$OLD_RATES"
+STALE_MD="$(python3 "$TOOL" --transcript "$FIXTURE" --rates "$OLD_RATES" 2>/dev/null)"
+expect_contains "$STALE_MD" "days old" "stale rates file gets a staleness note"
+expect_not_contains "$MD" "days old" "fresh rates file carries no staleness note"
+
 echo "cost-report tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
