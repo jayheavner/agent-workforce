@@ -1,5 +1,5 @@
 {
-  "description": "Route workforce secret, audit, dispatch, process-assurance, cost, and closeout enforcement by active agent type.",
+  "description": "Route workforce secret, audit, dispatch, cost, and closeout enforcement by active agent type (live plugin mode).",
   "hooks": {
     "PreToolUse": [
       {
@@ -17,14 +17,6 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" dispatch"
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" assurance-dispatch"
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" closeout-dispatch"
           }
         ]
       }
@@ -49,27 +41,9 @@
         ]
       }
     ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" assurance-subagent"
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" closeout-subagent"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" assurance-stop"
-          },
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-team-plugin-router.sh\" closeout-stop"

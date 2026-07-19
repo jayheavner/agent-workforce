@@ -1,6 +1,6 @@
 ---
 name: reviewing
-description: Code-review craft — review a change against project standards and against its originating requirement (spec fidelity), with severity triage and locations + fixes. Use when reviewing code, a pull request, or a task's diff before merge.
+description: Code-review craft in both chairs — review a change against project standards and its originating requirement (spec fidelity) with severity triage and locations + fixes, and receive review findings on your own work with verification before implementation. Use when reviewing code, a pull request, or a task's diff before merge — or when responding to review feedback before acting on it.
 ---
 
 # Reviewing
@@ -58,3 +58,26 @@ beats a blanket approval that read none of it closely.
   spend attention proportional to severity.
 - "Tests pass" as approval: tests prove what tests cover; the review covers
   the rest.
+
+## Receiving review — the other chair
+
+When the findings are about your work, they are hypotheses, not orders:
+
+- Verify each finding against the actual code before implementing it. A
+  reviewer can lack context you have — a compatibility constraint, a
+  deliberate trade-off, a feature nothing calls (check usage before
+  "implementing it properly"; unused surface is a removal candidate, not
+  a buildout).
+- If any item is unclear, clarify every unclear item before implementing
+  any — findings interrelate, and a partial understanding implements the
+  wrong half. Restate what you understood; ask about the rest.
+- Push back with evidence when a finding is wrong for this codebase —
+  cite the code, test, or constraint that decides it. Correctness is
+  decided by the code, not by who is reviewer. A finding that conflicts
+  with the human's prior explicit decision goes to the human, not to
+  either chair's judgment.
+- For correct findings: implement in risk order (blocking, then simple,
+  then complex), test each fix individually, and answer with what changed
+  and where — the diff is the acknowledgment; agreement theater and
+  gratitude add nothing. If your pushback proves wrong, state the
+  correction factually and move on.

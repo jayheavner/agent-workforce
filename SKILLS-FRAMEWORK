@@ -1,10 +1,20 @@
 source: https://github.com/jayheavner/skills
-revision: e8f0bee8ca8aed807cf0e9d092e46cb2fa366498
-imported-at: 2026-07-13
+revision: fe76667 (full sync of reviewing, planning, handing-off, verifying,
+  finishing-a-branch on 2026-07-18; remaining files from
+  e8f0bee8ca8aed807cf0e9d092e46cb2fa366498, imported 2026-07-13)
 layout: flattened core plus requirements, secrets-1password, ticketing-asana, and ux-design packs
 policy-contract: 1
 
+Deliberate local forks (do NOT overwrite on re-vendor; upstream candidates):
+- convene-panel: "Agent tool" genericized to "subagent/collaboration tools"
+  for Codex-surface portability.
+- auditing-requirements/references/patterns.md: hardcoded `.claude/rules/*.md`
+  destinations genericized to per-surface project agent guidance.
+
+Workforce-owned skills (not vendored, live only here): agent-workforce,
+closeout, growing-the-team, project-policy.
+
 The upstream repository had no Git tag at import time, so this dependency is
-pinned to the full commit SHA. Upgrade by fetching upstream, reviewing changes
-from this revision, replacing the vendored files, updating this revision, and
-running the workforce installer and shakedown suites.
+pinned by commit SHA. Upgrade by fetching upstream, reviewing changes from the
+pinned revisions, replacing the vendored files, updating this file, and running
+the workforce test suite.

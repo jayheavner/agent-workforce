@@ -45,12 +45,20 @@ else
   bad "a plugin hook command does not resolve through CLAUDE_PLUGIN_ROOT"
 fi
 
+# The redesigned hooks.json routes exactly: secrets + dispatch (PreToolUse),
+# audit + cost (PostToolUse), closeout-stop (Stop). The retired
+# closeout-dispatch / closeout-subagent routes must not reappear.
 jq -e '
-  (.hooks.PreToolUse[].hooks[].command | select(contains("closeout-dispatch"))) and
-  (.hooks.SubagentStop[].hooks[].command | select(contains("closeout-subagent"))) and
-  (.hooks.Stop[].hooks[].command | select(contains("closeout-stop")))
+  ([.hooks.PreToolUse[].hooks[].command] | (any(endswith(" secrets")) and any(endswith(" dispatch")))) and
+  ([.hooks.PostToolUse[].hooks[].command] | (any(endswith(" audit")) and any(endswith(" cost")))) and
+  ([.hooks.Stop[].hooks[].command] | any(endswith(" closeout-stop")))
 ' "$REPO/hooks/hooks.json" >/dev/null 2>&1 \
-  && ok || bad "plugin does not register dispatch, SubagentStop, and Stop closeout hooks"
+  && ok || bad "plugin does not register secrets, dispatch, audit, cost, and Stop closeout routes"
+jq -e '
+  [.hooks[][] .hooks[].command]
+  | any(contains("closeout-dispatch") or contains("closeout-subagent"))
+' "$REPO/hooks/hooks.json" >/dev/null 2>&1 \
+  && bad "plugin still registers retired closeout-dispatch/closeout-subagent routes" || ok
 
 python3 -c 'compile(open("hooks/agent_team_closeout.py", encoding="utf-8").read(), "hooks/agent_team_closeout.py", "exec")' \
   && ok || bad "closeout hook failed Python syntax validation"
@@ -110,8 +118,10 @@ expect_rc 0 cost "$COST_PAYLOAD" "orchestrator cost router returned an error"
 find "$TMPDIR_T/cost" -type f -name "*--$SID.json" -print -quit 2>/dev/null | grep -q . \
   && ok || bad "orchestrator cost router did not invoke cost accounting"
 
-# Exercise the launcher without starting a Claude session or requiring auth.
-mkdir -p "$TMPDIR_T/fake-bin"
+# Exercise the launcher without starting a Claude session, requiring auth, or
+# installing into any real profile (--no-install skips the freshness check;
+# CLAUDE_CONFIG_DIR points at a throwaway profile as belt and braces).
+mkdir -p "$TMPDIR_T/fake-bin" "$TMPDIR_T/profile"
 cat > "$TMPDIR_T/fake-bin/claude" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
@@ -121,9 +131,18 @@ cat > "$TMPDIR_T/fake-bin/jq" <<'EOF'
 exit 0
 EOF
 chmod +x "$TMPDIR_T/fake-bin/claude" "$TMPDIR_T/fake-bin/jq"
-LAUNCH_ARGS="$(PATH="$TMPDIR_T/fake-bin:$PATH" bash "$REPO/bin/agent-workforce" --agent builder --help)"
+
+# Snapshot mode (the default) launches the orchestrator with user args intact.
+LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --no-install --help)"
+EXPECTED="$(printf '%s\n' --agent orchestrator --help)"
+[ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "snapshot launcher did not launch the orchestrator with user arguments exactly"
+
+# Legacy live plugin mode still routes through --plugin-dir.
+LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --plugin --agent builder --help)"
 EXPECTED="$(printf '%s\n' --plugin-dir "$REPO" --agent builder --help)"
-[ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "launcher did not pass plugin directory and user arguments exactly"
+[ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "plugin launcher did not pass plugin directory and user arguments exactly"
 
 printf 'plugin-mode tests: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

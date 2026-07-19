@@ -71,14 +71,19 @@ expect_grep docs/memory/README.md "project records rather than personal Codex me
   "memory format distinguishes project memory from personal memory"
 expect_grep docs/memory/README.md "Secret handling" \
   "memory format has a secret-handling section"
-for field in verification review documentation memory commit deployment integration cleanup; do
-  expect_grep skills/finishing-a-branch/SKILL.md "$field" \
-    "finishing skill names closeout field: $field"
+# The receipt-schema field list retired with the autonomy-first redesign; the
+# canonical closeout contract is now the five ordered phases in
+# skills/closeout/SKILL.md, applied by the workforce skill and orchestrator.
+for phase in "## 1. Verify" "## 2. Commit" "## 3. Record" "## 4. Report honestly" "## 5. Price exactly"; do
+  expect_grep skills/closeout/SKILL.md "$phase" \
+    "closeout skill defines phase: $phase"
 done
-expect_grep skills/agent-workforce/SKILL.md "closeout ledger" \
-  "workforce skill requires a closeout ledger"
-expect_grep agents/orchestrator.md "memory: not requested" \
-  "orchestrator defines explicit memory state"
+expect_grep skills/closeout/SKILL.md "bin/agent-workforce-closeout" \
+  "closeout skill points at the read-only cleanup audit"
+expect_grep 'skills/agent-workforce/SKILL.md' 'Apply the `closeout` discipline' \
+  "workforce skill applies the closeout discipline"
+expect_grep agents/orchestrator.md "## Closeout" \
+  "orchestrator carries the closeout section"
 
 printf 'closeout-audit tests: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

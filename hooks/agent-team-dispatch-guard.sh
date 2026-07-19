@@ -16,11 +16,6 @@ readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deploye
 # conflate the two.
 readonly GIT_SERIALIZED_ROLES="builder executor deployer"
 readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: no git mutation in this dispatch"
-readonly RESEARCH_ONLY_MARKER="RESEARCH_ONLY: sources provided in prompt"
-# Present-state shell verification (git, running processes, live transcripts)
-# has no seam for the shell-less researcher to observe — route it to the
-# executor, or use the marker for genuine source-analysis research.
-readonly RESEARCHER_SHELL_VERB_PATTERN='git |rev-parse|merge-base|run the|execute|parse the.*transcript|\.jsonl'
 readonly BUDGETS_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-budgets.json"
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
 
@@ -77,22 +72,6 @@ done
 if [ "$VALID" -ne 1 ]; then
   printf 'agent-team dispatch guard: subagent_type "%s" is not a team specialist. Use exactly one of: architect, builder, debugger, verifier, reviewer, deployer, executor, researcher, ops, scribe, ticketer. (The harness default "general-purpose" is not a team agent and will hard-fail.)\n' "$TYPE" >&2
   exit 2
-fi
-
-# T11: the researcher has no shell — block prompts asking for present-state
-# shell verification (git, running processes, live transcripts) unless the
-# dispatch is genuine document analysis of material already in the prompt.
-if [ "$TYPE" = "researcher" ]; then
-  PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
-  case "$PROMPT" in
-    *"$RESEARCH_ONLY_MARKER"*) ;;
-    *)
-      if printf '%s' "$PROMPT" | grep -qiE "$RESEARCHER_SHELL_VERB_PATTERN"; then
-        printf 'agent-team dispatch guard: researcher has no shell — route present-state verification to the executor, or include `%s` if this is document analysis of provided material.\n' "$RESEARCH_ONLY_MARKER" >&2
-        exit 2
-      fi
-      ;;
-  esac
 fi
 
 # T6: serialize git-mutating dispatches ({builder, executor, deployer}) per

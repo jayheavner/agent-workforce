@@ -7,7 +7,7 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  secrets|audit|dispatch|cost|assurance-dispatch|assurance-subagent|assurance-stop|closeout-dispatch|closeout-subagent|closeout-stop) ;;
+  secrets|audit|dispatch|cost|closeout-stop) ;;
   *)
     printf 'agent-workforce plugin router: unknown routing mode: %s\n' "$MODE" >&2
     exit 2
@@ -22,28 +22,10 @@ fi
 INPUT="$(cat)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-# Stop does not reliably carry agent_type. The state sentinel created by the
-# dispatch path keeps this plugin-global hook scoped to active workforce tasks.
+# Stop does not reliably carry agent_type. The closeout hook self-scopes: it
+# enforces only in sessions that actually dispatched workforce specialists.
 if [ "$MODE" = "closeout-stop" ]; then
-  printf '%s' "$INPUT" | AGENT_TEAM_COMPLETION_LINTER="${AGENT_TEAM_COMPLETION_LINTER:-$HERE/../tools/lint_completion_claims.py}" \
-    python3 "$HERE/agent_team_closeout.py" stop
-  exit $?
-fi
-
-if [ "$MODE" = "assurance-stop" ]; then
-  printf '%s' "$INPUT" | python3 "$HERE/agent-team-process-assurance.py" stop
-  exit $?
-fi
-
-# SubagentStop does carry agent_type; the Python hook ignores unrelated roles
-# and sessions with no active workforce state.
-if [ "$MODE" = "closeout-subagent" ]; then
-  printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py" subagent-stop
-  exit $?
-fi
-
-if [ "$MODE" = "assurance-subagent" ]; then
-  printf '%s' "$INPUT" | python3 "$HERE/agent-team-process-assurance.py" subagent-stop
+  printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py"
   exit $?
 fi
 
@@ -76,16 +58,8 @@ case "$MODE" in
     [ "$ROLE" = "orchestrator" ] || exit 0
     printf '%s' "$INPUT" | bash "$HERE/agent-team-dispatch-guard.sh"
     ;;
-  assurance-dispatch)
-    [ "$ROLE" = "orchestrator" ] || exit 0
-    printf '%s' "$INPUT" | python3 "$HERE/agent-team-process-assurance.py" dispatch
-    ;;
   cost)
     [ "$ROLE" = "orchestrator" ] || exit 0
     printf '%s' "$INPUT" | bash "$HERE/agent-team-cost.sh"
-    ;;
-  closeout-dispatch)
-    [ "$ROLE" = "orchestrator" ] || exit 0
-    printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py" dispatch
     ;;
 esac

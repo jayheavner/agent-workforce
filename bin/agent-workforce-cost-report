@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# agent-workforce-cost-report — print the exact, whole-session cost report.
+# Thin wrapper over tools/cost_report.py. See that file for semantics.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$HERE/../hooks/cost_report.py" "$@"
