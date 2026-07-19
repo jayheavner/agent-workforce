@@ -460,8 +460,39 @@ not a `gh` config problem correctable from this session. Reported to the
 user; no workaround attempted (per standing instruction against trying
 alternate credentials on an unexpected error).
 
-**Not yet done (blocked on `gh`/Keychain auth):** merge to main, `bash
-install.sh` run from main, post-install `install.sh --check` clean
-confirmation, and the fresh consumer-project session banner observation.
-These remain T17's open items until the human resolves GitHub/Keychain
-authentication.
+**Resolution:** the gh/Keychain block was specific to this sandboxed session
+— `gh auth login`/`api.github.com` calls failed with a TLS certificate
+error (OSStatus -26276) from inside the sandbox, while raw `git push` over
+`github.com` succeeded. Jay authenticated `gh` in his own terminal (outside
+the sandbox), confirmed `jayheavner` active, and the branch was pushed from
+this session (`git push` worked despite the sandbox's `gh`-vs-Keychain
+friction). `gh pr create` also failed on the same TLS block; Jay ran it from
+his own terminal instead — merged as PR #2
+(`https://github.com/jayheavner/agent-workforce/pull/2`), merge commit
+`b9dcd0d`.
+
+**Local main update:** an earlier `git merge --ff-only` attempt *from this
+sandboxed session* against the shared main checkout partially wrote working-
+tree content before failing on the index write (sandbox denies writes to
+that checkout by design — policy:workspace-isolation). This left files
+sitting as uncommitted local changes that blocked Jay's first `git pull
+--ff-only`. Verified those files were byte-identical to `origin/main`
+(`git diff origin/main -- agents/deployer.md` showed no output) before
+discarding them; Jay then re-ran `git checkout --`/`rm -f` on the exact
+leftover file list and `git pull --ff-only` fast-forwarded cleanly
+(`75c306d..b9dcd0d`, 34 files, all expected).
+
+**`bash install.sh` (from main, run by Jay):** `install: OK — 12 agents + 22
+skills installed into profile /Users/jay/.claude, policy hook + cost hook
+installed, build b9dcd0d recorded, backup at
+/Users/jay/.claude/backups/agent-team-20260718-092357`.
+
+**Post-install `bash install.sh --check`:** `check: OK — installed team
+matches repo build b9dcd0d (installed 2026-07-18T13:25:12Z)` — clean. Fact
+2's drift (hand-edited installed closeout hook diverging from repo) is
+resolved; the profile now exactly matches repo HEAD.
+
+**Still open:** the fresh consumer-project session banner observation (may
+be done by Jay per the plan's Discretion) — the freshness-check text (T14)
+and worktree-hygiene session-start rule (T15) are installed and ready to be
+observed live in a new session.
