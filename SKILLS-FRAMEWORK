@@ -1,20 +1,34 @@
 source: https://github.com/jayheavner/skills
-revision: fe76667 (full sync of reviewing, planning, handing-off, verifying,
-  finishing-a-branch on 2026-07-18; remaining files from
+revision: 724287d (tag v0.2.0; fork-port genericizations merged
+  2026-07-20; previously fe76667 full sync of reviewing, planning, handing-off,
+  verifying, finishing-a-branch on 2026-07-18, remaining files from
   e8f0bee8ca8aed807cf0e9d092e46cb2fa366498, imported 2026-07-13)
 layout: flattened core plus requirements, secrets-1password, ticketing-asana, and ux-design packs
 policy-contract: 1
 
-Deliberate local forks (do NOT overwrite on re-vendor; upstream candidates):
-- convene-panel: "Agent tool" genericized to "subagent/collaboration tools"
-  for Codex-surface portability.
-- auditing-requirements/references/patterns.md: hardcoded `.claude/rules/*.md`
-  destinations genericized to per-surface project agent guidance.
+Deliberate local forks: none. The convene-panel and auditing-requirements
+genericizations were upstreamed (jayheavner/skills PR #1) and are identical
+here and upstream as of this revision.
+
+Deliberate non-vendors (decided 2026-07-19; recorded so future sessions do
+not re-litigate):
+- executing (upstream skills/core/executing): carries its own
+  subagent-dispatch doctrine. The workforce orchestrator contract IS this
+  repo's executing doctrine; two competing dispatch disciplines in one
+  session is exactly the confusion the autonomy-first redesign removed.
+  Revisit only if the orchestrator contract is ever retired.
+- auditing-skill-conflicts + the Layer-1 install-time conflict audit:
+  compatible in principle, unabsorbed for now. Vendor deliberately with a
+  reconciliation pass if skill-conflict noise ever appears in practice.
 
 Workforce-owned skills (not vendored, live only here): agent-workforce,
 closeout, growing-the-team, project-policy.
 
-The upstream repository had no Git tag at import time, so this dependency is
-pinned by commit SHA. Upgrade by fetching upstream, reviewing changes from the
-pinned revisions, replacing the vendored files, updating this file, and running
-the workforce test suite.
+Upstream candidates on the books: growing-the-team (needs role-name
+genericization plus eval scaffolding per upstream's admission standard) and
+the delivery-terms vocabulary from closeout phase 4 (graft into upstream
+verifying or finishing-a-branch).
+
+Upgrade by fetching upstream, reviewing changes from the pinned revision,
+replacing the vendored files, updating this file, and running the workforce
+test suite.
