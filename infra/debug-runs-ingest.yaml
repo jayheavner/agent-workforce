@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Zero-secret transcript ingest for agent-workforce debug runs. Testers POST
+  session metadata to a public Function URL and receive a presigned S3 POST
+  valid only for one server-named key in a private quarantine bucket
+  (size-capped, lifecycle-expired). The sync-debug-runs GitHub Action assumes
+  SyncRole via OIDC (no stored credentials) to move validated transcripts
+  into debug-runs/ and empty the quarantine. Nothing in this design is a
+  secret: the Function URL grants only "upload one transcript to quarantine."
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: jayheavner/agent-workforce
+    Description: Repo whose main-branch Actions may assume SyncRole.
+
+Resources:
+  QuarantineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub agent-workforce-debug-runs-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-unsynced
+            Status: Enabled
+            ExpirationInDays: 30
+
+  PresignRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: put-quarantine-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub ${QuarantineBucket.Arn}/*
+
+  PresignFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: agent-workforce-debug-runs-presign
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt PresignRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      ReservedConcurrentExecutions: 5
+      Environment:
+        Variables:
+          BUCKET: !Ref QuarantineBucket
+      Code:
+        ZipFile: |
+          import json, os, re, boto3
+          s3 = boto3.client("s3")
+          BUCKET = os.environ["BUCKET"]
+          SID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+          DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+          MAX_BYTES = 104857600  # 100 MB gzipped transcript cap
+
+          def handler(event, ctx):
+              try:
+                  body = json.loads(event.get("body") or "{}")
+                  sid = body.get("session_id", "")
+                  day = body.get("day", "")
+                  complete = bool(body.get("complete"))
+                  if not (SID.match(sid) and DAY.match(day)):
+                      return {"statusCode": 400, "body": "bad request"}
+                  key = "%s-%s%s.jsonl.gz" % (day, sid, "" if complete else "-incomplete")
+                  post = s3.generate_presigned_post(
+                      BUCKET, key,
+                      Conditions=[["content-length-range", 1, MAX_BYTES]],
+                      ExpiresIn=300)
+                  return {"statusCode": 200,
+                          "headers": {"content-type": "application/json"},
+                          "body": json.dumps(post)}
+              except Exception:
+                  return {"statusCode": 500, "body": "error"}
+
+  PresignUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref PresignFunction
+      AuthType: NONE
+
+  PresignUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PresignFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  SyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agent-workforce-debug-runs-sync
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+      Policies:
+        - PolicyName: drain-quarantine
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt QuarantineBucket.Arn
+              - Effect: Allow
+                Action: [s3:GetObject, s3:DeleteObject]
+                Resource: !Sub ${QuarantineBucket.Arn}/*
+
+Outputs:
+  IngestUrl:
+    Value: !GetAtt PresignUrl.FunctionUrl
+  SyncRoleArn:
+    Value: !GetAtt SyncRole.Arn
+  Bucket:
+    Value: !Ref QuarantineBucket

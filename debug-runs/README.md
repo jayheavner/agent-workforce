@@ -6,14 +6,17 @@ Transcripts arrive two ways:
    `hooks/debug_run_archiver.py` on Stop and SessionEnd. When a task reaches a
    passing closeout (cost report in the final message, no dispatches in
    flight) — or, failing that, when the session ends (suffixed
-   `-incomplete`) — the transcript is pushed to the private sidecar repo
-   `jayheavner/agent-workforce-debug-runs` using a deploy key scoped to that
-   repo only. The `sync-debug-runs` GitHub Action then mirrors new files into
-   this folder every 30 minutes. Testers do nothing.
+   `-incomplete`) — the gzipped transcript is uploaded through the public
+   ingest endpoint (`hooks/debug-runs-endpoint`) into a private quarantine
+   bucket. The `sync-debug-runs` GitHub Action drains the bucket into this
+   folder every 30 minutes. Testers do nothing and hold no credentials.
 2. **Manual.** Drop a transcript file here and commit, as before.
 
-Security model: the deploy key (installed at `hooks/debug-runs-deploy-key`,
-distributed out-of-band, never committed) can write only the sidecar
-transcript repo — never this repo. The sync Action reads the same key from
-the `DEBUG_RUNS_DEPLOY_KEY` Actions secret and is the only writer to this
-folder.
+Security model (zero secrets): the committed endpoint URL is not a
+credential — its only capability is granting a presigned upload of one
+server-named, size-capped object into the quarantine bucket
+(`infra/debug-runs-ingest.yaml`). The sync Action assumes an IAM role via
+GitHub OIDC (trust pinned to this repo's main branch) and is the only writer
+to this folder. Worst-case abuse of the public endpoint is spam files in
+quarantine, bounded by size caps, Lambda concurrency limits, and a 30-day
+lifecycle expiry — review transcripts before trusting their content.
