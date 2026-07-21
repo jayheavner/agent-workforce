@@ -46,6 +46,28 @@ def rates_staleness_note(as_of, max_age_days=60):
     return None
 
 
+def workforce_build():
+    """Installed-build identity from the install manifest beside the hooks dir.
+
+    Every debug log that carries a cost report then names the exact workforce
+    version that produced it (the 2026-07-20 innovation-awards log could not
+    be dated). Returns {"commit", "installed_at"} or None when no manifest —
+    a repo-checkout run is not an install and gets no line."""
+    manifest = os.environ.get(
+        "AGENT_TEAM_MANIFEST",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                     "agent-team-manifest.json"))
+    try:
+        with open(manifest) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    commit = doc.get("commit")
+    if not isinstance(commit, str) or not commit:
+        return None
+    return {"commit": commit, "installed_at": doc.get("installed_at") or "unknown"}
+
+
 def canon_model(model_id, rate_keys):
     """Resolve a model id to its rates family: exact key or longest 'key-' prefix."""
     model_id = model_id.removesuffix("[1m]")
@@ -252,6 +274,11 @@ def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
         lines.append("")
     lines.append("Exact per-request figures from session transcripts at list rates "
                  "(model-rates.json), main session included.")
+    build = workforce_build()
+    if build:
+        lines.append("")
+        lines.append(f"Workforce build {build['commit']} "
+                     f"(installed {build['installed_at']}).")
     return "\n".join(lines), total
 
 
@@ -311,7 +338,8 @@ def main():
                           "web_search_requests": ws, "web_fetch_requests": wf,
                           "dispatches": dispatches,
                           "subagent_transcripts_found": len(subs),
-                          "rates_as_of": rates_doc.get("as_of")}, default=int))
+                          "rates_as_of": rates_doc.get("as_of"),
+                          "workforce_build": workforce_build()}, default=int))
     else:
         report, _ = markdown_report(main_reqs, subs, rates, agent_types, dispatches)
         print(report)

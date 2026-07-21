@@ -121,6 +121,21 @@ expect_contains "$ORPHAN_MD" "1 Agent dispatch" \
 expect_not_contains "$MD" "WARNING" \
   "good fixture (no dispatches) carries no undercount warning"
 
+# --- (g2) workforce build stamp: every installed run names its version ---
+BUILD_MANIFEST="$TMP/agent-team-manifest.json"
+jq -n '{commit:"abc1234", installed_at:"2026-07-20T00:00:00Z", files:{}}' > "$BUILD_MANIFEST"
+STAMPED_MD="$(AGENT_TEAM_MANIFEST="$BUILD_MANIFEST" python3 "$TOOL" --transcript "$FIXTURE" 2>/dev/null)"
+expect_contains "$STAMPED_MD" "Workforce build abc1234 (installed 2026-07-20T00:00:00Z)" \
+  "manifest present: report names the installed build"
+STAMPED_JSON="$(AGENT_TEAM_MANIFEST="$BUILD_MANIFEST" python3 "$TOOL" --transcript "$FIXTURE" --format json 2>/dev/null)"
+if printf '%s' "$STAMPED_JSON" | jq -e '.workforce_build.commit == "abc1234"' >/dev/null 2>&1; then
+  pass "json format carries workforce_build.commit"
+else
+  fail "json format carries workforce_build.commit — got: $STAMPED_JSON"
+fi
+expect_not_contains "$MD" "Workforce build" \
+  "no manifest beside the tool: no build line invented"
+
 # --- (g) rates staleness note ---
 OLD_RATES="$TMP/old-rates.json"
 jq '.as_of = "2026-01-01"' "$ROOT/hooks/model-rates.json" > "$OLD_RATES"

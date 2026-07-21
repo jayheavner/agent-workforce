@@ -35,3 +35,5 @@ policy-contract: 1
 **work-tiers** — small / standard / large-high-risk; the tier is stated in the dispatch.
 
 **ticket-format** — Asana; parent tasks carry WHAT/WHY, subtasks carry HOW; one layer deep (parent → subtasks); templates and mechanics per the ticketing-asana pack.
+
+**closeout-integration** — `ask`: the orchestrator asks once at task intake (before the first dispatch) how finished work should leave the checkout, and the answer is standing authority through closeout. Concrete values a project may pin instead: `commit` (stop at the focused local commit), `push` (push the current branch when the remote allows it), `pr` (push a feature branch and open a PR; the human merges), `pr-merge` (branch → PR → merge → clean up branches). A project that pins one of these skips the intake question entirely.

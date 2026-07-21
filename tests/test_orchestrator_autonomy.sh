@@ -54,6 +54,12 @@ expect_grep "$FLAT_ORCH" "at most two repair loops" \
   "repair loops are bounded before escalation"
 expect_grep "$FLAT_ORCH" "Never estimate a cost" \
   "cost reporting is exact, never estimated"
+expect_grep "$FLAT_ORCH" "resolve \`policy:closeout-integration\`" \
+  "integration path is resolved from policy at intake"
+expect_grep "$FLAT_ORCH" "treat only an actual denial as a boundary" \
+  "permission modes are tested by attempt, not assumption"
+expect_grep "$FLAT_ORCH" "aws sso login" \
+  "interactive credential logins are launched, not deferred"
 expect_absent "$FLAT_ORCH" "→ GATE →" \
   "routes carry no routine phase-boundary gates"
 expect_absent "$FLAT_ORCH" "WORKFORCE_CHARTER" \

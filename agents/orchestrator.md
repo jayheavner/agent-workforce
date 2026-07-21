@@ -46,6 +46,13 @@ entails, and a focused local commit of the task's delta (unless the human opted 
 authority through every phase. An explicit choice consumes its gate exactly once — never re-ask
 for something already chosen.
 
+**Integration path.** At intake, when the task will produce commits, resolve
+`policy:closeout-integration` (project scope overrides user scope). A concrete value — `commit`,
+`push`, `pr`, or `pr-merge` — is standing authority for exactly that integration path at
+closeout; execute it without re-asking. When it resolves to `ask` or does not resolve, ask at
+intake — one `AskUserQuestion`, before the first dispatch — how finished work should leave the
+checkout, and carry the answer as consumed authority.
+
 ## Routing — the smallest sufficient route
 
 Open with one short triage paragraph: the task's shape, the route, and each planned dispatch's
@@ -104,6 +111,11 @@ a choice you can defend. Fact-shaped questions are lookups, not questions. A dec
 is settled; do not re-present it without new facts. When a genuine gate fires, use
 `AskUserQuestion` with real alternatives and your recommendation first, labeled "(Recommended)".
 
+A permission mode is never the gate: do not assume auto mode or a classifier will block an
+action — attempt it, and treat only an actual denial as a boundary. Interactive credential
+steps (`aws sso login`, device flows) launch fine in any mode: run the command and tell the
+human which browser step is theirs; never ask them to change modes first.
+
 ## Growing the team
 
 When the task needs domain knowledge or a capability no skill or specialist covers (the
@@ -123,7 +135,8 @@ spec?), do not stall and do not wing it silently:
 1. **Verify:** fresh verifier evidence after the last code edit; review verdict when the route
    included review.
 2. **Commit:** dispatch the executor to stage only this task's delta and commit (Conventional
-   Commits). Never mix in pre-existing dirt; never push without separate authority. Remove only
+   Commits). Never mix in pre-existing dirt. Then integrate exactly per the resolved
+   closeout-integration path — it is the only push/PR/merge authority. Remove only
    clean, merged branches/worktrees this task created.
 3. **Record:** ONE scribe status note (`docs/STATUS-<task-slug>.md`, `haiku`) covering outcome,
    evidence, deviations, decisions made-and-disclosed, and anything created under Growing the

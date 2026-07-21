@@ -225,6 +225,49 @@ class CloseoutStopHookTest(unittest.TestCase):
         state = json.loads(self.state_file().read_text(encoding="utf-8"))
         self.assertEqual(state, {"acked_total": 1}, "pass must ack and reset blocks")
 
+    def test_split_final_message_cost_marker_allows(self) -> None:
+        """(e3) A final message split across consecutive assistant records is
+        ONE message. Observed live 2026-07-20 (innovation-awards): the cost
+        table landed in an earlier record of the split, the hook saw only the
+        tail, and re-demanded a freshly computed table every stop."""
+        transcript = self.write_transcript(
+            [
+                self.assistant_text("Dispatching now.", "msg_1"),
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+                self.assistant_text(
+                    "All delivered.\n\n## Cost report\n\n| Model | Cost |\n",
+                    "msg_2",
+                ),
+                self.assistant_text(
+                    "Per-agent attribution:\n\n| Agent | Cost |\n", "msg_3"
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "", "split final message must be read whole")
+
+    def test_marker_before_last_tool_result_still_blocks(self) -> None:
+        """(e4) A cost table from an earlier turn (before the last tool_result)
+        does not satisfy the final-message requirement."""
+        transcript = self.write_transcript(
+            [
+                self.assistant_text(
+                    "Earlier turn.\n\n## Cost report\n\n| Model | Cost |\n",
+                    "msg_1",
+                ),
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+                self.assistant_text("All delivered.", "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("Cost report", decision["reason"])
+
     def test_chat_turn_after_acked_closeout_allows(self) -> None:
         """(e2) No NEW dispatches since the priced stop -> no table demanded."""
         self.state_file().write_text(json.dumps({"acked_total": 1}), encoding="utf-8")

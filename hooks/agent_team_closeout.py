@@ -104,6 +104,13 @@ def block_text(block_):
 def scan_transcript(path):
     """One pass: dispatch count, in-flight set, roles seen (ordered), last text.
 
+    "Last text" is the FINAL MESSAGE the human sees: every assistant text
+    record since the most recent user record (tool_result, human turn, or
+    task-notification), concatenated. A long final message is written as
+    several consecutive assistant records; reading only the last record made
+    the hook re-demand a cost table the message already carried (observed
+    live 2026-07-20).
+
     Background dispatches are handled explicitly: their immediate tool_result
     is a launch stub (BG_STUB_MARKER), NOT a completion — the dispatch stays
     in flight until a task-notification names its tool_use id. If the harness
@@ -115,7 +122,7 @@ def scan_transcript(path):
     roles = set()
     order = []
     notified = set()
-    last_text = ""
+    tail_texts = []
     try:
         f = open(path, encoding="utf-8", errors="replace")
     except OSError:
@@ -130,6 +137,8 @@ def scan_transcript(path):
                 continue
             msg = rec.get("message") or {}
             content = msg.get("content")
+            if rec.get("type") == "user":
+                tail_texts = []
             if isinstance(content, str):
                 notified.update(NOTIFIED_ID.findall(content))
                 continue
@@ -139,7 +148,7 @@ def scan_transcript(path):
                 texts = [b.get("text", "") for b in content
                          if isinstance(b, dict) and b.get("type") == "text"]
                 if texts:
-                    last_text = "\n".join(texts)
+                    tail_texts.append("\n".join(texts))
             for block_ in content:
                 if not isinstance(block_, dict):
                     continue
@@ -157,7 +166,7 @@ def scan_transcript(path):
                         del in_flight[block_["tool_use_id"]]
     for tid in notified:
         in_flight.pop(tid, None)
-    return total, in_flight, roles, order, last_text
+    return total, in_flight, roles, order, "\n".join(tail_texts)
 
 
 def cost_report_cmd(transcript, session_id, cwd, extra=()):

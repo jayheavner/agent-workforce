@@ -26,6 +26,7 @@ finishing-a-branch eval record for `docstrings`.
 ## process-policy
 - work-tiers — tier names + gate routes (consumers: none directly; referenced by coverage policy *values*, which scope gates by tier)
 - ticket-format — ticket templates + tracker specifics (consumers: write-ticket, review-ticket, close-ticket)
+- closeout-integration — how finished work leaves the checkout after the local commit: `commit` | `push` | `pr` | `pr-merge` | `ask` (consumers: closeout, orchestrator agent; registered 2026-07-20 after the innovation-awards run needed "push it" / "merge it" prompted by hand)
 
 ## Removed keys (tombstones)
 
