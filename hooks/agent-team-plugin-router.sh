@@ -7,7 +7,7 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  secrets|audit|dispatch|cost|closeout-stop) ;;
+  secrets|audit|dispatch|cost|closeout-stop|archive-run) ;;
   *)
     printf 'agent-workforce plugin router: unknown routing mode: %s\n' "$MODE" >&2
     exit 2
@@ -27,6 +27,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 if [ "$MODE" = "closeout-stop" ]; then
   printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py"
   exit $?
+fi
+
+# Transcript archiver self-scopes by event (Stop vs SessionEnd) and is
+# always fail-open — it must never block a stop or an exit.
+if [ "$MODE" = "archive-run" ]; then
+  printf '%s' "$INPUT" | python3 "$HERE/debug_run_archiver.py"
+  exit 0
 fi
 
 ROLE="$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null)" || {

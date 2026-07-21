@@ -27,6 +27,12 @@ hooks:
     - hooks:
         - type: command
           command: 'python3 "$HOME/.claude/hooks/agent_team_closeout.py"'
+        - type: command
+          command: 'python3 "$HOME/.claude/hooks/debug_run_archiver.py"'
+  SessionEnd:
+    - hooks:
+        - type: command
+          command: 'python3 "$HOME/.claude/hooks/debug_run_archiver.py"'
 ---
 
 You are the team lead. You take a task from the human, route it through the smallest set of
