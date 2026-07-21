@@ -146,5 +146,38 @@ LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$P
 EXPECTED="$(printf '%s\n' --plugin-dir "$REPO" --agent builder --help)"
 [ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "plugin launcher did not pass plugin directory and user arguments exactly"
 
+# Hook-health: a broken hook script in the profile is reported on stderr both
+# BEFORE launch and AFTER the session exits (the fullscreen TUI wipes
+# pre-launch output; the post-exit line is the one that stays visible), while
+# stdout (the launch args) stays byte-exact.
+BROKEN_PROFILE="$TMPDIR_T/broken-profile"
+mkdir -p "$BROKEN_PROFILE/hooks"
+printf '#!/bin/sh\nexit 0\n' > "$BROKEN_PROFILE/hooks/dead-gate.sh"   # no exec bit
+HH_ERR="$(CLAUDE_CONFIG_DIR="$BROKEN_PROFILE" PATH="$TMPDIR_T/fake-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --no-install --help 2>&1 >/dev/null)"
+if [ "$(printf '%s\n' "$HH_ERR" | grep -c "chmod +x $BROKEN_PROFILE/hooks/dead-gate.sh")" -eq 2 ]; then
+  ok
+else
+  bad "launcher did not report the broken hook on stderr before AND after the session"
+fi
+HH_OUT="$(CLAUDE_CONFIG_DIR="$BROKEN_PROFILE" PATH="$TMPDIR_T/fake-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --no-install --help 2>/dev/null)"
+EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --help)"
+[ "$HH_OUT" = "$EXPECTED" ] && ok || bad "hook-health reporting leaked into launcher stdout"
+
+# The launcher preserves the session's exit code now that claude is no longer
+# exec'd (the post-exit health report runs after it returns).
+mkdir -p "$TMPDIR_T/failing-bin"
+cat > "$TMPDIR_T/failing-bin/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 7
+EOF
+chmod +x "$TMPDIR_T/failing-bin/claude"
+cp "$TMPDIR_T/fake-bin/jq" "$TMPDIR_T/failing-bin/jq"
+chmod +x "$TMPDIR_T/failing-bin/jq"
+CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/failing-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --no-install >/dev/null 2>&1
+[ "$?" -eq 7 ] && ok || bad "launcher did not preserve the session exit code"
+
 printf 'plugin-mode tests: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

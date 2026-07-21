@@ -39,7 +39,9 @@ done
 if [ "$MODE" = "plugin" ]; then
   # Legacy live plugin mode: hooks route through hooks.json + the router, but
   # per-agent permissionMode is NOT honored — expect permission prompts.
-  exec claude --plugin-dir "$ROOT" "${ARGS[@]}"
+  # Bash 3.2 with `set -u` treats an empty array expansion as unbound; the
+  # `+word` form keeps a zero-arg launch safe (same idiom as install.sh).
+  exec claude --plugin-dir "$ROOT" ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 PROFILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -94,9 +96,25 @@ if [ "$SKIP_INSTALL" -eq 0 ] && needs_install; then
   fi
 fi
 
+# Hook health is reported on stderr before launch AND after exit. The
+# fullscreen TUI wipes the pre-launch line, and anything printed mid-session
+# scrolls away — the post-exit line is the one that stays on the terminal
+# (2026-07-20 log: two hooks failed 'Permission denied' on every command and
+# no one was ever shown the fix). The probe never blocks a launch, and the
+# repair is deliberately left to the human: agents must not modify hook
+# infrastructure, so the launcher only names the exact chmod.
+hook_health_report() {
+  AGENT_TEAM_PROFILE="$PROFILE" python3 "$ROOT/hooks/cost_report.py" --hook-health >&2 || true
+}
+
 # The orchestrator's main session runs bypassPermissions by decision
 # (2026-07-19): the human is not watching, every specialist already bypasses,
 # and prompts wedge autonomy. The contract + audit log remain the controls on
 # the orchestrator's read-only shell. A flag passed by the caller comes later
-# on the command line and therefore wins.
-exec claude --agent orchestrator --permission-mode bypassPermissions "${ARGS[@]}"
+# on the command line and therefore wins. claude is no longer exec'd so the
+# post-exit health report can run; the session's exit code is preserved.
+hook_health_report
+status=0
+claude --agent orchestrator --permission-mode bypassPermissions ${ARGS[@]+"${ARGS[@]}"} || status=$?
+hook_health_report
+exit "$status"

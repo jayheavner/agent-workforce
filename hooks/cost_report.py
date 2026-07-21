@@ -21,10 +21,12 @@ import datetime
 import glob
 import json
 import os
+import shlex
 import sys
 from collections import defaultdict
 
 TOKEN_FIELDS = ("input", "output", "cw5m", "cw1h", "cread")
+INTERPRETERS = {"python", "python3", "bash", "sh", "zsh", "node"}
 
 
 def load_rates(path):
@@ -66,6 +68,94 @@ def workforce_build():
     if not isinstance(commit, str) or not commit:
         return None
     return {"commit": commit, "installed_at": doc.get("installed_at") or "unknown"}
+
+
+def _hook_command_target(command):
+    """(path, needs_exec_bit) for the script a hook command runs, or None.
+
+    PATH-resolved commands (jq, git) and commands still carrying unexpanded
+    variables are skipped — only a concrete path can be health-checked. A
+    script run through an interpreter needs to exist but not be executable."""
+    try:
+        argv = shlex.split(os.path.expandvars(command))
+    except ValueError:
+        return None
+    if not argv:
+        return None
+    head = os.path.expanduser(argv[0])
+    if os.path.basename(head) in INTERPRETERS:
+        for arg in argv[1:]:
+            arg = os.path.expanduser(arg)
+            if not arg.startswith("-") and "/" in arg:
+                return (arg, False)
+        return None
+    if "/" in head:
+        return (head, True)
+    return None
+
+
+def hook_health(profile_dir=None):
+    """Warnings for hook infrastructure that exists but cannot run.
+
+    The 2026-07-20 innovation-awards run spammed 'Permission denied' on every
+    command from two hook scripts missing their exec bit, and neither human
+    nor model was ever told the fix. Checks the active profile's settings
+    hook commands plus every .sh in its hooks dir. Returns [] when healthy.
+    Repair stays human on purpose: an agent must not modify its own gates."""
+    profile_dir = profile_dir or os.environ.get(
+        "AGENT_TEAM_PROFILE",
+        os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")))
+    warnings, seen = [], set()
+
+    def check(path, needs_exec, origin):
+        if "$" in path:
+            return
+        real = os.path.realpath(path)
+        if real in seen:
+            return
+        seen.add(real)
+        if not os.path.exists(path):
+            warnings.append(
+                f"WARNING: hook target missing: {path} ({origin}) — "
+                "repair by hand; agents must not modify hook infrastructure.")
+        elif needs_exec and not os.access(path, os.X_OK):
+            warnings.append(
+                f"WARNING: hook not executable: {path} ({origin}) — fix by "
+                f"hand: chmod +x {path} — agents must not modify hook "
+                "infrastructure.")
+
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            with open(os.path.join(profile_dir, name)) as f:
+                doc = json.load(f)
+        except (OSError, ValueError):
+            continue
+        events = doc.get("hooks") if isinstance(doc, dict) else None
+        if not isinstance(events, dict):
+            continue
+        for event, entries in events.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                for h in entry.get("hooks") or []:
+                    cmd = h.get("command") if isinstance(h, dict) else None
+                    if isinstance(cmd, str):
+                        target = _hook_command_target(cmd)
+                        if target:
+                            check(target[0], target[1], f"{name}:{event}")
+
+    hooks_dir = os.path.join(profile_dir, "hooks")
+    try:
+        entries = sorted(os.listdir(hooks_dir))
+    except OSError:
+        entries = []
+    for fn in entries:
+        path = os.path.join(hooks_dir, fn)
+        if fn.endswith(".sh") and os.path.isfile(path):
+            check(path, True, "hooks dir")
+    return warnings
 
 
 def canon_model(model_id, rate_keys):
@@ -279,6 +369,16 @@ def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
         lines.append("")
         lines.append(f"Workforce build {build['commit']} "
                      f"(installed {build['installed_at']}).")
+    # Hook health rides in EVERY report so a broken gate cannot scroll away:
+    # the Stop hook re-demands the report at each closeout, putting these
+    # warnings at the bottom of the final message every time.
+    try:
+        health = hook_health()
+    except Exception:
+        health = []
+    if health:
+        lines.append("")
+        lines.extend(health)
     return "\n".join(lines), total
 
 
@@ -306,7 +406,10 @@ def write_telemetry(tdir, session_id, cwd, subs, rates, agent_types):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--transcript", required=True)
+    ap.add_argument("--transcript", default=None)
+    ap.add_argument("--hook-health", action="store_true",
+                    help="print hook health warnings for the active profile "
+                         "and exit (silent when healthy)")
     ap.add_argument("--rates", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                     "model-rates.json"))
     ap.add_argument("--cost-file", default=None,
@@ -316,6 +419,13 @@ def main():
     ap.add_argument("--session-id", default="")
     ap.add_argument("--cwd", default="")
     args = ap.parse_args()
+
+    if args.hook_health:
+        for warning in hook_health():
+            print(warning)
+        return 0
+    if not args.transcript:
+        ap.error("--transcript is required unless --hook-health is given")
 
     rates_path = os.environ.get("AGENT_TEAM_RATES", args.rates)
     try:
@@ -339,7 +449,8 @@ def main():
                           "dispatches": dispatches,
                           "subagent_transcripts_found": len(subs),
                           "rates_as_of": rates_doc.get("as_of"),
-                          "workforce_build": workforce_build()}, default=int))
+                          "workforce_build": workforce_build(),
+                          "hook_health": hook_health()}, default=int))
     else:
         report, _ = markdown_report(main_reqs, subs, rates, agent_types, dispatches)
         print(report)

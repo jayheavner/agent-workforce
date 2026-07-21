@@ -11,6 +11,11 @@ TOOL="$ROOT/hooks/cost_report.py"
 FIXTURE="$HERE/fixtures/cost/good/11111111-2222-3333-4444-555555555555.jsonl"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cost-report-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Hermetic default: hook-health scans a profile dir; without this, every bare
+# invocation below would scan the repo checkout and the suite would depend on
+# this machine's file modes. Sections that test hook health override inline.
+mkdir -p "$TMP/default-profile"
+export AGENT_TEAM_PROFILE="$TMP/default-profile"
 PASS=0
 FAIL=0
 
@@ -135,6 +140,48 @@ else
 fi
 expect_not_contains "$MD" "Workforce build" \
   "no manifest beside the tool: no build line invented"
+
+# --- (h) hook health: broken hook infrastructure surfaces in every report ---
+HPROF="$TMP/hook-profile"
+mkdir -p "$HPROF/hooks"
+printf '#!/bin/sh\nexit 0\n' > "$HPROF/hooks/dead-gate.sh"    # exec bit deliberately absent
+printf '#!/bin/sh\nexit 0\n' > "$HPROF/hooks/orphan.sh"       # not wired in settings either
+jq -n --arg cmd "$HPROF/hooks/dead-gate.sh" \
+  '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$cmd}]}],
+           SessionStart:[{hooks:[{type:"command",command:"/nonexistent/session-status.sh"}]}]}}' \
+  > "$HPROF/settings.json"
+HH_MD="$(AGENT_TEAM_PROFILE="$HPROF" python3 "$TOOL" --transcript "$FIXTURE" 2>/dev/null)"
+expect_contains "$HH_MD" "chmod +x $HPROF/hooks/dead-gate.sh" \
+  "non-executable wired hook: report carries the exact chmod fix"
+expect_contains "$HH_MD" "chmod +x $HPROF/hooks/orphan.sh" \
+  "non-executable script in hooks dir caught even when unwired"
+expect_contains "$HH_MD" "/nonexistent/session-status.sh" \
+  "missing hook target is reported"
+if [ "$(printf '%s\n' "$HH_MD" | grep -c "dead-gate.sh")" -eq 1 ]; then
+  pass "hook wired in settings AND present in hooks dir warns once, not twice"
+else
+  fail "hook wired in settings AND present in hooks dir warns once, not twice"
+fi
+HH_JSON="$(AGENT_TEAM_PROFILE="$HPROF" python3 "$TOOL" --transcript "$FIXTURE" --format json 2>/dev/null)"
+if printf '%s' "$HH_JSON" | jq -e '.hook_health | length == 3' >/dev/null 2>&1; then
+  pass "json format carries all three hook_health warnings"
+else
+  fail "json format carries all three hook_health warnings — got: $HH_JSON"
+fi
+HEALTHY="$TMP/healthy-profile"
+mkdir -p "$HEALTHY"
+CLEAN_MD="$(AGENT_TEAM_PROFILE="$HEALTHY" python3 "$TOOL" --transcript "$FIXTURE" 2>/dev/null)"
+expect_not_contains "$CLEAN_MD" "WARNING: hook" \
+  "healthy profile: report stays quiet about hooks"
+HH_ONLY="$(AGENT_TEAM_PROFILE="$HPROF" python3 "$TOOL" --hook-health 2>/dev/null)"
+expect_contains "$HH_ONLY" "chmod +x $HPROF/hooks/dead-gate.sh" \
+  "--hook-health standalone prints the warning without a transcript"
+HH_CLEAN="$(AGENT_TEAM_PROFILE="$HEALTHY" python3 "$TOOL" --hook-health 2>/dev/null)"
+if [ -z "$HH_CLEAN" ]; then
+  pass "--hook-health is silent on a healthy profile"
+else
+  fail "--hook-health is silent on a healthy profile — got: $HH_CLEAN"
+fi
 
 # --- (g) rates staleness note ---
 OLD_RATES="$TMP/old-rates.json"
