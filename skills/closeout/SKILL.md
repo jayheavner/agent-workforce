@@ -41,6 +41,13 @@ evidence, and never a completion claim that hides an unrun check or a dirty tree
 uncommitted changes remain, say what and why. Decisions made on the human's behalf are listed,
 one line each.
 
+Every deferral carries its disposition inline — the tracker reference (#N) or a
+`## Remaining work` entry; prose caveats are not a disposition and the Stop hook blocks them.
+A completion claim is scoped to what actually functions: when a named gap means the delivered
+goal does not work end-to-end (an alerting path that cannot alert, a feature behind an unset
+secret), the headline says so — "complete except X, tracked as #N" — never an unqualified
+"complete" with the gap in fine print (2026-07-22 lesson).
+
 ## 5. Price exactly
 
 The final message ends with the cost report under the heading `## Cost report` — produced by

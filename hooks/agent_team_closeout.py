@@ -54,6 +54,19 @@ MUTATING_ROLES = {"builder", "executor", "deployer"}
 # exists to catch (claiming a commit happened while the tree is dirty).
 DIRTY_ACK_WORDS = ("uncommitted", "not committed", "left dirty", "dirty tree",
                    "WORKFORCE_PAUSE: HUMAN_DECISION")
+# Deferral language in a closeout without a disposition is narration — the
+# 2026-07-22 innovation-awards failure mode ("4/4 complete, blocked: no" while
+# a known-nonfunctional alerting path lived only in prose caveats). Per the
+# discovered-work policy each deferral gets exactly one disposition: fixed
+# now, a tracker reference, or the line-start Remaining-work floor section.
+DEFERRAL_MARKERS = ("follow-up", "follow up", "deferred", "not built",
+                    "never built", "half-built", "open item", "left unfixed",
+                    "future work")
+# A disposition is a tracker reference (#N or an /issues/ URL) or a
+# line-start "Remaining work" heading — mid-sentence mentions (e.g. the cost
+# report's tracker nag quoting "REMAINING WORK floor") never count.
+DISPOSITION_RE = re.compile(
+    r"(?im)^#{0,6}\s*remaining work\b|(?<!\w)#\d+\b|/issues/\d+")
 # A background dispatch writes an immediate stub tool_result; the real
 # completion arrives later as a task-notification carrying the tool_use id.
 BG_STUB_MARKER = "Async agent launched successfully"
@@ -282,6 +295,21 @@ def ledger_checks(last_text, roles, order, cwd):
             "this session. Route the deploy through the deployer, or restate "
             "the delivery honestly (e.g. \"implemented and locally verified; "
             "deploy not authorized\").")
+
+    # 5. Deferred work needs a disposition, never narration (discovered-work
+    #    policy). A pause is not a completion claim, so open work is expected
+    #    there.
+    if "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
+        hits = sorted({m for m in DEFERRAL_MARKERS if m in lowered})
+        if hits and not DISPOSITION_RE.search(last_text):
+            problems.append(
+                "The final message defers work (matched: "
+                + ", ".join(f"'{h}'" for h in hits) +
+                ") with no disposition. Per the discovered-work policy each "
+                "deferral gets exactly one: fix it before closing, file it in "
+                "the project tracker and cite the reference (#N or the issue "
+                "URL), or list it under a line-start '## Remaining work' "
+                "heading. Prose caveats are not a disposition.")
 
     return problems
 

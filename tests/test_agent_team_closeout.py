@@ -764,6 +764,101 @@ class CloseoutStopHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
+    # --- (l) deferral disposition (discovered-work policy) ----------------
+    # 2026-07-22 innovation-awards: the closeout said "4/4 complete, blocked:
+    # no" while a known-nonfunctional alerting path lived only in prose
+    # caveats ("noted as follow-ups"). Narration is not a disposition: a
+    # deferral must carry a tracker reference or a Remaining-work section.
+
+    def test_deferral_without_disposition_blocks(self) -> None:
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text(
+                        "The Slack shim was not built; that is a follow-up."
+                    ),
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("disposition", decision["reason"])
+
+    def test_deferral_with_tracker_ref_allows(self) -> None:
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text(
+                        "The Slack shim was not built — filed as #12."
+                    ),
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_deferral_with_remaining_work_section_allows(self) -> None:
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text(
+                        "One item is deferred.\n\n## Remaining work\n"
+                        "- Slack payload shim (no tracker declared)"
+                    ),
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_midline_remaining_work_does_not_satisfy(self) -> None:
+        """The cost report's tracker nag says 'REMAINING WORK' mid-sentence;
+        only a line-start heading counts as the floor."""
+        transcript = self.write_transcript(
+            [
+                *self.build_and_verify(),
+                self.assistant_text(
+                    self.closeout_text(
+                        "Shim not built. Unfixed findings fall to the "
+                        "closeout REMAINING WORK floor eventually."
+                    ),
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("disposition", decision["reason"])
+
+    def test_pause_skips_deferral_check(self) -> None:
+        """A WORKFORCE_PAUSE is not a completion claim; open work is expected."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "builder"),
+                self.result("tu_1"),
+                self.assistant_text(
+                    "WORKFORCE_PAUSE: HUMAN_DECISION — the fix is deferred "
+                    "until you rule.\n\n## Cost report\n\n| Model | Cost |\n",
+                    "msg_2",
+                ),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
 
 if __name__ == "__main__":
     unittest.main()
