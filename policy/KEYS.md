@@ -27,6 +27,7 @@ finishing-a-branch eval record for `docstrings`.
 - work-tiers — tier names + gate routes (consumers: none directly; referenced by coverage policy *values*, which scope gates by tier)
 - ticket-format — ticket templates + tracker specifics (consumers: write-ticket, review-ticket, close-ticket)
 - closeout-integration — how finished work leaves the checkout after the local commit: `commit` | `push` | `pr` | `pr-merge` | `ask` (consumers: closeout, orchestrator agent; registered 2026-07-20 after the innovation-awards run needed "push it" / "merge it" prompted by hand)
+- discovered-work — disposition of defects/debt found mid-task: fix / ticket / stop tiers with the tracker resolution chain (consumers: orchestrator agent, closeout; registered 2026-07-22 after the EA session flagged-and-walked-past a fully-diagnosed broken check twice)
 
 ## Removed keys (tombstones)
 

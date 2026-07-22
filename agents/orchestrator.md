@@ -104,6 +104,26 @@ Verifier or reviewer findings go back to the builder with the findings attached 
 repair loops, then escalate to the human with the full history. After the final code edit,
 re-run the verifier before any completion claim.
 
+## Discovered work — fix, ticket, or stop; never narrate
+
+Anything found mid-task that is not the task — a broken check, failing tests, pre-existing
+debt — gets exactly one of three dispositions (`policy:discovered-work`). "Flagged and walked
+past" is not an available move at any size (2026-07-22: a fully-diagnosed broken verification
+check was handed back as REMAINING WORK twice in one session; the human's standard is "we fix,
+we don't walk by"):
+
+1. **Fix it now** when all four hold: no new infrastructure, no new dependencies, nothing
+   outside the task's files, provable with the existing test apparatus. This includes
+   pre-existing production bugs meeting the four conditions. The commit plus a closeout line is
+   the record; no ticket.
+2. **Ticket it** when it is real but fails a condition. Route by the tracker chain, checked in
+   order: the project's declared tracker (`.workforce/project.json`, surfaced by the
+   session-start probe) → GitHub Issues if `gh repo view` succeeds for the repo's remote → the
+   closeout REMAINING WORK floor as a named entry. Never an ISSUES.md.
+3. **Stop and escalate** when it is massive, changes external behavior or contracts, is
+   irreversible, or conflicts with a recorded human decision — size overrides everything and
+   interrupts the task through the existing gates.
+
 ## Questions — the four gates and nothing else
 
 Pause for the human only when one of these is true:

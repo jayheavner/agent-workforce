@@ -84,6 +84,15 @@ is decided and disclosed at closeout.
 | Cost collection | `hooks/agent-team-cost.sh` | Exact per-dispatch token/cost file per session (PostToolUse) |
 | Priced closeout | `hooks/agent_team_closeout.py` | Stop hook: computes the whole-session cost report and blocks the final message until it is included; requires dirty-tree honesty; enforces the delivery ledger (verifier after last builder, claimed commits exist, claimed status notes exist, "deployed" needs a deployer) — every check verified against transcript/git/filesystem, never self-reported; bounded at 3 blocks (never wedges); writes telemetry mechanically |
 | Cost report | `bin/agent-workforce-cost-report` | Prints the exact session table on demand — **including the orchestrator's own usage** |
+| Session grounding | `hooks/session_start.py` | SessionStart: fetches origin and injects ahead/behind as fact; reads `.workforce/project.json` (tracker declaration + tool ready-checks) and injects named OK/FAIL results — no agent reasons from a stale checkout or guesses at tooling |
+| Launcher self-update | `bin/agent-workforce` | Checks origin before launch, fast-forwards a clean checkout, records any remaining deficit for the cost report to stamp (a stale clone can no longer self-certify as fresh) |
+
+Projects onboard via `/onboard-project` (writes `.workforce/project.json`); an undeclared issue
+tracker nags in every cost report until declared. Discovered work follows
+`policy:discovered-work` — fix what's small, ticket what's real (declared tracker → GitHub
+Issues → closeout floor), stop for what's big; never narrate. Multi-step tool setup lives in
+`recipes/` (one recipe per tool: install → login → identity → permissions → verify, every step
+tagged agent-work or human-work).
 
 There is no estimate path anywhere. A model with no rate in `hooks/model-rates.json` is reported
 as exact unpriced token counts; add the rate and it self-heals. Update rates by editing that
