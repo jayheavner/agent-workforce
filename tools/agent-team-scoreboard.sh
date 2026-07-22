@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # tools/agent-team-scoreboard.sh — read-only aggregation over machine telemetry
-# records (docs/telemetry/*.jsonl, written by the closeout Stop hook via
-# hooks/cost_report.py --telemetry-dir). One row per (role, model) with dispatch
-# count and total cost in USD, sorted by cost descending. Evidence for a human
-# recalibrating the roster's model pins; no side effects.
+# records written by the closeout Stop hook via hooks/cost_report.py
+# --telemetry-dir into the workforce-owned telemetry dir (never the client
+# repo). One row per (role, model) with dispatch count and total cost in USD,
+# sorted by cost descending. Evidence for a human recalibrating the roster's
+# model pins; no side effects.
 #   bash tools/agent-team-scoreboard.sh [telemetry-dir]
 set -u
 
-ROOT="${1:-docs/telemetry}"
+DEFAULT_ROOT="${AGENT_TEAM_TELEMETRY_DIR:-$HOME/.claude/logs/agent-team-telemetry}"
+ROOT="${1:-$DEFAULT_ROOT}"
 
 header() { printf '%-14s %-32s %10s %12s\n' role model dispatches cost_usd; }
 

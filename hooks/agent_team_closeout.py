@@ -27,7 +27,16 @@ docs/superpowers/specs/2026-07-18-autonomy-first-redesign.md):
   schemas, no ledger fields).
 - Bounded enforcement: at most MAX_BLOCKS blocks per session, then fail open
   with a visible warning — a hook must never wedge a session.
-- On a passing stop, telemetry is written by machine, never by a dispatch.
+- On a passing stop, telemetry is written by machine, never by a dispatch —
+  and always into the workforce-owned telemetry dir, never into the client
+  repo (2026-07-22: writing into the client's docs/telemetry collided with a
+  curated project dir and made one hook dirty the tree another hook polices).
+- Stale-read guard: the Stop event can fire before the just-finished reply is
+  flushed to the transcript (observed live 2026-07-22: three identical blocks,
+  each grading the PREVIOUS message, ended only by the enforcement cap). Every
+  block records a hash of the tail it graded; a re-evaluation that sees the
+  same tail — or no tail at all — is a stale read, retried once after a short
+  delay and then allowed without spending a block.
 """
 import hashlib
 import json
@@ -277,9 +286,11 @@ def ledger_checks(last_text, roles, order, cwd):
 
 
 def write_telemetry(transcript, session_id, cwd):
-    tdir = os.path.join(cwd, "docs", "telemetry")
-    if not os.path.isdir(tdir):
-        return
+    """Machine telemetry goes to workforce-owned storage, NEVER the client
+    repo — a hook must not create dirt that other hooks then police."""
+    tdir = os.environ.get(
+        "AGENT_TEAM_TELEMETRY_DIR",
+        os.path.expanduser("~/.claude/logs/agent-team-telemetry"))
     cmd = cost_report_cmd(transcript, session_id, cwd,
                           extra=("--telemetry-dir", tdir,
                                  "--session-id", session_id, "--cwd", cwd))
@@ -333,35 +344,69 @@ def main():
         write_telemetry(transcript, session_id, cwd)
         allow()
 
-    missing = []
-    if COST_MARKER not in last_text:
-        report = compute_cost_report(transcript, session_id, cwd)
-        if report:
-            missing.append(
-                "Your final message must include the session cost report. "
-                "Append the following verbatim (already computed — do not "
-                "re-derive or estimate):\n\n" + report)
-        else:
-            missing.append(
-                "Your final message must include the session cost report. Run "
-                "`bin/agent-workforce-cost-report --transcript " + transcript +
-                "` (or have the executor run it) and include its output "
-                "verbatim under '" + COST_MARKER + "'.")
+    def build_missing(tail):
+        found = []
+        if COST_MARKER not in tail:
+            report = compute_cost_report(transcript, session_id, cwd)
+            if report:
+                found.append(
+                    "Your final message must include the session cost report. "
+                    "Include the following verbatim anywhere in your final "
+                    "message (already computed — do not re-derive or "
+                    "estimate):\n\n" + report)
+            else:
+                found.append(
+                    "Your final message must include the session cost report. "
+                    "Run `bin/agent-workforce-cost-report --transcript " +
+                    transcript + "` (or have the executor run it) and include "
+                    "its output verbatim under '" + COST_MARKER + "'.")
 
-    missing.extend(ledger_checks(last_text, roles, order, cwd))
+        found.extend(ledger_checks(tail, roles, order, cwd))
 
-    if roles & MUTATING_ROLES and git_dirty(cwd):
-        acked = any(w.lower() in last_text.lower() for w in DIRTY_ACK_WORDS)
-        if not acked:
-            missing.append(
-                "The working tree has uncommitted changes and your final "
-                "message does not mention them. Either dispatch the executor "
-                "to commit this task's delta (the original request authorizes "
-                "a focused local commit unless the human opted out), or state "
-                "plainly what remains uncommitted and why.")
+        if roles & MUTATING_ROLES and git_dirty(cwd):
+            acked = any(w.lower() in tail.lower() for w in DIRTY_ACK_WORDS)
+            if not acked:
+                found.append(
+                    "The working tree has uncommitted changes and your final "
+                    "message does not mention them. Either dispatch the "
+                    "executor to commit this task's delta (the original "
+                    "request authorizes a focused local commit unless the "
+                    "human opted out), or state plainly what remains "
+                    "uncommitted and why.")
+        return found
+
+    def tail_hash(tail):
+        return hashlib.sha256(tail.encode()).hexdigest()
+
+    def is_stale(tail):
+        """After a block, a tail identical to the one already graded — or no
+        tail at all — means the model's post-block reply has not reached the
+        transcript yet (Stop fired before the flush)."""
+        if blocks == 0:
+            return False
+        return tail == "" or tail_hash(tail) == state.get("blocked_hash")
+
+    missing = build_missing(last_text)
+
+    if missing and is_stale(last_text):
+        try:
+            delay = float(os.environ.get("AGENT_TEAM_CLOSEOUT_RETRY_DELAY", "2"))
+        except ValueError:
+            delay = 2.0
+        if delay > 0:
+            time.sleep(delay)
+        total, in_flight, roles, order, last_text = scan_transcript(transcript)
+        missing = [] if in_flight else build_missing(last_text)
+        if missing and is_stale(last_text):
+            print("agent-team closeout: transcript read is stale (Stop fired "
+                  "before the final reply was flushed); allowing stop without "
+                  "re-verification.", file=sys.stderr)
+            write_telemetry(transcript, session_id, cwd)
+            allow()
 
     if missing:
         state["blocks"] = blocks + 1
+        state["blocked_hash"] = tail_hash(last_text)
         save_state(session_id, state)
         block("\n\n".join(missing))
 

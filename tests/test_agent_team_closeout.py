@@ -59,9 +59,12 @@ class CloseoutStopHookTest(unittest.TestCase):
         self.cwd_dir = root / "cwd"
         for d in (self.state_dir, self.cost_dir, self.data_dir, self.cwd_dir):
             d.mkdir()
+        self.telemetry_dir = root / "telemetry"
         self.env = dict(os.environ)
         self.env["AGENT_TEAM_CLOSEOUT_STATE"] = str(self.state_dir)
         self.env["AGENT_TEAM_COST_DIR"] = str(self.cost_dir)
+        self.env["AGENT_TEAM_TELEMETRY_DIR"] = str(self.telemetry_dir)
+        self.env["AGENT_TEAM_CLOSEOUT_RETRY_DELAY"] = "0"
 
     # --- hook invocation -------------------------------------------------
 
@@ -147,10 +150,18 @@ class CloseoutStopHookTest(unittest.TestCase):
         digest = hashlib.sha256(session_id.encode()).hexdigest()
         return self.state_dir / (digest + ".json")
 
-    def seed_state(self, blocks: int, session_id: str = "session-1") -> None:
+    def seed_state(self, blocks: int, session_id: str = "session-1",
+                   blocked_hash: str | None = None) -> None:
+        state: dict[str, object] = {"blocks": blocks}
+        if blocked_hash is not None:
+            state["blocked_hash"] = blocked_hash
         self.state_file(session_id).write_text(
-            json.dumps({"blocks": blocks}), encoding="utf-8"
+            json.dumps(state), encoding="utf-8"
         )
+
+    @staticmethod
+    def tail_hash(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
 
     # --- scenarios -------------------------------------------------------
 
@@ -371,6 +382,122 @@ class CloseoutStopHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertIn("enforcement cap", result.stderr)
+
+    # --- stale-read guard (flush race, observed live 2026-07-22) ----------
+
+    def stale_race_records(self) -> list[dict[str, object]]:
+        """Transcript whose tail lacks the marker — the shape the hook saw at
+        every stop of the 2026-07-22 EA loop, where the just-written reply was
+        not yet flushed and the hook kept re-grading the previous message."""
+        return [
+            self.assistant_text("Dispatching now.", "msg_1"),
+            self.dispatch("tu_1", "scribe"),
+            self.result("tu_1"),
+            self.assistant_text("All delivered, no marker.", "msg_2"),
+        ]
+
+    def test_reblock_on_identical_tail_allows_as_stale_read(self) -> None:
+        """(h) Re-evaluating the exact tail already blocked on means the model's
+        post-block reply has not reached the transcript yet. Allow (fail open)
+        instead of burning another block on a message the model cannot fix."""
+        self.seed_state(
+            blocks=1, blocked_hash=self.tail_hash("All delivered, no marker.")
+        )
+        transcript = self.write_transcript(self.stale_race_records())
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "", "stale re-read must not re-block")
+        self.assertIn("stale", result.stderr.lower())
+        state = json.loads(self.state_file().read_text(encoding="utf-8"))
+        self.assertEqual(state.get("blocks"), 1, "stale allow must not spend a block")
+
+    def test_reblock_on_empty_tail_allows_as_stale_read(self) -> None:
+        """(h2) After a block, a tail with no assistant text at all is the same
+        race (the reply is mid-flush): allow, do not re-block."""
+        self.seed_state(blocks=1, blocked_hash=self.tail_hash("anything prior"))
+        transcript = self.write_transcript(
+            [
+                self.assistant_text("Dispatching now.", "msg_1"),
+                self.dispatch("tu_1", "scribe"),
+                self.result("tu_1"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "", "empty tail after a block is a stale read")
+        self.assertIn("stale", result.stderr.lower())
+
+    def test_first_block_records_tail_hash(self) -> None:
+        """(h3) A block must record what it graded so the next stop can tell a
+        stale re-read from a genuinely non-compliant new reply."""
+        transcript = self.write_transcript(self.stale_race_records())
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        state = json.loads(self.state_file().read_text(encoding="utf-8"))
+        self.assertEqual(
+            state.get("blocked_hash"),
+            self.tail_hash("All delivered, no marker."),
+        )
+
+    def test_reblock_on_new_noncompliant_tail_still_blocks(self) -> None:
+        """(h4) A genuinely new reply that still lacks the marker is a real
+        violation, not a race: the hook must block again."""
+        self.seed_state(blocks=1, blocked_hash=self.tail_hash("an older tail"))
+        transcript = self.write_transcript(self.stale_race_records())
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        state = json.loads(self.state_file().read_text(encoding="utf-8"))
+        self.assertEqual(state["blocks"], 2)
+
+    def test_block_wording_says_include_anywhere_not_append(self) -> None:
+        """(h5) 'Append' forced the table to displace user-mandated endings
+        (2026-07-22: REMAINING WORK had to be last). The demand is presence,
+        so the wording must say 'include ... anywhere', never 'append'."""
+        transcript = self.write_transcript(self.stale_race_records())
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("anywhere in your final message", decision["reason"])
+        self.assertNotIn("Append", decision["reason"])
+
+    # --- telemetry location (never inside the client repo) ----------------
+
+    def passing_stop_records(self) -> list[dict[str, object]]:
+        return [
+            self.assistant_text("Dispatching now.", "msg_1"),
+            self.dispatch("tu_1", "scribe"),
+            self.result("tu_1"),
+            self.assistant_text(
+                "All delivered.\n\n## Cost report\n\n| Model | Cost |\n", "msg_2"
+            ),
+        ]
+
+    def test_telemetry_written_to_workforce_dir(self) -> None:
+        """(i) A passing stop writes telemetry to the workforce-owned dir,
+        named {cwd-slug}--{session-id}.jsonl."""
+        transcript = self.write_transcript(self.passing_stop_records())
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        slug = str(self.cwd_dir).replace("/", "-")
+        expected = self.telemetry_dir / f"{slug}--session-1.jsonl"
+        self.assertTrue(expected.is_file(), "telemetry must land in the workforce dir")
+
+    def test_telemetry_never_written_into_client_repo(self) -> None:
+        """(i2) Even when the client project has its own docs/telemetry (the
+        2026-07-22 EA collision), the hook must not write into it."""
+        client_tdir = self.cwd_dir / "docs" / "telemetry"
+        client_tdir.mkdir(parents=True)
+        transcript = self.write_transcript(self.passing_stop_records())
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            list(client_tdir.iterdir()), [],
+            "client repo docs/telemetry must stay untouched",
+        )
 
     def _make_dirty_repo(self) -> Path:
         repo = Path(self.temp.name) / "repo"

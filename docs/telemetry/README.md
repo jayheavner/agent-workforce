@@ -7,10 +7,14 @@ the closeout Stop hook (`hooks/agent_team_closeout.py`) runs
 dispatched work, and every field is computed from the session's transcripts.
 
 Filename: `<cwd-slug>--<session-id>.jsonl` — the session's project cwd with every `/`
-replaced by `-`, then the session id. Records land in `docs/telemetry/` of the project
-the session ran in; the hook writes only when that directory already exists, so a
-project opts in by having it. The file is rewritten whole from transcripts at
-closeout, so it is always the complete, deduplicated picture of that session.
+replaced by `-`, then the session id. Records land in the **workforce-owned telemetry
+dir** — `$AGENT_TEAM_TELEMETRY_DIR`, default `~/.claude/logs/agent-team-telemetry/` —
+never inside the client project. (Until 2026-07-22 they were written into the client
+repo's `docs/telemetry/`; that collided with a curated project directory of the same
+name and made the closeout hook dirty trees that other hooks police. This directory
+in the workforce repo now holds only this README.) The file is rewritten whole from
+transcripts at closeout, so it is always the complete, deduplicated picture of that
+session.
 
 Spec context: `docs/superpowers/specs/2026-07-18-autonomy-first-redesign.md`
 (mechanism 4, "Machine telemetry"). Query with `tools/agent-team-scoreboard.sh`.

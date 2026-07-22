@@ -119,8 +119,9 @@ a checksum manifest per profile. The launcher's auto-install skips the test batt
 main session and every subagent — from transcripts at list rates, with per-agent attribution.
 The Stop hook runs it automatically at closeout and refuses to let a task end without the
 table. Telemetry (one mechanical JSONL row per dispatch: role, models, tokens, cost) lands in
-the project's `docs/telemetry/` when that directory exists; read it with
-`bash tools/agent-team-scoreboard.sh docs/telemetry`.
+the workforce-owned `~/.claude/logs/agent-team-telemetry/` (`$AGENT_TEAM_TELEMETRY_DIR`
+to override) — never inside the client project; read it with
+`bash tools/agent-team-scoreboard.sh`.
 
 ## ChatGPT / Codex surface
 
