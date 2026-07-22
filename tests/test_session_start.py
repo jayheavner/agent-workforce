@@ -140,6 +140,57 @@ class SessionStartHookTest(unittest.TestCase):
         self.assertIn("ready: wrong output — FAIL (expected output not found", ctx)
         self.assertIn("ready: broken tool — FAIL (exit 3)", ctx)
 
+    def fake_gh(self, script_body: str) -> None:
+        """Put a fake `gh` first on PATH for the hook subprocess."""
+        bindir = self.root / "bin"
+        bindir.mkdir(exist_ok=True)
+        gh = bindir / "gh"
+        gh.write_text("#!/bin/sh\n" + script_body + "\n", encoding="utf-8")
+        gh.chmod(0o755)
+        self.env["PATH"] = f"{bindir}:{self.env['PATH']}"
+
+    def test_github_tracker_lists_open_workforce_issues(self) -> None:
+        """Downstream work filed as 'workforce'-labeled issues is surfaced at
+        every session start — nobody hunts for it (decision 2026-07-22)."""
+        cwd = self.root / "proj"
+        (cwd / ".workforce").mkdir(parents=True)
+        (cwd / ".workforce" / "project.json").write_text(
+            json.dumps({"tracker": "github"}), encoding="utf-8")
+        self.fake_gh(
+            "echo '[{\"number\": 7, \"title\": \"Fix cost attribution\"}]'")
+        ctx = self.context(self.run_hook(cwd))
+        self.assertIn("#7: Fix cost attribution", ctx)
+        self.assertIn("workforce", ctx)
+
+    def test_github_tracker_no_open_issues_is_stated(self) -> None:
+        cwd = self.root / "proj2"
+        (cwd / ".workforce").mkdir(parents=True)
+        (cwd / ".workforce" / "project.json").write_text(
+            json.dumps({"tracker": "github"}), encoding="utf-8")
+        self.fake_gh("echo '[]'")
+        ctx = self.context(self.run_hook(cwd))
+        self.assertIn("no open 'workforce'", ctx)
+
+    def test_github_tracker_gh_failure_is_soft_and_says_unknown(self) -> None:
+        cwd = self.root / "proj3"
+        (cwd / ".workforce").mkdir(parents=True)
+        (cwd / ".workforce" / "project.json").write_text(
+            json.dumps({"tracker": "github"}), encoding="utf-8")
+        self.fake_gh("exit 1")
+        result = self.run_hook(cwd)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("UNKNOWN", self.context(result))
+
+    def test_non_github_tracker_skips_issue_probe(self) -> None:
+        cwd = self.root / "proj4"
+        (cwd / ".workforce").mkdir(parents=True)
+        (cwd / ".workforce" / "project.json").write_text(
+            json.dumps({"tracker": "asana"}), encoding="utf-8")
+        self.fake_gh("echo should-not-run; exit 1")
+        ctx = self.context(self.run_hook(cwd))
+        self.assertNotIn("should-not-run", ctx)
+        self.assertNotIn("UNKNOWN", ctx)
+
     def test_malformed_project_file_reads_as_undeclared(self) -> None:
         plain = self.root / "malformed"
         plain.mkdir()

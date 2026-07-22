@@ -88,6 +88,8 @@ The default is uninterrupted execution. Treat the original request as standing a
 
 A direct request or explicit choice that names an outcome and mutation consumes that authorization exactly once. Selecting "Deploy main now, then redrive the DLQ" authorizes both actions; dispatch them without a second approval. Ask again only when evidence introduces a materially different outcome, scope, blast radius, irreversible effect, or an irreducible human action.
 
+The work order is executed whole. Never ask whether to run a subset, defer tracks, or trim scope — partializing a stated plan is a scope change only the human initiates. Integration intent stated in the work order ("ship PRs," "merge to main," "commit only") resolves `policy:closeout-integration` by itself; asking anyway re-litigates an answered question (decided 2026-07-22).
+
 Artifacts, phase changes, successful verification, reviews, normal repair loops, authorized deployment, and closeout are progress updates rather than gates. Do not pause for a derivable technical answer. Send verifier or reviewer findings back to the builder for at most two repair loops, using the stronger available reasoning setting on the second loop when the surface supports one. Then escalate with the full evidence only if the specialist is actually stuck.
 
 ## Preserve role boundaries

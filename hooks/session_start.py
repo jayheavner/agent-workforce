@@ -90,6 +90,37 @@ def load_project(cwd):
     return doc if isinstance(doc, dict) else None
 
 
+def github_work_lines(cwd):
+    """Open 'workforce'-labeled issues, surfaced at every session start.
+
+    Decision 2026-07-22: downstream work the workforce cannot finish in a
+    session is filed in the project tracker, never left as a paste-this or
+    remember-this instruction — and the next session is TOLD about it here,
+    as checked fact, instead of anyone hunting. Fail-open: an unreachable gh
+    reports UNKNOWN, never blocks the session.
+    """
+    out = run(["gh", "issue", "list", "--state", "open",
+               "--label", "workforce", "--limit", "10",
+               "--json", "number,title"], cwd, CHECK_TIMEOUT)
+    if out is None or out.returncode != 0:
+        return ["tracker work: could not list open 'workforce' issues "
+                "(gh failed or absent) — status UNKNOWN; check the tracker "
+                "manually before claiming no work is pending."]
+    try:
+        issues = json.loads(out.stdout)
+    except ValueError:
+        return ["tracker work: gh returned an unparseable issue list — "
+                "status UNKNOWN."]
+    if not isinstance(issues, list) or not issues:
+        return ["tracker work: no open 'workforce'-labeled issues."]
+    lines = [f"tracker work: {len(issues)} open 'workforce' issue(s) — "
+             "review before starting new work:"]
+    for issue in issues:
+        if isinstance(issue, dict):
+            lines.append(f"  #{issue.get('number')}: {issue.get('title')}")
+    return lines
+
+
 def probe_lines(cwd):
     """Tracker declaration + ready-check results, every one a checked fact."""
     project = load_project(cwd)
@@ -102,6 +133,8 @@ def probe_lines(cwd):
     tracker = project.get("tracker")
     if isinstance(tracker, str) and tracker and tracker != "none":
         lines.append(f"project onboarding: tracker = {tracker}.")
+        if tracker == "github":
+            lines.extend(github_work_lines(cwd))
     elif tracker == "none":
         lines.append("project onboarding: tracker explicitly 'none' — "
                      "unfixed findings go to the closeout REMAINING WORK "
