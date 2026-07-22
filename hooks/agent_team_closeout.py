@@ -192,7 +192,8 @@ def cost_report_cmd(transcript, session_id, cwd, extra=()):
 
 def compute_cost_report(transcript, session_id, cwd):
     try:
-        out = subprocess.run(cost_report_cmd(transcript, session_id, cwd),
+        out = subprocess.run(cost_report_cmd(transcript, session_id, cwd,
+                                             extra=("--cwd", cwd)),
                              capture_output=True, text=True, timeout=60)
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()

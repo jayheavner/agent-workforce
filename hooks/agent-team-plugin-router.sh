@@ -7,7 +7,7 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  secrets|audit|dispatch|cost|closeout-stop|archive-run) ;;
+  secrets|audit|dispatch|cost|closeout-stop|archive-run|session-start) ;;
   *)
     printf 'agent-workforce plugin router: unknown routing mode: %s\n' "$MODE" >&2
     exit 2
@@ -33,6 +33,13 @@ fi
 # always fail-open — it must never block a stop or an exit.
 if [ "$MODE" = "archive-run" ]; then
   printf '%s' "$INPUT" | python3 "$HERE/debug_run_archiver.py"
+  exit 0
+fi
+
+# SessionStart grounding (git sync + onboarding probe) carries no agent_type
+# in its payload and is informational context only — always fail-open.
+if [ "$MODE" = "session-start" ]; then
+  printf '%s' "$INPUT" | python3 "$HERE/session_start.py"
   exit 0
 fi
 

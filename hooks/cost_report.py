@@ -347,7 +347,30 @@ def proportionality_flags(subs, rates, agent_types):
     return flags
 
 
-def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
+def tracker_nag(cwd):
+    """One nag line when the project has not declared an issue tracker.
+
+    Decision 2026-07-22: undeclared does not block anything, but it confesses
+    in every cost report (the one thing read at every closeout) until someone
+    spends the two minutes running /onboard-project. A declared tracker —
+    including an explicit "none" — silences it."""
+    if not cwd:
+        return None
+    try:
+        with open(os.path.join(cwd, ".workforce", "project.json")) as f:
+            doc = json.load(f)
+        if isinstance(doc, dict) and isinstance(doc.get("tracker"), str) \
+                and doc["tracker"]:
+            return None
+    except (OSError, ValueError):
+        pass
+    return ("Project tracker: UNDECLARED — unfixed findings fall to the "
+            "closeout REMAINING WORK floor. Run /onboard-project to declare "
+            "one.")
+
+
+def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0,
+                    cwd=None):
     all_reqs = list(main_reqs)
     for reqs in subs.values():
         all_reqs.extend(reqs)
@@ -423,6 +446,10 @@ def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
             stamp += (f" WARNING: launched {build['behind']} commit(s) "
                       "behind origin/main.")
         lines.append(stamp)
+    nag = tracker_nag(cwd)
+    if nag:
+        lines.append("")
+        lines.append(nag)
     # Hook health rides in EVERY report so a broken gate cannot scroll away:
     # the Stop hook re-demands the report at each closeout, putting these
     # warnings at the bottom of the final message every time.
@@ -506,7 +533,8 @@ def main():
                           "workforce_build": workforce_build(),
                           "hook_health": hook_health()}, default=int))
     else:
-        report, _ = markdown_report(main_reqs, subs, rates, agent_types, dispatches)
+        report, _ = markdown_report(main_reqs, subs, rates, agent_types,
+                                    dispatches, cwd=args.cwd or None)
         print(report)
         if stale_note:
             print("\n" + stale_note)

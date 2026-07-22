@@ -219,6 +219,26 @@ PROP_MD="$(python3 "$TOOL" --transcript "$PROP_MAIN" 2>/dev/null)"
 expect_not_contains "$PROP_MD" "Proportionality:" \
   "haiku-trivial and sonnet-4-request dispatches draw no flag"
 
+# --- (g3) tracker nag: undeclared tracker confesses in every report --------
+NAG_CWD="$TMP/nag-project"
+mkdir -p "$NAG_CWD"
+NAG_MD="$(python3 "$TOOL" --transcript "$FIXTURE" --cwd "$NAG_CWD" 2>/dev/null)"
+expect_contains "$NAG_MD" "Project tracker: UNDECLARED" \
+  "no .workforce/project.json: report nags about the tracker"
+expect_contains "$NAG_MD" "/onboard-project" \
+  "nag names the fix"
+mkdir -p "$NAG_CWD/.workforce"
+jq -n '{tracker: "github"}' > "$NAG_CWD/.workforce/project.json"
+DECLARED_MD="$(python3 "$TOOL" --transcript "$FIXTURE" --cwd "$NAG_CWD" 2>/dev/null)"
+expect_not_contains "$DECLARED_MD" "UNDECLARED" \
+  "declared tracker silences the nag"
+jq -n '{tracker: "none"}' > "$NAG_CWD/.workforce/project.json"
+NONE_MD="$(python3 "$TOOL" --transcript "$FIXTURE" --cwd "$NAG_CWD" 2>/dev/null)"
+expect_not_contains "$NONE_MD" "UNDECLARED" \
+  "explicit tracker 'none' is a declaration, not a gap"
+expect_not_contains "$MD" "Project tracker" \
+  "no --cwd: report stays quiet about trackers"
+
 # --- (g) rates staleness note ---
 OLD_RATES="$TMP/old-rates.json"
 jq '.as_of = "2026-01-01"' "$ROOT/hooks/model-rates.json" > "$OLD_RATES"
