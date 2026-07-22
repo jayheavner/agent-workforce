@@ -14,9 +14,12 @@ cleans them up.
 ## Steps
 
 1. **Get current first.** In the workforce repo checkout on that machine, run
-   `git pull` — or just launch `bin/agent-workforce` once; it now updates
-   itself. Everything below assumes the current build, where telemetry no
-   longer lands in this repo.
+   `git pull`. This must be a manual pull once: the launcher's auto-update
+   shipped 2026-07-22, so the stale launcher on that machine does not have it
+   and launching does NOT update anything. After this one pull, every future
+   launch self-updates (fetch + fast-forward) and reinstalls automatically.
+   Everything below assumes the current build, where telemetry no longer
+   lands in this repo.
 2. **Remove the dead gitignore rule.** In the EA repo's `.gitignore`, delete
    the line matching `docs/telemetry/-Users-*.jsonl` (and any purge-archive
    ignore line ONLY if Jay says so — that one is still doing its job; leave
