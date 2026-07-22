@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """debug_run_archiver.py — archive session transcripts for the debug-runs pipeline.
 
-Fires on Stop and SessionEnd. Goal: a tester's transcript lands in the
-quarantine bucket with zero tester effort and zero tester-held secrets; the
-sync-debug-runs GitHub Action then mirrors it into debug-runs/ in the main
-repo via an OIDC-assumed role.
+Fires on Stop and SessionEnd. Goal: a tester's transcript lands in
+debug-runs/ on main with zero tester effort and zero distributed secrets.
 
 Trigger contract (decided 2026-07-21):
 - Stop: archive only when the session has reached a passing closeout — the
@@ -14,19 +12,19 @@ Trigger contract (decided 2026-07-21):
   hooks never matters.
 - SessionEnd: safety net. Archive whatever exists, suffixed "-incomplete"
   when the session never reached a closeout, so abandoned runs are captured
-  too. Re-archives (overwrites) if the transcript grew after an earlier
+  too. Re-archives (force-push) if the transcript grew after an earlier
   Stop archive.
 
-Transport (zero-secret, decided 2026-07-21 after the deploy-key design was
-rejected): POST session metadata to the public ingest Function URL
-(hooks/debug-runs-endpoint, committed — it is not a credential; its only
-capability is granting a presigned upload of one server-named object into
-the private quarantine bucket), then upload the gzipped transcript with the
-returned presigned POST. Every failure path is fail-open: this hook must
-never block a stop or an exit, and never prints to stdout (a Stop hook's
-stdout is a decision channel).
+Transport (decided 2026-07-22, after deploy-key and AWS designs were
+rejected): the tester's own GitHub identity. Each tester is a collaborator;
+the hook pushes the transcript to a per-session branch
+(transcripts/<session-id>) in a private shallow clone under the state dir,
+using whatever git credentials the machine already has. The sync-debug-runs
+Action folds ONLY the debug-runs/ paths of those branches into main and
+deletes them; a ruleset keeps main itself locked. Every failure path is
+fail-open: this hook must never block a stop or an exit, and never prints
+to stdout (a Stop hook's stdout is a decision channel).
 """
-import gzip
 import hashlib
 import json
 import os
@@ -39,7 +37,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from agent_team_closeout import COST_MARKER, scan_transcript  # noqa: E402
 
-CURL_TIMEOUT = 120
+DEFAULT_REMOTE = "https://github.com/jayheavner/agent-workforce.git"
+GIT_TIMEOUT = 60
 
 
 def warn(msg):
@@ -81,52 +80,34 @@ def closeout_reached(transcript):
     return total > 0 and not in_flight and COST_MARKER in last_text
 
 
-def endpoint():
-    override = os.environ.get("DEBUG_RUN_ARCHIVER_URL")
-    if override is not None:  # explicit override is authoritative (tests)
-        return override or None
-    for path in (os.path.join(HERE, "debug-runs-endpoint"),
-                 os.path.expanduser("~/.claude/hooks/debug-runs-endpoint")):
-        try:
-            with open(path) as f:
-                url = f.readline().strip()
-            if url.startswith("http"):
-                return url
-        except OSError:
-            continue
-    return None
+def git(clone, *args):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")  # never hang on a prompt
+    return subprocess.run(["git", "-C", clone, *args], env=env,
+                          capture_output=True, text=True, timeout=GIT_TIMEOUT)
 
 
-def curl(*args):
-    return subprocess.run(["curl", "-sf", "-m", str(CURL_TIMEOUT), *args],
-                          capture_output=True, text=True,
-                          timeout=CURL_TIMEOUT + 10)
+def tail(proc):
+    err = (proc.stderr or "").strip()
+    return err.splitlines()[-1] if err else "no error output"
 
 
-def upload(url, session_id, day, complete, gz_path):
-    """Presign then upload. Returns True on success."""
-    meta = json.dumps({"session_id": session_id, "day": day,
-                       "complete": complete})
-    for _attempt in range(3):
-        presign = curl("-X", "POST", "-H", "content-type: application/json",
-                       "-d", meta, url)
-        if presign.returncode != 0:
-            continue
-        try:
-            grant = json.loads(presign.stdout)
-            post_url, fields = grant["url"], grant["fields"]
-        except (ValueError, KeyError, TypeError):
-            warn("presign response was not a valid grant")
-            return False
-        form = []
-        for k, v in fields.items():  # S3 requires the file part last
-            form += ["-F", "%s=%s" % (k, v)]
-        form += ["-F", "file=@%s" % gz_path]
-        put = curl("-o", "/dev/null", *form, post_url)
-        if put.returncode == 0:
-            return True
-    warn("upload failed after 3 attempts")
-    return False
+def ensure_clone(remote):
+    clone = os.path.join(state_root(), "repo")
+    if not os.path.isdir(os.path.join(clone, ".git")):
+        env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+        out = subprocess.run(
+            ["git", "clone", "--depth", "1", remote, clone], env=env,
+            capture_output=True, text=True, timeout=GIT_TIMEOUT * 3)
+        if out.returncode != 0:
+            warn("clone failed: " + tail(out))
+            return None
+        git(clone, "config", "user.name", "debug-run archiver")
+        git(clone, "config", "user.email", "archiver@agent-workforce")
+    fetch = git(clone, "fetch", "--depth", "1", "origin", "main")
+    if fetch.returncode != 0:
+        warn("fetch failed: " + tail(fetch))
+        return None
+    return clone
 
 
 def archive(session_id, transcript, complete):
@@ -137,29 +118,46 @@ def archive(session_id, transcript, complete):
         return
     if marker.get("archived") and size == marker.get("size", -1):
         return  # nothing new since the last archive of this session
-    url = endpoint()
-    if not url:
-        warn("no ingest endpoint configured; transcript not archived")
+    remote = os.environ.get("DEBUG_RUN_ARCHIVER_REMOTE", DEFAULT_REMOTE)
+    clone = ensure_clone(remote)
+    if not clone:
         return
     day = marker.get("day") or time.strftime("%Y-%m-%d")
     complete = complete or marker.get("complete", False)
-    gz_path = os.path.join(state_root(), "upload.jsonl.gz")
-    os.makedirs(state_root(), exist_ok=True)
+    suffix = "" if complete else "-incomplete"
+    relpath = "debug-runs/%s-%s%s.jsonl" % (day, session_id, suffix)
+
+    git(clone, "checkout", "-B", "upload", "origin/main")
+    # a completed archive supersedes an earlier -incomplete one
+    if complete:
+        git(clone, "rm", "-q", "--ignore-unmatch",
+            "debug-runs/%s-%s-incomplete.jsonl" % (day, session_id))
+    os.makedirs(os.path.join(clone, "debug-runs"), exist_ok=True)
     try:
-        with open(transcript, "rb") as src, gzip.open(gz_path, "wb") as dst:
-            shutil.copyfileobj(src, dst)
+        shutil.copyfile(transcript, os.path.join(clone, relpath))
     except OSError as exc:
-        warn("gzip failed: %s" % exc)
+        warn("copy failed: %s" % exc)
         return
-    try:
-        if upload(url, session_id, day, complete, gz_path):
+    git(clone, "add", relpath)
+    if git(clone, "diff", "--cached", "--quiet",
+           "HEAD").returncode == 0 and marker.get("archived"):
+        save_marker(session_id, {"archived": True, "size": size, "day": day,
+                                 "complete": complete})
+        return  # identical content already pushed
+    commit = git(clone, "commit", "-m", "archive %s" % relpath)
+    if commit.returncode != 0:
+        warn("commit failed: " + tail(commit))
+        return
+    branch = "transcripts/%s" % session_id
+    for _attempt in range(3):
+        push = git(clone, "push", "--force", "origin", "HEAD:%s" % branch)
+        if push.returncode == 0:
             save_marker(session_id, {"archived": True, "size": size,
                                      "day": day, "complete": complete})
-    finally:
-        try:
-            os.unlink(gz_path)
-        except OSError:
-            pass
+            return
+    warn("push failed after 3 attempts (%s) — is this machine's GitHub "
+         "login a collaborator on the repo? Try: gh auth login && "
+         "gh auth setup-git" % tail(push))
 
 
 def main():

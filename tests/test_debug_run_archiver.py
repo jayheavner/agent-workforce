@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 """Tests for hooks/debug_run_archiver.py — trigger contract, dedup, fail-open.
 
-A local HTTP stub stands in for the ingest service: POST / issues a
-"presigned" grant naming the server-derived key (mirroring the Lambda's key
-logic), POST /upload/<key> accepts the multipart upload. No network, no AWS.
+A local bare git repo stands in for github.com/jayheavner/agent-workforce
+(DEBUG_RUN_ARCHIVER_REMOTE), so no network or credentials are involved.
 """
-import gzip
 import json
 import os
-import re
 import subprocess
 import tempfile
-import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "..", "hooks", "debug_run_archiver.py")
@@ -35,73 +30,63 @@ def transcript_lines(cost_report=True, dispatched=True, in_flight=False):
     return "\n".join(json.dumps(rec) for rec in lines) + "\n"
 
 
-class StubIngest(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
-
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        store = self.server.store
-        if self.path == "/":
-            meta = json.loads(body)
-            key = "%s-%s%s.jsonl.gz" % (
-                meta["day"], meta["session_id"],
-                "" if meta["complete"] else "-incomplete")
-            grant = {"url": "http://127.0.0.1:%d/upload/%s"
-                            % (self.server.server_port, key),
-                     "fields": {"key": key, "policy": "stub-policy"}}
-            payload = json.dumps(grant).encode()
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-            return
-        match = re.match(r"^/upload/(.+)$", self.path)
-        boundary = self.headers.get("Content-Type", "").split("boundary=")[-1]
-        payload = None
-        for part in body.split(b"--" + boundary.encode()):
-            head, _, rest = part.partition(b"\r\n\r\n")
-            if b'name="file"' in head:
-                payload = rest.rstrip(b"\r\n-")
-        if not (match and boundary and payload is not None):
-            self.send_response(400)
-            self.end_headers()
-            return
-        store["files"][match.group(1)] = payload
-        store["uploads"] = store.get("uploads", 0) + 1
-        self.send_response(204)
-        self.end_headers()
-
-
 class ArchiverTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.state = os.path.join(self.tmp.name, "state")
-        self.transcript = os.path.join(self.tmp.name, "transcript.jsonl")
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), StubIngest)
-        self.server.store = {"files": {}, "uploads": 0}
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = "http://127.0.0.1:%d/" % self.server.server_port
+        root = self.tmp.name
+        self.bare = os.path.join(root, "origin.git")
+        subprocess.run(["git", "init", "--bare", "-b", "main", self.bare],
+                       capture_output=True, check=True)
+        seed = os.path.join(root, "seed")
+        subprocess.run(["git", "clone", self.bare, seed], capture_output=True,
+                       check=True)
+        os.makedirs(os.path.join(seed, "debug-runs"))
+        with open(os.path.join(seed, "debug-runs", "README.md"), "w") as f:
+            f.write("seed\n")
+        for cmd in (["add", "."],
+                    ["-c", "user.email=t@t", "-c", "user.name=t",
+                     "commit", "-q", "-m", "seed"],
+                    ["push", "-q", "origin", "HEAD:main"]):
+            subprocess.run(["git", "-C", seed] + cmd, capture_output=True,
+                           check=True)
+        self.state = os.path.join(root, "state")
+        self.transcript = os.path.join(root, "transcript.jsonl")
 
     def tearDown(self):
-        self.server.shutdown()
-        self.server.server_close()
         self.tmp.cleanup()
 
-    def run_hook(self, event, session="sess-1", url=None):
+    def run_hook(self, event, session="sess-1", remote=None):
         payload = {"session_id": session, "transcript_path": self.transcript,
                    "hook_event_name": event}
         env = dict(os.environ,
                    DEBUG_RUN_ARCHIVER_STATE=self.state,
-                   DEBUG_RUN_ARCHIVER_URL=url if url is not None else self.url)
+                   DEBUG_RUN_ARCHIVER_REMOTE=remote or self.bare)
         out = subprocess.run(["python3", HOOK], input=json.dumps(payload),
-                             capture_output=True, text=True, env=env, timeout=120)
+                             capture_output=True, text=True, env=env,
+                             timeout=120)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout, "", "hook stdout must stay silent")
         return out
 
-    def files(self):
-        return self.server.store["files"]
+    def branch_files(self, session="sess-1"):
+        """debug-runs/ listing on the session's transcript branch."""
+        out = subprocess.run(
+            ["git", "-C", self.bare, "ls-tree", "--name-only",
+             "transcripts/%s" % session, "debug-runs/"],
+            capture_output=True, text=True)
+        return set(n for n in out.stdout.split() if not n.endswith("README.md"))
+
+    def branch_tip(self, session="sess-1"):
+        out = subprocess.run(["git", "-C", self.bare, "rev-parse",
+                              "transcripts/%s" % session],
+                             capture_output=True, text=True)
+        return out.stdout.strip() if out.returncode == 0 else None
+
+    def branch_file_content(self, relpath, session="sess-1"):
+        out = subprocess.run(["git", "-C", self.bare, "show",
+                              "transcripts/%s:%s" % (session, relpath)],
+                             capture_output=True, text=True)
+        return out.stdout
 
     def write_transcript(self, **kw):
         with open(self.transcript, "w") as f:
@@ -110,55 +95,65 @@ class ArchiverTest(unittest.TestCase):
     def test_stop_without_closeout_does_not_archive(self):
         self.write_transcript(cost_report=False)
         self.run_hook("Stop")
-        self.assertEqual(self.files(), {})
+        self.assertIsNone(self.branch_tip())
 
     def test_stop_with_in_flight_dispatch_does_not_archive(self):
         self.write_transcript(in_flight=True)
         self.run_hook("Stop")
-        self.assertEqual(self.files(), {})
+        self.assertIsNone(self.branch_tip())
 
-    def test_stop_after_closeout_uploads_complete_gzip(self):
+    def test_stop_after_closeout_pushes_complete_transcript(self):
         self.write_transcript()
         self.run_hook("Stop")
-        self.assertEqual(len(self.files()), 1)
-        name, blob = next(iter(self.files().items()))
+        files = self.branch_files()
+        self.assertEqual(len(files), 1)
+        name = files.pop()
         self.assertIn("sess-1", name)
-        self.assertTrue(name.endswith(".jsonl.gz"))
+        self.assertTrue(name.endswith(".jsonl"))
         self.assertNotIn("-incomplete", name)
-        self.assertEqual(gzip.decompress(blob).decode(), transcript_lines())
+        self.assertEqual(self.branch_file_content(name), transcript_lines())
 
-    def test_sessionend_without_closeout_uploads_incomplete(self):
+    def test_sessionend_without_closeout_pushes_incomplete(self):
         self.write_transcript(cost_report=False)
         self.run_hook("SessionEnd")
-        self.assertEqual(len(self.files()), 1)
-        self.assertIn("-incomplete", next(iter(self.files())))
+        files = self.branch_files()
+        self.assertEqual(len(files), 1)
+        self.assertIn("-incomplete", files.pop())
 
-    def test_second_stop_same_size_uploads_nothing_new(self):
+    def test_second_stop_same_size_pushes_nothing_new(self):
         self.write_transcript()
         self.run_hook("Stop")
+        tip = self.branch_tip()
         self.run_hook("Stop")
-        self.assertEqual(self.server.store["uploads"], 1)
+        self.assertEqual(self.branch_tip(), tip)
 
-    def test_grown_transcript_reuploads_same_key_on_sessionend(self):
+    def test_grown_transcript_repushes_same_file_on_sessionend(self):
         self.write_transcript()
         self.run_hook("Stop")
         with open(self.transcript, "a") as f:
             f.write(json.dumps({"type": "assistant", "message": {"content": [
                 {"type": "text", "text": "postscript"}]}}) + "\n")
         self.run_hook("SessionEnd")
-        self.assertEqual(self.server.store["uploads"], 2)
-        self.assertEqual(len(self.files()), 1)  # same key, updated content
-        self.assertNotIn("-incomplete", next(iter(self.files())))
+        files = self.branch_files()
+        self.assertEqual(len(files), 1)  # same filename, updated content
+        name = files.pop()
+        self.assertNotIn("-incomplete", name)
+        self.assertIn("postscript", self.branch_file_content(name))
 
-    def test_no_endpoint_fails_open(self):
-        self.write_transcript()
-        out = self.run_hook("Stop", url="")
-        self.assertIn("no ingest endpoint", out.stderr)
+    def test_complete_supersedes_earlier_incomplete(self):
+        self.write_transcript(cost_report=False)
+        self.run_hook("SessionEnd")  # -incomplete pushed
+        self.write_transcript(cost_report=True)
+        self.run_hook("SessionEnd")  # session resumed, then completed
+        files = self.branch_files()
+        self.assertEqual(len(files), 1)
+        self.assertNotIn("-incomplete", files.pop())
 
-    def test_unreachable_endpoint_fails_open(self):
+    def test_unreachable_remote_fails_open(self):
         self.write_transcript()
-        out = self.run_hook("Stop", url="http://127.0.0.1:1/")
-        self.assertIn("upload failed", out.stderr)
+        out = self.run_hook("Stop",
+                            remote=os.path.join(self.tmp.name, "nope.git"))
+        self.assertIn("clone failed", out.stderr)
 
 
 if __name__ == "__main__":

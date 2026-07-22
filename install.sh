@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py debug-runs-endpoint cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -151,7 +151,6 @@ python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.
 [ -f "$REPO/hooks/debug_run_archiver.py" ] || fail "hooks/debug_run_archiver.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/debug_run_archiver.py" || fail "debug-run archiver failed Python syntax validation"
-[ -f "$REPO/hooks/debug-runs-endpoint" ] || fail "hooks/debug-runs-endpoint is missing from repo"
 [ -f "$REPO/hooks/cost_report.py" ] || fail "hooks/cost_report.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/cost_report.py" || fail "cost report tool failed Python syntax validation"
@@ -535,9 +534,6 @@ if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fr
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
-# The ingest endpoint URL is committed (it is not a credential); without it
-# the archiver fails open and transcripts simply are not archived.
-if ! cp "$REPO/hooks/debug-runs-endpoint" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-runs endpoint copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/cost_report.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost report tool copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi

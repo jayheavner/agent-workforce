@@ -1,1 +1,0 @@
-pending-deploy: run aws cloudformation deploy -t infra/debug-runs-ingest.yaml, then replace this line with the IngestUrl output
