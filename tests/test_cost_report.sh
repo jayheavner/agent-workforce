@@ -183,6 +183,30 @@ else
   fail "--hook-health is silent on a healthy profile — got: $HH_CLEAN"
 fi
 
+# --- (g2) proportionality: trivial dispatches on non-cheapest models -------
+# The good fixture's two subagents each made 2 unique requests on opus/sonnet:
+# both are trivial dispatches on non-cheapest models and must be flagged.
+expect_contains "$MD" "Proportionality: 2 trivial dispatch" \
+  "trivial opus+sonnet dispatches are flagged"
+expect_contains "$MD" "(bbbb2222): 2 requests on claude-sonnet-5" \
+  "flag names the dispatch, request count, and model"
+expect_contains "$MD" "(aaaa1111): 2 requests on claude-opus-4-8" \
+  "opus trivial dispatch is flagged too"
+expect_contains "$MD" "cheapest capable model" \
+  "flag cites the charter rule"
+# Trivial-on-haiku and non-trivial-on-sonnet both draw no flag.
+PROP_DIR="$TMP/proportional-run"
+mkdir -p "$PROP_DIR/session/subagents"
+PROP_MAIN="$PROP_DIR/session.jsonl"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-07-22T00:00:00.000Z","message":{"id":"msg_m1","model":"claude-opus-4-8","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}' > "$PROP_MAIN"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-07-22T00:00:01.000Z","message":{"id":"msg_h1","model":"claude-haiku-4-5","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":50,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}' > "$PROP_DIR/session/subagents/agent-cccc3333.jsonl"
+for i in 1 2 3 4; do
+  printf '{"type":"assistant","timestamp":"2026-07-22T00:00:0%s.000Z","message":{"id":"msg_s%s","model":"claude-sonnet-5","content":[{"type":"text","text":"work"}],"usage":{"input_tokens":50,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' "$i" "$i"
+done > "$PROP_DIR/session/subagents/agent-dddd4444.jsonl"
+PROP_MD="$(python3 "$TOOL" --transcript "$PROP_MAIN" 2>/dev/null)"
+expect_not_contains "$PROP_MD" "Proportionality:" \
+  "haiku-trivial and sonnet-4-request dispatches draw no flag"
+
 # --- (g) rates staleness note ---
 OLD_RATES="$TMP/old-rates.json"
 jq '.as_of = "2026-01-01"' "$ROOT/hooks/model-rates.json" > "$OLD_RATES"

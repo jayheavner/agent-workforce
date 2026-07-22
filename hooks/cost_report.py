@@ -309,6 +309,30 @@ def fmt_tokens(n):
     return f"{n:,}"
 
 
+# A dispatch this small is a trivial action; the orchestrator charter routes
+# those to the cheapest capable model. Flagging is mechanical detection of
+# drift from that rule (observed 2026-07-22: one-command executor dispatches
+# billed at Sonnet rates), surfaced in every report like hook health.
+TRIVIAL_DISPATCH_MAX_REQUESTS = 3
+CHEAPEST_MODEL_MARKER = "haiku"
+
+
+def proportionality_flags(subs, rates, agent_types):
+    """Trivial dispatches (few requests) that ran on a non-cheapest model."""
+    flags = []
+    for aid, reqs in subs.items():
+        if not reqs or len(reqs) > TRIVIAL_DISPATCH_MAX_REQUESTS:
+            continue
+        oversized = sorted({r["model"] for r in reqs
+                            if CHEAPEST_MODEL_MARKER not in r["model"]})
+        if not oversized:
+            continue
+        _, _, cost, _, _ = aggregate(reqs, rates)
+        flags.append((agent_types.get(aid, "subagent"), aid,
+                      len(reqs), oversized, cost))
+    return flags
+
+
 def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
     all_reqs = list(main_reqs)
     for reqs in subs.values():
@@ -343,6 +367,18 @@ def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
         lines.append(f"| {atype} ({aid}) | {len(reqs)} | ${c:.2f} |")
     lines.append("")
 
+    flags = proportionality_flags(subs, rates, agent_types)
+    if flags:
+        flagged_cost = sum(f[4] for f in flags)
+        lines.append(
+            f"Proportionality: {len(flags)} trivial dispatch(es) "
+            f"(≤{TRIVIAL_DISPATCH_MAX_REQUESTS} requests) ran on a "
+            f"non-cheapest model — ${flagged_cost:.2f}. The charter routes "
+            "trivial actions to the cheapest capable model:")
+        for role, aid, nreqs, models, cost in flags:
+            lines.append(f"- {role} ({aid}): {nreqs} requests on "
+                         f"{', '.join(models)} — ${cost:.2f}")
+        lines.append("")
     if unpriced:
         lines.append("Unpriced (exact token volumes, no rate in model-rates.json — "
                      "add the model there and re-run; never estimated):")
