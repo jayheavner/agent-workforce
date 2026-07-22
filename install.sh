@@ -539,6 +539,7 @@ if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanu
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/cost_report.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost report tool copy failed; rolled back"; fi
+if ! cp "$REPO/tools/auto-approve-safe-deletes.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "delete guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch budgets copy failed; rolled back"; fi
@@ -562,6 +563,7 @@ chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmo
 chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent_team_closeout.py" || { restore; cleanup_fresh; fail "chmod of closeout hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/cost_report.py" || { restore; cleanup_fresh; fail "chmod of cost report tool failed; rolled back"; }
+chmod +x "$HOOKS_DIR/auto-approve-safe-deletes.py" || { restore; cleanup_fresh; fail "chmod of delete guard failed; rolled back"; }
 
 # --- settings: workforce-managed permission rules (idempotent, additive) ---
 # Memory-directory writes were blocked live 2026-07-22 (a stale, factually
@@ -603,6 +605,46 @@ then
   echo "install: memory-write permission rules present in $CLAUDE_DIR/settings.json"
 else
   warn "settings.json at $CLAUDE_DIR has an unexpected shape — memory-write permission rules NOT merged; fix the file and re-run install"
+fi
+
+# --- settings: delete-guard wiring (idempotent; canonical entry owned) -----
+# 2026-07-22 (Jay): downstream config must never be a paste-this instruction.
+# The guard binary ships into the hooks dir above; this ensures the CANONICAL
+# wiring (profile hooks path, no matcher filter, so git deletions reach it
+# too) exists in the profile's settings.json. Hand-added entries pointing at
+# other paths are never touched — a duplicate fire is harmless because the
+# guard only allows-or-abstains.
+if python3 - "$CLAUDE_DIR" "$HOOKS_DIR/auto-approve-safe-deletes.py" <<'PY'
+import json, os, sys
+profile, guard = os.path.abspath(sys.argv[1]), sys.argv[2]
+path = os.path.join(profile, "settings.json")
+try:
+    with open(path) as f:
+        doc = json.load(f)
+except (OSError, ValueError):
+    doc = {}
+if not isinstance(doc, dict):
+    sys.exit(1)  # unrecognizable settings: refuse to touch
+if guard in json.dumps(doc):
+    sys.exit(0)  # canonical wiring already present — nothing to do
+hooks = doc.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    sys.exit(1)
+pre = hooks.setdefault("PreToolUse", [])
+if not isinstance(pre, list):
+    sys.exit(1)
+pre.append({"matcher": "Bash", "hooks": [
+    {"type": "command", "command": f"python3 {guard}", "timeout": 10}]})
+tmp = path + ".workforce-tmp"
+with open(tmp, "w") as f:
+    json.dump(doc, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+then
+  echo "install: delete-guard wiring present in $CLAUDE_DIR/settings.json"
+else
+  warn "settings.json at $CLAUDE_DIR has an unexpected shape — delete-guard wiring NOT merged; fix the file and re-run install"
 fi
 
 # --- manifest: record what this install shipped, so --check can detect drift

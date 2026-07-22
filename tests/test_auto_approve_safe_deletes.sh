@@ -71,6 +71,24 @@ run_case "worktree cwd, outside target" abstain "rm -rf /Users/jay/Documents/x" 
 run_case "forged .git pointer"       abstain "rm $WORK/fakewt/f.txt"
 run_case "worktree symlink escape"   abstain "rm -r $WORK/wt/escape-link"
 
+# Git deletions of task-created objects (2026-07-22: the innovation-awards
+# session prompted on every worktree/branch cleanup — deletions of things the
+# team itself created). Same posture: allow only what is provably safe, git's
+# own refusals (dirty worktree, unmerged branch) as the second net.
+run_case "git worktree remove (linked)"  allow   "git worktree remove $WORK/wt"
+run_case "git worktree remove --force"   abstain "git worktree remove --force $WORK/wt"
+run_case "git worktree remove main repo" abstain "git worktree remove $REPO"
+run_case "git worktree prune"            allow   "git worktree prune"
+run_case "git branch -d"                 allow   "git branch -d feature-x"
+run_case "git branch --delete"           allow   "git branch --delete feature-x"
+run_case "git branch -d multiple"        allow   "git branch -d feature-x feature-y"
+run_case "git branch -D"                 abstain "git branch -D feature-x"
+run_case "git branch -d -f"              abstain "git branch -d -f feature-x"
+run_case "git branch -d -r (remote)"     abstain "git branch -d -r origin/feature-x"
+run_case "git push --delete"             abstain "git push origin --delete feature-x"
+run_case "git -C indirection"            abstain "git -C $WORK/mainrepo worktree remove $WORK/wt"
+run_case "git branch (list, no delete)"  abstain "git branch"
+
 # A non-Bash tool payload must be ignored entirely.
 NONBASH="$(python3 - "$SAFE/deltest/a.tmp" <<'PY' | python3 "$HOOK"
 import json, sys

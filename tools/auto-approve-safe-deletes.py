@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """auto-approve-safe-deletes.py — PreToolUse(Bash) hook: never prompt for temp deletes.
 
-Auto-approves `rm` commands whose every target provably lives inside
-session-temp territory, so deleting Claude's own scratch work never prompts.
-Anything it cannot positively verify falls through silently to the normal
-permission flow — this hook allows or abstains, it never denies.
+Auto-approves deletions of Claude's own disposable work, so cleaning up never
+prompts. Anything it cannot positively verify falls through silently to the
+normal permission flow — this hook allows or abstains, it never denies.
 
-Wire it from settings.json (user scope):
-  "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
-    "command": "python3 /Users/jay/claude/agent-workforce/tools/auto-approve-safe-deletes.py",
-    "if": "Bash(rm *)", "timeout": 10}]}]
+Covered (2026-07-22, after the innovation-awards session prompted on every
+cleanup of objects the team itself created):
+  - `rm` whose every target provably lives inside session-temp territory
+  - `git worktree remove <path>` of a linked worktree (no --force; git
+    itself refuses a dirty worktree, the second net)
+  - `git worktree prune` (drops records of already-deleted worktrees only)
+  - `git branch -d`/`--delete` (git itself refuses unmerged branches; -D,
+    -f, and -r abstain)
+
+Wiring is installer-owned: install.sh ships this file into the profile hooks
+dir and merges the PreToolUse entry into settings.json (no matcher filter —
+an rm-only filter would blind it to git deletions). Never a paste-this doc.
 
 Safe territory:
   - /private/tmp/claude-*/...            (per-uid Claude scratchpad roots)
@@ -95,6 +102,43 @@ def target_is_safe(raw, cwd):
     return in_safe_territory(recomposed)
 
 
+def emit_allow(reason):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason":
+                reason + " — auto-approved by auto-approve-safe-deletes.py",
+        }
+    }))
+
+
+def git_allow_reason(tokens, cwd):
+    """Allow-reason for a provably safe git deletion, else None.
+
+    Shapes are exact — `git -C`, extra flags, or anything unrecognized
+    abstains. Git's own refusals (dirty worktree without --force, unmerged
+    branch under -d) are the second net behind every allow here.
+    """
+    sub = tokens[1:]
+    if sub == ["worktree", "prune"]:
+        return "git worktree prune only drops records of deleted worktrees"
+    if sub[:2] == ["worktree", "remove"]:
+        rest = sub[2:]
+        if len(rest) != 1 or rest[0].startswith("-"):
+            return None  # --force (or any flag) is not for a hook to grant
+        if target_is_safe(rest[0], cwd):
+            return ("git worktree remove of a linked worktree (recoverable "
+                    "from the main checkout; git refuses if dirty)")
+        return None
+    if sub[:1] == ["branch"]:
+        flags = [t for t in sub[1:] if t.startswith("-")]
+        names = [t for t in sub[1:] if not t.startswith("-")]
+        if names and flags and all(f in ("-d", "--delete") for f in flags):
+            return "git branch -d (git itself refuses unmerged branches)"
+    return None
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -110,21 +154,21 @@ def main():
         tokens = shlex.split(command)
     except ValueError:
         return
-    if not tokens or tokens[0] != "rm":
+    if not tokens:
+        return
+    if tokens[0] == "git":
+        reason = git_allow_reason(tokens, cwd)
+        if reason:
+            emit_allow(reason)
+        return
+    if tokens[0] != "rm":
         return
     targets = [t for t in tokens[1:] if not t.startswith("-")]
     if not targets:
         return
     if all(target_is_safe(t, cwd) for t in targets):
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason":
-                    "rm confined to session-temp paths (scratchpad/tmp/backups) "
-                    "— auto-approved by auto-approve-safe-deletes.py",
-            }
-        }))
+        emit_allow(
+            "rm confined to session-temp paths (scratchpad/tmp/backups)")
 
 
 if __name__ == "__main__":

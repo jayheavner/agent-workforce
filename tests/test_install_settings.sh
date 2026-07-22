@@ -77,5 +77,45 @@ jq -e '.files["hooks/session_start.py"]' "$PROFILE/agent-team-manifest.json" >/d
   && pass "session_start.py is recorded in the manifest" \
   || fail "session_start.py is recorded in the manifest"
 
+# --- delete guard: installer-owned, never a paste-this instruction ---------
+# 2026-07-22 (Jay): "We've talked about pasting shit manually. NO." The rm/
+# worktree delete guard ships with install: binary into the hooks dir, wiring
+# merged into the profile settings, idempotent across re-installs.
+GUARD="$SANDBOX_HOME/.claude/hooks/auto-approve-safe-deletes.py"
+[ -x "$GUARD" ] \
+  && pass "delete guard is installed into the hooks dir and executable" \
+  || fail "delete guard is installed into the hooks dir and executable"
+jq -e --arg g "$GUARD" \
+  '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
+    | select(.command | contains($g))] | length == 1' "$S" >/dev/null 2>&1 \
+  && pass "delete-guard PreToolUse wiring is merged into settings.json" \
+  || fail "delete-guard PreToolUse wiring is merged into settings.json — $(cat "$S")"
+AGENT_TEAM_SKIP_INSTALL_TEST=1 HOME="$SANDBOX_HOME" bash "$REPO/install.sh" --profile "$PROFILE" \
+  > /dev/null 2>&1
+jq -e --arg g "$GUARD" \
+  '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
+    | select(.command | contains($g))] | length == 1' "$S" >/dev/null 2>&1 \
+  && pass "re-install does not duplicate the delete-guard wiring" \
+  || fail "re-install does not duplicate the delete-guard wiring"
+# A pre-existing MANUAL wiring (another path) is never touched, but the
+# canonical entry is still ensured: manual entries may carry an rm-only
+# matcher filter that would blind the guard to git deletions.
+PROFILE3="$TMP/profile3"
+mkdir -p "$PROFILE3"
+jq -n '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [{type: "command",
+  command: "python3 /somewhere/else/auto-approve-safe-deletes.py"}]}]}}' \
+  > "$PROFILE3/settings.json"
+AGENT_TEAM_SKIP_INSTALL_TEST=1 HOME="$SANDBOX_HOME" bash "$REPO/install.sh" --profile "$PROFILE3" \
+  > /dev/null 2>&1
+jq -e '[.. | strings | select(contains("/somewhere/else/auto-approve-safe-deletes.py"))] | length == 1' \
+  "$PROFILE3/settings.json" >/dev/null 2>&1 \
+  && pass "pre-existing manual guard wiring survives untouched" \
+  || fail "pre-existing manual guard wiring survives untouched"
+jq -e --arg g "$GUARD" \
+  '[.hooks.PreToolUse[]? | .hooks[]? | select(.command | contains($g))] | length == 1' \
+  "$PROFILE3/settings.json" >/dev/null 2>&1 \
+  && pass "canonical guard wiring is added alongside manual wiring" \
+  || fail "canonical guard wiring is added alongside manual wiring — $(cat "$PROFILE3/settings.json")"
+
 echo "install-settings tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
