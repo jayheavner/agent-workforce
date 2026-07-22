@@ -46,6 +46,46 @@ fi
 
 PROFILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 MANIFEST="$PROFILE/agent-team-manifest.json"
+ORIGIN_STATUS="$PROFILE/agent-team-origin-status.json"
+
+self_update() {
+  # A stale CLONE self-certifies as fresh: needs_install compares the profile
+  # to the local working tree only, so a checkout behind origin runs old code
+  # silently (2026-07-22: build 187007b ran two days behind and missed the
+  # transcript archiver entirely; the evidence traveled by iCloud). Decision
+  # 2026-07-22: auto-update — fetch origin, fast-forward when clean, and
+  # record the remaining deficit for the cost report to stamp. Every failure
+  # path is soft: offline, diverged, or dirty never blocks a launch.
+  local behind=0 checked_at
+  checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+     && [ "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "main" ]; then
+    if GIT_SSH_COMMAND="ssh -o ConnectTimeout=5 -o BatchMode=yes" \
+       git -C "$ROOT" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+       fetch --quiet origin main 2>/dev/null; then
+      behind="$(git -C "$ROOT" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
+      [ -n "$behind" ] || behind=0
+      if [ "$behind" -gt 0 ]; then
+        if [ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] \
+           && git -C "$ROOT" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+          echo "agent-workforce: checkout is $behind commit(s) behind origin/main — fast-forwarding..." >&2
+          if git -C "$ROOT" merge --ff-only --quiet origin/main >&2 2>&1; then
+            behind=0
+          else
+            echo "agent-workforce: fast-forward failed — launching from the stale checkout." >&2
+          fi
+        else
+          echo "agent-workforce: checkout is $behind commit(s) behind origin/main but has local changes or divergence — launching anyway; reconcile manually." >&2
+        fi
+      fi
+    else
+      echo "agent-workforce: could not reach origin to check freshness (offline?) — launching from the local checkout." >&2
+    fi
+  fi
+  mkdir -p "$PROFILE" 2>/dev/null || true
+  printf '{"behind": %s, "checked_at": "%s"}\n' "$behind" "$checked_at" \
+    > "$ORIGIN_STATUS" 2>/dev/null || true
+}
 
 needs_install() {
   [ -f "$MANIFEST" ] || return 0
@@ -87,6 +127,10 @@ for rel, sha in files.items():
 sys.exit(1)  # everything matches -> fresh
 PY
 }
+
+if [ "$SKIP_INSTALL" -eq 0 ]; then
+  self_update
+fi
 
 if [ "$SKIP_INSTALL" -eq 0 ] && needs_install; then
   echo "agent-workforce: profile $PROFILE is stale — installing current checkout..." >&2

@@ -67,7 +67,21 @@ def workforce_build():
     commit = doc.get("commit")
     if not isinstance(commit, str) or not commit:
         return None
-    return {"commit": commit, "installed_at": doc.get("installed_at") or "unknown"}
+    # The launcher records how far behind origin the checkout was at launch
+    # (agent-team-origin-status.json beside the manifest); a non-zero deficit
+    # is stamped into every report so a stale build cannot run quietly.
+    status_path = os.environ.get(
+        "AGENT_TEAM_ORIGIN_STATUS",
+        os.path.join(os.path.dirname(manifest), "agent-team-origin-status.json"))
+    behind = 0
+    try:
+        with open(status_path) as f:
+            behind = int(json.load(f).get("behind") or 0)
+    except (OSError, ValueError, TypeError):
+        behind = 0
+    return {"commit": commit,
+            "installed_at": doc.get("installed_at") or "unknown",
+            "behind": behind}
 
 
 def _hook_command_target(command):
@@ -403,8 +417,12 @@ def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0):
     build = workforce_build()
     if build:
         lines.append("")
-        lines.append(f"Workforce build {build['commit']} "
-                     f"(installed {build['installed_at']}).")
+        stamp = (f"Workforce build {build['commit']} "
+                 f"(installed {build['installed_at']}).")
+        if build.get("behind"):
+            stamp += (f" WARNING: launched {build['behind']} commit(s) "
+                      "behind origin/main.")
+        lines.append(stamp)
     # Hook health rides in EVERY report so a broken gate cannot scroll away:
     # the Stop hook re-demands the report at each closeout, putting these
     # warnings at the bottom of the final message every time.

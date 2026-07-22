@@ -140,6 +140,18 @@ else
 fi
 expect_not_contains "$MD" "Workforce build" \
   "no manifest beside the tool: no build line invented"
+# Behind-origin deficit recorded by the launcher is stamped into the build line.
+ORIGIN_FILE="$TMP/origin-status.json"
+jq -n '{behind: 2, checked_at: "2026-07-22T00:00:00Z"}' > "$ORIGIN_FILE"
+BEHIND_MD="$(AGENT_TEAM_MANIFEST="$BUILD_MANIFEST" AGENT_TEAM_ORIGIN_STATUS="$ORIGIN_FILE" \
+  python3 "$TOOL" --transcript "$FIXTURE" 2>/dev/null)"
+expect_contains "$BEHIND_MD" "launched 2 commit(s) behind origin/main" \
+  "behind-origin launch is stamped into the build line"
+jq -n '{behind: 0, checked_at: "2026-07-22T00:00:00Z"}' > "$ORIGIN_FILE"
+CURRENT_MD="$(AGENT_TEAM_MANIFEST="$BUILD_MANIFEST" AGENT_TEAM_ORIGIN_STATUS="$ORIGIN_FILE" \
+  python3 "$TOOL" --transcript "$FIXTURE" 2>/dev/null)"
+expect_not_contains "$CURRENT_MD" "behind origin/main" \
+  "up-to-date launch carries no behind note"
 
 # --- (h) hook health: broken hook infrastructure surfaces in every report ---
 HPROF="$TMP/hook-profile"
