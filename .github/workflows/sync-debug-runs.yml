@@ -61,5 +61,5 @@ jobs:
             echo "no new transcript content"
           fi
           for ref in "${refs[@]}"; do
-            git push origin --delete "${ref#tr/}" || true
+            git push origin --delete "transcripts/${ref#tr/}" || true
           done
