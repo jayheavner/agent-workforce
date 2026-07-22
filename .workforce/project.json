@@ -1,0 +1,21 @@
+{
+  "tracker": "github",
+  "strict": false,
+  "ready_checks": [
+    {
+      "name": "github tracker reachable as the right repo",
+      "command": "gh repo view jayheavner/agent-workforce --json name -q .name",
+      "expect": "agent-workforce"
+    },
+    {
+      "name": "python3 available for hooks",
+      "command": "python3 --version",
+      "expect": "Python 3"
+    },
+    {
+      "name": "jq available for hooks",
+      "command": "jq --version",
+      "expect": "jq"
+    }
+  ]
+}
