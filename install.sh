@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -151,6 +151,9 @@ python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.
 [ -f "$REPO/hooks/debug_run_archiver.py" ] || fail "hooks/debug_run_archiver.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/debug_run_archiver.py" || fail "debug-run archiver failed Python syntax validation"
+[ -f "$REPO/hooks/session_start.py" ] || fail "hooks/session_start.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/session_start.py" || fail "session-start hook failed Python syntax validation"
 [ -f "$REPO/hooks/cost_report.py" ] || fail "hooks/cost_report.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/cost_report.py" || fail "cost report tool failed Python syntax validation"
@@ -534,6 +537,7 @@ if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fr
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/cost_report.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost report tool copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
@@ -558,6 +562,48 @@ chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmo
 chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent_team_closeout.py" || { restore; cleanup_fresh; fail "chmod of closeout hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/cost_report.py" || { restore; cleanup_fresh; fail "chmod of cost report tool failed; rolled back"; }
+
+# --- settings: workforce-managed permission rules (idempotent, additive) ---
+# Memory-directory writes were blocked live 2026-07-22 (a stale, factually
+# wrong memory could not be corrected mid-session). A paste-this-doc fix is
+# the quiet-documentation failure this repo exists to kill, so the installer
+# owns the rule: merged into the profile's settings.json on every install,
+# scoped to the memory directories only, never touching anything else there.
+if python3 - "$CLAUDE_DIR" <<'PY'
+import json, os, sys
+profile = os.path.abspath(sys.argv[1])
+path = os.path.join(profile, "settings.json")
+try:
+    with open(path) as f:
+        doc = json.load(f)
+except (OSError, ValueError):
+    doc = {}
+if not isinstance(doc, dict):
+    sys.exit(1)  # unrecognizable settings: refuse to touch
+perms = doc.setdefault("permissions", {})
+if not isinstance(perms, dict):
+    sys.exit(1)
+allow = perms.setdefault("allow", [])
+if not isinstance(allow, list):
+    sys.exit(1)
+changed = False
+for rule in (f"Write(/{profile}/projects/**/memory/**)",
+             f"Edit(/{profile}/projects/**/memory/**)"):
+    if rule not in allow:
+        allow.append(rule)
+        changed = True
+if changed:
+    tmp = path + ".workforce-tmp"
+    with open(tmp, "w") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+PY
+then
+  echo "install: memory-write permission rules present in $CLAUDE_DIR/settings.json"
+else
+  warn "settings.json at $CLAUDE_DIR has an unexpected shape — memory-write permission rules NOT merged; fix the file and re-run install"
+fi
 
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;
