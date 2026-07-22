@@ -1,0 +1,65 @@
+# Fold tester transcript branches (transcripts/<session-id>, pushed by
+# collaborators' own GitHub identities — no distributed secrets) into
+# debug-runs/ on main, then delete them. Folder lockdown is enforced here:
+# ONLY paths under debug-runs/ are ever extracted from a tester branch, and
+# a ruleset keeps main closed to direct pushes, so this workflow is the only
+# writer to the folder regardless of what a branch contains.
+name: sync-debug-runs
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  push:
+    branches:
+      - "transcripts/**"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-debug-runs
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Fold transcript branches into debug-runs/
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/transcripts/*:refs/remotes/tr/*'
+          mapfile -t refs < <(git for-each-ref --format='%(refname:short)' refs/remotes/tr/)
+          [ ${#refs[@]} -gt 0 ] || { echo "no transcript branches"; exit 0; }
+          for ref in "${refs[@]}"; do
+            # Path filter IS the security boundary: take debug-runs/ only.
+            git checkout "$ref" -- debug-runs/ || echo "::warning::$ref carried no debug-runs/ files"
+          done
+          # a completed transcript supersedes its earlier -incomplete twin
+          for inc in debug-runs/*-incomplete.jsonl; do
+            [ -e "${inc%-incomplete.jsonl}.jsonl" ] && git rm -q --ignore-unmatch "$inc"
+          done || true
+          git add debug-runs/
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore(debug-runs): sync tester transcripts"
+            # main requires PRs (ruleset; Actions cannot bypass on a personal
+            # repo), so land the sync through an auto-merged PR.
+            sync_branch="sync-debug-runs/${GITHUB_RUN_ID}"
+            git push origin "HEAD:${sync_branch}"
+            gh pr create --base main --head "$sync_branch" \
+              --title "chore(debug-runs): sync tester transcripts" \
+              --body "Automated fold of transcripts/* branches into debug-runs/."
+            gh pr merge "$sync_branch" --squash --delete-branch
+          else
+            echo "no new transcript content"
+          fi
+          for ref in "${refs[@]}"; do
+            git push origin --delete "${ref#tr/}" || true
+          done
