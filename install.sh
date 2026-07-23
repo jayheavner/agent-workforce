@@ -589,11 +589,17 @@ allow = perms.setdefault("allow", [])
 if not isinstance(allow, list):
     sys.exit(1)
 changed = False
-for rule in (f"Write(/{profile}/projects/**/memory/**)",
-             f"Edit(/{profile}/projects/**/memory/**)"):
-    if rule not in allow:
-        allow.append(rule)
-        changed = True
+# 2026-07-22: file-permission checks match Edit(path) rules only — a
+# Write(path) rule is dead config that warns at every session start. Plant
+# Edit only, and remove the dead Write rule earlier installs planted.
+dead = f"Write(/{profile}/projects/**/memory/**)"
+if dead in allow:
+    allow.remove(dead)
+    changed = True
+rule = f"Edit(/{profile}/projects/**/memory/**)"
+if rule not in allow:
+    allow.append(rule)
+    changed = True
 if changed:
     tmp = path + ".workforce-tmp"
     with open(tmp, "w") as f:

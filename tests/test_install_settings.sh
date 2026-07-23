@@ -36,10 +36,13 @@ AGENT_TEAM_SKIP_INSTALL_TEST=1 HOME="$SANDBOX_HOME" bash "$REPO/install.sh" --pr
   || fail "install exits 0 — $(tail -3 "$TMP/install.log")"
 
 S="$PROFILE/settings.json"
+# 2026-07-22: Claude Code file-permission checks match Edit(path) rules only;
+# a Write(path) rule is dead config that warns at every session start. The
+# installer must plant Edit only, and remove the Write rule it used to plant.
 jq -e --arg r "Write(/$PROFILE/projects/**/memory/**)" \
-  '.permissions.allow | index($r)' "$S" >/dev/null 2>&1 \
-  && pass "Write rule for the memory dirs is merged" \
-  || fail "Write rule for the memory dirs is merged — $(cat "$S")"
+  '.permissions.allow | index($r) | not' "$S" >/dev/null 2>&1 \
+  && pass "dead Write rule for the memory dirs is NOT merged" \
+  || fail "dead Write rule for the memory dirs is NOT merged — $(cat "$S")"
 jq -e --arg r "Edit(/$PROFILE/projects/**/memory/**)" \
   '.permissions.allow | index($r)' "$S" >/dev/null 2>&1 \
   && pass "Edit rule for the memory dirs is merged" \
@@ -59,14 +62,30 @@ COUNT_AFTER="$(jq '.permissions.allow | length' "$S")"
   && pass "re-install adds no duplicate rules (idempotent)" \
   || fail "re-install adds no duplicate rules — $COUNT_BEFORE -> $COUNT_AFTER"
 
-# A profile with NO settings.json gets one containing exactly the rules.
+# A profile with NO settings.json gets one containing exactly the Edit rule.
 PROFILE2="$TMP/profile2"
 mkdir -p "$PROFILE2"
 AGENT_TEAM_SKIP_INSTALL_TEST=1 HOME="$SANDBOX_HOME" bash "$REPO/install.sh" --profile "$PROFILE2" \
   > /dev/null 2>&1
-jq -e '.permissions.allow | length == 2' "$PROFILE2/settings.json" >/dev/null 2>&1 \
-  && pass "fresh profile gets a settings.json with the two rules" \
-  || fail "fresh profile gets a settings.json with the two rules"
+jq -e '.permissions.allow | length == 1' "$PROFILE2/settings.json" >/dev/null 2>&1 \
+  && pass "fresh profile gets a settings.json with exactly the Edit rule" \
+  || fail "fresh profile gets a settings.json with exactly the Edit rule — $(cat "$PROFILE2/settings.json")"
+
+# A profile carrying the dead Write rule from an earlier install has it
+# removed on re-install; unrelated rules survive the cleanup.
+PROFILE4="$TMP/profile4"
+mkdir -p "$PROFILE4"
+jq -n --arg w "Write(/$TMP/profile4/projects/**/memory/**)" \
+  '{permissions: {allow: [$w, "Bash(ls:*)"]}}' > "$PROFILE4/settings.json"
+AGENT_TEAM_SKIP_INSTALL_TEST=1 HOME="$SANDBOX_HOME" bash "$REPO/install.sh" --profile "$PROFILE4" \
+  > /dev/null 2>&1
+jq -e --arg w "Write(/$TMP/profile4/projects/**/memory/**)" \
+  '.permissions.allow | index($w) | not' "$PROFILE4/settings.json" >/dev/null 2>&1 \
+  && pass "stale Write rule from a prior install is removed" \
+  || fail "stale Write rule from a prior install is removed — $(cat "$PROFILE4/settings.json")"
+jq -e '.permissions.allow | index("Bash(ls:*)")' "$PROFILE4/settings.json" >/dev/null 2>&1 \
+  && pass "unrelated rules survive the stale-rule cleanup" \
+  || fail "unrelated rules survive the stale-rule cleanup"
 
 # The session-start hook must actually reach the profile (it is referenced by
 # the orchestrator frontmatter; a missing file would fail hook health).
