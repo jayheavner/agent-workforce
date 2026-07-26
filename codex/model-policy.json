@@ -70,7 +70,7 @@
       "sandbox_mode": "danger-full-access",
       "approval_policy": "never",
       "web_search": "disabled",
-      "description": "Run authorized shell work \u2014 installs, file operations, scripts \u2014 silently within the stated scope."
+      "description": "Run authorized shell work — installs, file operations, scripts — silently within the stated scope."
     },
     {
       "name": "agent_workforce_executor_fast",
@@ -291,6 +291,17 @@
       "approval_policy": "on-request",
       "web_search": "disabled",
       "description": "Write an authorized ticket comment or status update."
+    },
+    {
+      "name": "agent_workforce_test_author",
+      "role": "test-author",
+      "variant": "default",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "sandbox_mode": "workspace-write",
+      "approval_policy": "on-request",
+      "web_search": "disabled",
+      "description": "Author the acceptance test suite from a reviewed plan before the builder implements."
     }
   ]
 }

@@ -10,11 +10,11 @@
 # specialist" results in a block, never a silent allow.
 set -u
 
-readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer"
+readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer test-author"
 # Git-mutating dispatches are serialized per checkout; MUTATING_ROLES in the
 # closeout hook serves baseline-capture logic and is a different set — do not
 # conflate the two.
-readonly GIT_SERIALIZED_ROLES="builder executor deployer"
+readonly GIT_SERIALIZED_ROLES="builder executor deployer test-author"
 readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: no git mutation in this dispatch"
 readonly BUDGETS_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-budgets.json"
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
@@ -85,7 +85,7 @@ fi
 CRITERIA_SHAPE='  - [ ] AC-N (mechanical): <claim>. Check: `<command that can fail and prints why>` -> expects <observable>.
   - [ ] AC-N (judgment): <claim>. Judge: <who>. Bar: <what a "no" looks like>.'
 case "$TYPE" in
-  builder|verifier)
+  builder|verifier|test-author)
     PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
     case "$PROMPT" in
       *"ACCEPTANCE CRITERIA"*) : ;;

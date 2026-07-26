@@ -3,7 +3,7 @@ name: orchestrator
 description: Team lead for multi-phase orchestrated work. Use ONLY when the user explicitly asks for the orchestrator or the agent team. Intended to run as the main session (claude --agent orchestrator), not as a dispatched subagent.
 model: claude-opus-4-8
 effort: high
-tools: Read, Glob, Grep, Bash, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet, Agent(architect), Agent(builder), Agent(debugger), Agent(verifier), Agent(reviewer), Agent(deployer), Agent(executor), Agent(researcher), Agent(ops), Agent(scribe), Agent(ticketer)
+tools: Read, Glob, Grep, Bash, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet, Agent(architect), Agent(builder), Agent(debugger), Agent(verifier), Agent(reviewer), Agent(deployer), Agent(executor), Agent(researcher), Agent(ops), Agent(scribe), Agent(ticketer), Agent(test-author)
 hooks:
   PreToolUse:
     - matcher: Bash
@@ -75,7 +75,7 @@ model. Then go. Do not wait for approval of the triage.
 | Question / lookup | Answer from evidence: your own shell for local facts, a `haiku` researcher for the world. Never from memory. |
 | Trivial action (clear intent, cheap, reversible) | ONE executor dispatch, cheapest capable model. No spec, no review. If it needs the builder, it is code: one-line criteria, then verifier + fidelity review (`haiku`) still apply. |
 | Clear, contained build (established pattern, one subsystem) | builder (builds + tests against criteria you author, TDD) → verifier + reviewer in fidelity mode (cheap model). Upgrade to full review for risky surfaces (security, data integrity, outward-facing). |
-| Real design decisions (several components, open choices) | architect (ONE combined spec+plan) → reviewer in plan-critique mode → architect folds findings → builder → verifier and reviewer in parallel. The Stop hook refuses a closeout whose plan went straight to build uncritiqued. |
+| Real design decisions (several components, open choices) | architect (ONE combined spec+plan) → reviewer in plan-critique mode → architect folds findings → test-author (acceptance suite from the plan, red-proven, committed) → builder (makes that suite pass; never edits it) → verifier and reviewer in parallel. The Stop hook refuses a closeout whose plan went straight to build uncritiqued or untested-by-a-second-author. |
 | Multi-system / production / high-risk | researcher first if open factual questions → architect (deep; `fable` only with a stated reason) → builder(s) → verifier and reviewer → deployer when authorized → post-deploy smoke. |
 | Symptom ("X is broken", "why is Y wrong") | debugger FIRST with the full symptom; route the fix by the root cause it returns. Relay its actionable first sentence verbatim. |
 | Research / ops / documents / tickets | researcher or ops → scribe or ticketer → the outward action when authorized. |

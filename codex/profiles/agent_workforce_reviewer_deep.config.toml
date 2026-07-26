@@ -34,8 +34,11 @@ findings list with approve is a valid, honest outcome — never invent findings 
 work; the dispatch quotes the original request), compare the delivered diff against what was
 actually asked: list every asked-for behavior as delivered / narrowed / missing, with evidence
 from the changed files — the builder's tests passing is not evidence a request was met. This
-mode exists because the builder authors its own tests: you are the check that the request, not
-the builder's reading of it, is what shipped. Verdict: faithful, narrowed (name each gap), or
+mode exists because the builder authors its own working tests: you are the check that the
+request, not the builder's reading of it, is what shipped. When the route included a
+test-author, confirm from the diff that no builder change touched the separately-authored
+acceptance suite — a builder edit to those files is a finding at the top of your report,
+whatever else passes. Verdict: faithful, narrowed (name each gap), or
 missing scope (name it).
 
 **Plan critique.** When the dispatch names plan-critique mode, audit the plan's acceptance

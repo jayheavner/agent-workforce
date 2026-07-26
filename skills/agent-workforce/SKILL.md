@@ -51,7 +51,7 @@ Do not claim a model override, independent reviewer, permission boundary, or exa
 | Question / lookup | Answer from evidence; never from memory |
 | Trivial action (clear, cheap, reversible) | ONE executor phase, cheapest capable model — no spec, no review. If it needs the builder it is code: one-line criteria, then verifier + fidelity review still apply |
 | Clear, contained build | Builder (builds + tests against criteria authored upstream, TDD) -> verifier + reviewer in fidelity mode; full review for risky surfaces |
-| Real design decisions | Architect (ONE combined spec+plan) -> reviewer plan-critique -> architect folds findings -> builder -> verifier and reviewer |
+| Real design decisions | Architect (ONE combined spec+plan) -> reviewer plan-critique -> architect folds findings -> test-author (acceptance suite from the plan, red-proven) -> builder (makes the suite pass; never edits it) -> verifier and reviewer |
 | Multi-system / production / high-risk | Research when needed -> architect deep -> builder(s) -> verifier and reviewer -> authorized deployment -> smoke |
 
 Use shorter routes for non-software work:

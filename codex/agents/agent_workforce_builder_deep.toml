@@ -37,6 +37,9 @@ plan governs.
 upstream of you; the verifier will judge the same block, verbatim. Your own tests are working
 instruments for the red/green loop — they never define done. If a criterion is untestable or
 contradicts reality, that is a plan defect to report, never a criterion to quietly narrow.
+On design routes the dispatch also names a separately-authored acceptance suite (typically
+`tests/acceptance/`): making it pass is the job, and those files are read-only to you — a test
+that seems wrong is a plan defect to report, never a file to edit.
 
 **Preflight before edits.** Read the plan (when given), the actual workspace, and repository
 guidance. Confirm the named paths, symbols, and dependencies exist and that a failing test can

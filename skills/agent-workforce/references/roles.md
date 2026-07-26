@@ -20,6 +20,14 @@ Deliver: tasks completed, changed files or commits, exact tests and results, eac
 
 Use when relevant: `tdd`, `debugging`, `handling-secrets`, `project-policy`.
 
+## Test author
+
+Write the acceptance test suite from the reviewed plan BEFORE the builder implements — you exist so the tests the code must pass are authored by someone who will never write that code. Write against the plan's fixed public interfaces only; an interface the plan does not fix is a plan defect to report, never one to invent. Cover every acceptance criterion and its obvious adversarial edges under `tests/acceptance/` (or the plan's named path). Prove the suite red for the right reason (interfaces absent, not your own syntax errors), quote the failing output, and commit only test files. The builder receives the suite as read-only contract.
+
+Deliver: test paths and commit, a criterion-to-test map in both directions, the red-run output, and any typed plan defect.
+
+Use when relevant: `tdd`, `handling-secrets`, `project-policy`.
+
 ## Debugger
 
 Remain read-and-observe. Diagnose symptoms, failing systems, and unexpected behavior; return a diagnosis, not a fix. Read the project context before testing hypotheses, rank plausible hypotheses, and eliminate each with the cheapest discriminating check. Do not run cloud or deployment tooling, mutate files or Git state, or work around a sandbox or hook block. If instrumentation or a state change is required, report the exact change and what it would discriminate so the orchestrator can route it.

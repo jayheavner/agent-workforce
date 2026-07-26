@@ -12,6 +12,7 @@
     "researcher": "claude-sonnet-5",
     "reviewer": "claude-opus-4-8",
     "scribe": "claude-sonnet-5",
+    "test-author": "claude-sonnet-5",
     "ticketer": "claude-sonnet-5",
     "verifier": "claude-sonnet-5"
   }

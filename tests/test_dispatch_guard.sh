@@ -70,8 +70,9 @@ agent_json_p() { # $1 subagent_type $2 prompt
   jq -cn --arg t "$1" --arg p "$2" '{tool_name:"Agent",tool_input:{subagent_type:$t,prompt:$p}}'
 }
 
-# Valid specialists allow. builder and verifier are covered separately below:
-# their dispatches additionally require an ACCEPTANCE CRITERIA block.
+# Valid specialists allow. builder, verifier, and test-author are covered
+# separately below: their dispatches additionally require an ACCEPTANCE
+# CRITERIA block.
 for a in architect debugger reviewer deployer executor researcher ops scribe ticketer; do
   expect_allow "$(agent_json "$a")" "valid: $a allows"
   expect_allow "$(agent_json "agent-workforce:$a")" "valid plugin namespace: $a allows"
@@ -95,6 +96,8 @@ expect_allow "$(agent_json_p builder "$GOOD_CRITERIA")" "builder with lint-clean
 expect_allow "$(agent_json_p verifier "$GOOD_CRITERIA")" "verifier with lint-clean tagged criteria allows"
 expect_allow "$(agent_json_p 'agent-workforce:builder' "$GOOD_CRITERIA")" "plugin-namespace builder with criteria allows"
 expect_block "$(agent_json_p 'agent-workforce:builder' 'do it')" "plugin-namespace builder without criteria blocks"
+expect_block "$(agent_json_p test-author 'write the acceptance tests')" "test-author without criteria blocks"
+expect_allow "$(agent_json_p test-author "$GOOD_CRITERIA")" "test-author with lint-clean criteria allows"
 
 # Quality floor: the marker alone is no longer enough.
 expect_block "$(agent_json_p builder 'Build it.

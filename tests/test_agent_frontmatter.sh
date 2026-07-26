@@ -12,7 +12,7 @@ no() { FAIL=$((FAIL+1)); echo "FAIL [$1]"; }
 
 [ -z "$(grep -rl 'agent-team-policy' "$AGENTS" 2>/dev/null)" ] && ok || no "no agent references agent-team-policy ($(grep -rl 'agent-team-policy' "$AGENTS" | tr '\n' ' '))"
 
-COMMAND_RUNNERS="builder verifier reviewer ops deployer debugger executor"
+COMMAND_RUNNERS="builder verifier reviewer ops deployer debugger executor test-author"
 for a in $COMMAND_RUNNERS; do
   f="$AGENTS/$a.md"
   [ -f "$f" ] || { no "$a.md exists"; continue; }
@@ -47,7 +47,7 @@ grep -qi "faster from the human's own shell" "$AGENTS/orchestrator.md" && no "or
 # Checks-and-balances (2026-07-26 spec): every specialist carries the
 # WORKFORCE_REPORT marker contract, so the interrupt guard's missing-marker
 # signal is meaningful for every role.
-for a in architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer; do
+for a in architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer test-author; do
   grep -q "WORKFORCE_REPORT: $a" "$AGENTS/$a.md" && ok || no "$a carries the WORKFORCE_REPORT contract"
   grep -q 'agent-team-report-guard.sh' "$AGENTS/$a.md" && ok || no "$a wires the report guard Stop hook"
 done

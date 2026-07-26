@@ -649,9 +649,28 @@ class CloseoutStopHookTest(unittest.TestCase):
         self.assertEqual(decision["decision"], "block")
         self.assertIn("critique", decision["reason"])
 
-    def test_architect_plan_reviewed_before_build_allows(self) -> None:
-        """(h3) architect -> reviewer (plan critique) -> builder + verify +
-        review is the contract-correct design-route shape."""
+    def test_architect_plan_reviewed_and_test_authored_allows(self) -> None:
+        """(h3) architect -> reviewer (plan critique) -> test-author ->
+        builder + verify + review is the contract-correct design-route shape."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_0", "architect"),
+                self.result("tu_0"),
+                self.dispatch("tu_0b", "reviewer"),
+                self.result("tu_0b"),
+                self.dispatch("tu_0c", "test-author"),
+                self.result("tu_0c"),
+                *self.build_and_verify(),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_architect_build_without_test_author_blocks(self) -> None:
+        """(h4) Critiqued plan but no separately-authored acceptance suite
+        before the builder -> block demands the test-author."""
         transcript = self.write_transcript(
             [
                 self.dispatch("tu_0", "architect"),
@@ -663,8 +682,9 @@ class CloseoutStopHookTest(unittest.TestCase):
             ]
         )
         result = self.run_hook(self.payload(transcript))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "")
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("test-author", decision["reason"])
 
     def test_architect_without_builder_needs_no_plan_review(self) -> None:
         """(h3) Design-only sessions (no build followed) are not forced into a

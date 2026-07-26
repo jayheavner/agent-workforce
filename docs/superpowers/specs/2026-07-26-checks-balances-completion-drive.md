@@ -159,6 +159,30 @@ protocol, single-thread fallback explicitly labeled as running WITHOUT the
 mechanical guards. Codex path: `WORKFORCE_REPORT` sits directly above the
 existing `WORKFORCE_PROFILE` final line.
 
+## 6. Full pipeline separation (added 2026-07-26, Jay's explicit model)
+
+Jay's stated model: plan author, plan reviewer, feedback folder, test author,
+implementer, tester, and fidelity checker are different parties — "nowhere to
+hide." Mapping and enforcement:
+
+- Plan authored (architect / orchestrator-authored linted criteria) — guard-enforced.
+- Plan critiqued: ledger check 1a — a reviewer must sit between the first
+  architect and the first subsequent builder.
+- Findings folded: the architect (same accountable author) — convention, not hook.
+- **Tests authored by a non-implementer: new `test-author` agent** (Jay chose
+  design-routes-only, 2026-07-26): dispatched after plan critique with the
+  reviewed plan + criteria; writes the acceptance suite under
+  `tests/acceptance/` against the plan's fixed public interfaces; proves it
+  red for the right reason; commits only test files. Ledger check 1a2 blocks
+  design-route closeouts with no test-author between architect and first
+  builder. The builder receives the suite read-only — an edit to it is a
+  top-of-report reviewer finding and a plan-defect escalation, contract-level
+  until commit-to-role attribution exists. Contained routes keep the
+  lint-enforced criteria Checks as the upstream test layer (a test author
+  with no plan would be guessing interfaces).
+- Implemented (builder), tested (verifier, falsification duty), matched to
+  the request (reviewer fidelity) — all ledger-enforced per §2.
+
 ## Designed limitations (stated, not hidden)
 
 - **Criteria quality is mechanized to the falsifiability floor, no further.**

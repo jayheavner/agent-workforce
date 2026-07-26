@@ -48,7 +48,7 @@ import time
 
 MAX_BLOCKS = 3
 COST_MARKER = "## Cost report"
-MUTATING_ROLES = {"builder", "executor", "deployer"}
+MUTATING_ROLES = {"builder", "executor", "deployer", "test-author"}
 # Only phrases that actually acknowledge DIRT count. "commit"/"committed" were
 # removed deliberately: they satisfied the check in exactly the failure case it
 # exists to catch (claiming a commit happened while the tree is dirty).
@@ -287,6 +287,19 @@ def ledger_checks(last_text, roles, order, cwd):
                     "or, when the build already happened, against the plan "
                     "now, and route any findings through a repair loop before "
                     "closing out.")
+            # 1a2. Separate test author on design routes: the acceptance
+            #      suite must be written from the plan by an agent that will
+            #      never write the code, before the first builder runs.
+            if not any(r == "test-author"
+                       for r in order[first_architect + 1:first_builder]):
+                problems.append(
+                    "The plan was built without a separately-authored "
+                    "acceptance suite: no test-author dispatch sits between "
+                    "the architect and the first builder. Dispatch the "
+                    "test-author with the reviewed plan and criteria — or, "
+                    "when the build already happened, dispatch it now against "
+                    "the plan and route the builder to make the suite pass "
+                    "before closing out.")
 
     # 1b. Independent review after the last code edit (builder work only,
     #     same proportionality floor as check 1). Verification proves the

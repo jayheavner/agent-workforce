@@ -39,7 +39,7 @@ if [ "$MODE" = "subagent-stop" ]; then
     *:*) exit 0 ;;
   esac
   case "$ROLE" in
-    architect|builder|debugger|verifier|reviewer|deployer|executor|researcher|ops|scribe|ticketer)
+    architect|builder|debugger|verifier|reviewer|deployer|executor|researcher|ops|scribe|ticketer|test-author)
       printf '%s' "$INPUT" | bash "$HERE/agent-team-report-guard.sh"
       exit $?
       ;;
@@ -75,7 +75,7 @@ case "$ROLE" in
 esac
 
 case "$ROLE" in
-  orchestrator|architect|builder|debugger|verifier|reviewer|deployer|executor|researcher|ops|scribe|ticketer) ;;
+  orchestrator|architect|builder|debugger|verifier|reviewer|deployer|executor|researcher|ops|scribe|ticketer|test-author) ;;
   *) exit 0 ;;
 esac
 

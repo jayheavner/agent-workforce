@@ -22,10 +22,10 @@ if jq -e '
   .schema_version == 1
   and .orchestrator.model == "gpt-5.6-sol"
   and .orchestrator.effort == "high"
-  and (.profiles | length == 26)
-  and ([.profiles[].name] | unique | length == 26)
+  and (.profiles | length == 27)
+  and ([.profiles[].name] | unique | length == 27)
   and ([.profiles[].name] | all(test("^[a-z0-9_]+$")))
-  and ([.profiles[].role] | unique | sort == ["architect","builder","debugger","deployer","executor","ops","researcher","reviewer","scribe","ticketer","verifier"])
+  and ([.profiles[].role] | unique | sort == ["architect","builder","debugger","deployer","executor","ops","researcher","reviewer","scribe","test-author","ticketer","verifier"])
   and ([.profiles[].model] | all(. == "gpt-5.6-sol" or . == "gpt-5.6-terra" or . == "gpt-5.6-luna"))
   and ([.profiles[].effort] | all(. == "low" or . == "medium" or . == "high" or . == "xhigh" or . == "max"))
   and (first(.profiles[] | select(.name == "agent_workforce_debugger")) == {
@@ -125,11 +125,11 @@ CODEX_HOME="$TMPDIR_T/codex" AGENT_WORKFORCE_SKIP_MODEL_CHECK=1 \
   && ok || bad "Codex profile installer failed in a clean destination"
 
 installed_count="$(find "$TMPDIR_T/codex/agents" -type f -name 'agent_workforce_*.toml' 2>/dev/null | wc -l | tr -d ' ')"
-[ "$installed_count" = "26" ] && ok || bad "Codex installer did not install all 26 profiles"
+[ "$installed_count" = "27" ] && ok || bad "Codex installer did not install all 27 profiles"
 [ -f "$TMPDIR_T/codex/agent-workforce.config.toml" ] \
   && ok || bad "Codex installer did not install the orchestrator root profile"
 installed_launch_count="$(find "$TMPDIR_T/codex" -maxdepth 1 -type f -name 'agent_workforce_*.config.toml' | wc -l | tr -d ' ')"
-[ "$installed_launch_count" = "26" ] && ok || bad "Codex installer did not install all 26 direct-launch profiles"
+[ "$installed_launch_count" = "27" ] && ok || bad "Codex installer did not install all 27 direct-launch profiles"
 
 bash -n "$REPO/bin/agent-workforce-codex" "$REPO/bin/agent-workforce-dispatch" \
   && ok || bad "a Codex launcher has invalid shell syntax"
