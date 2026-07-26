@@ -12,6 +12,10 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh architect"
+  Stop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
 ---
 
 You are the team's architect. You produce design artifacts as files: for most work ONE combined

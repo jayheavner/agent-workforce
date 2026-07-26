@@ -147,8 +147,10 @@ printf '%s\n' \
   'done' \
   'if [ -n "${FAKE_BAD_MARKER:-}" ]; then' \
   '  printf "wrong marker\n" > "$output"' \
-  'else' \
+  'elif [ -n "${FAKE_NO_REPORT:-}" ]; then' \
   '  printf "WORKFORCE_PROFILE: agent_workforce_reviewer | gpt-5.6-sol | high\n" > "$output"' \
+  'else' \
+  '  printf "Reviewed.\nWORKFORCE_REPORT: reviewer | complete\nWORKFORCE_PROFILE: agent_workforce_reviewer | gpt-5.6-sol | high\n" > "$output"' \
   'fi' \
   'if [ -n "${AGENT_WORKFORCE_DISPATCH_AUDIT:-}" ] && [ -z "${FAKE_SKIP_AUDIT:-}" ]; then' \
   '  printf "role=reviewer tool= decision=allow detail=tool=\n" > "$AGENT_WORKFORCE_DISPATCH_AUDIT"' \
@@ -175,6 +177,20 @@ if CODEX_HOME="$TMPDIR_T/codex" CODEX_BIN="$FAKE_CODEX" AGENT_WORKFORCE_SKIP_MOD
 else
   ok
 fi
+
+# A real-task result with the profile marker but no WORKFORCE_REPORT line is
+# an interrupted specialist: exit 3, guidance names RESUME. (The preflight
+# reply is marker-only by design and must NOT trip this check — covered by
+# the matching-marker success case above, whose preflight output is the same.)
+NO_REPORT_ERR="$(CODEX_HOME="$TMPDIR_T/codex" CODEX_BIN="$FAKE_CODEX" AGENT_WORKFORCE_SKIP_MODEL_CHECK=1 \
+  FAKE_NO_REPORT=1 bash "$REPO/bin/agent-workforce-dispatch" \
+  agent_workforce_reviewer "review fixture" 2>&1 >/dev/null)"
+no_report_rc=$?
+[ "$no_report_rc" -eq 3 ] && ok || bad "dispatcher did not exit 3 on a missing WORKFORCE_REPORT (got $no_report_rc)"
+case "$NO_REPORT_ERR" in
+  *RESUME*) ok ;;
+  *) bad "dispatcher missing-report guidance does not name RESUME" ;;
+esac
 
 CODEX_HOME="$TMPDIR_T/codex" AGENT_WORKFORCE_SKIP_MODEL_CHECK=1 \
   bash "$REPO/install-codex.sh" --check >/dev/null 2>&1 \

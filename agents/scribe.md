@@ -11,6 +11,10 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh scribe"
+  Stop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
 ---
 
 You are the team's scribe. You write documents in complete sentences a non-engineer can follow

@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -145,6 +145,8 @@ bash -n "$REPO/hooks/agent-team-cost.sh" || fail "cost hook failed bash -n"
 bash -n "$REPO/hooks/agent-team-dispatch-guard.sh" || fail "dispatch guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-interrupt-guard.sh" ] || fail "hooks/agent-team-interrupt-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-interrupt-guard.sh" || fail "interrupt guard failed bash -n"
+[ -f "$REPO/hooks/agent-team-report-guard.sh" ] || fail "hooks/agent-team-report-guard.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-report-guard.sh" || fail "report guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-plugin-router.sh" ] || fail "hooks/agent-team-plugin-router.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed bash -n"
 [ -f "$REPO/hooks/agent_team_closeout.py" ] || fail "hooks/agent_team_closeout.py is missing from repo"
@@ -408,6 +410,7 @@ PREEXISTING_COST=0
 PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
 PREEXISTING_IGUARD=0
+PREEXISTING_RGUARD=0
 PREEXISTING_DEFAULTS=0
 PREEXISTING_CLOSEOUT=0
 PREEXISTING_COSTREPORT=0
@@ -416,6 +419,7 @@ PREEXISTING_BUDGETS=0
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-interrupt-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-interrupt-guard.sh" "$BACKUP/"; PREEXISTING_IGUARD=1; }
+[ -f "$HOOKS_DIR/agent-team-report-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-report-guard.sh" "$BACKUP/"; PREEXISTING_RGUARD=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
 [ -f "$HOOKS_DIR/cost_report.py" ] && { cp "$HOOKS_DIR/cost_report.py" "$BACKUP/"; PREEXISTING_COSTREPORT=1; }
@@ -474,6 +478,7 @@ restore() {
       agent-team-cost.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-interrupt-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-report-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-process-assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
@@ -519,6 +524,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_RATES" -eq 0 ] && rm -f "$HOOKS_DIR/model-rates.json"
   [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-guard.sh"
   [ "$PREEXISTING_IGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-interrupt-guard.sh"
+  [ "$PREEXISTING_RGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-report-guard.sh"
   [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
   [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
   [ "$PREEXISTING_COSTREPORT" -eq 0 ] && rm -f "$HOOKS_DIR/cost_report.py"
@@ -542,6 +548,7 @@ if ! cp "$REPO/hooks/agent-team-plugin-router.sh" "$HOOKS_DIR/"; then restore; c
 if ! cp "$REPO/hooks/agent-team-cost.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-interrupt-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "interrupt guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-report-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "report guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi
@@ -569,6 +576,7 @@ chmod +x "$HOOKS_DIR/agent-team-plugin-router.sh" || { restore; cleanup_fresh; f
 chmod +x "$HOOKS_DIR/agent-team-cost.sh" || { restore; cleanup_fresh; fail "chmod of cost hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-dispatch-guard.sh" || { restore; cleanup_fresh; fail "chmod of dispatch guard failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent-team-interrupt-guard.sh" || { restore; cleanup_fresh; fail "chmod of interrupt guard failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-report-guard.sh" || { restore; cleanup_fresh; fail "chmod of report guard failed; rolled back"; }
 chmod +x "$HOOKS_DIR/agent_team_closeout.py" || { restore; cleanup_fresh; fail "chmod of closeout hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/cost_report.py" || { restore; cleanup_fresh; fail "chmod of cost report tool failed; rolled back"; }
 chmod +x "$HOOKS_DIR/auto-approve-safe-deletes.py" || { restore; cleanup_fresh; fail "chmod of delete guard failed; rolled back"; }

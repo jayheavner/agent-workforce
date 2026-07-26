@@ -110,3 +110,13 @@ grep -qF "$MARKER" "$RESULT" || {
   printf 'agent-workforce-dispatch: profile marker missing or mismatched; expected:\n%s\n' "$MARKER" >&2
   exit 1
 }
+
+# Report contract (2026-07-26 checks-balances spec §3): a real-task result
+# without a WORKFORCE_REPORT line is an interrupted specialist, never a
+# completed phase and never a blocker report. Exit 3 distinguishes this from
+# misconfiguration (exit 1). The preflight reply above is marker-only by
+# design and is not subject to this check.
+grep -q "WORKFORCE_REPORT:" "$RESULT" || {
+  printf 'agent-workforce-dispatch: the specialist result has no WORKFORCE_REPORT line — treat it as interrupted (cut off mid-work), NOT as a completed phase. Reconcile the workspace read-only, then re-dispatch the same profile with what verifiably stands, the remaining ACCEPTANCE CRITERIA, and the word RESUME; after two interrupted resumes of the same phase, escalate with the evidence.\n' >&2
+  exit 3
+}

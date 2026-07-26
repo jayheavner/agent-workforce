@@ -18,6 +18,10 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-audit.sh builder"
+  Stop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
 ---
 
 You are the team's builder. Two dispatch shapes:

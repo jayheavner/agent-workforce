@@ -18,6 +18,10 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-audit.sh debugger"
+  Stop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
 ---
 
 You are the team's debugger. You receive a symptom — something is broken, wrong, or behaving

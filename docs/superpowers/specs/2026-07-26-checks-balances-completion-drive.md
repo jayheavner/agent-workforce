@@ -159,6 +159,35 @@ protocol, single-thread fallback explicitly labeled as running WITHOUT the
 mechanical guards. Codex path: `WORKFORCE_REPORT` sits directly above the
 existing `WORKFORCE_PROFILE` final line.
 
+## Designed limitations (stated, not hidden)
+
+- **Presence, not quality.** The guards mechanize that the checks RUN — a
+  criteria block exists, a verifier and reviewer follow the last builder, a
+  report ended on purpose. No hook can judge whether criteria are meaningful
+  or a review is rigorous; that judgment lives in the reviewer's fidelity
+  mode (which checks against the original request, independent of criteria
+  quality) and ultimately the human. A vacuous ACCEPTANCE CRITERIA line
+  satisfies the guard; the rote-receipts failure (2026-07-17) says any
+  attempt to schema-check quality would make this worse, not better.
+- **Async dispatches — mechanical at the source.** The PostToolUse guard sees
+  sync results only; a background dispatch's completion arrives as a
+  task-notification no hook inspects. Closed by `agent-team-report-guard.sh`:
+  a Stop hook in every specialist's frontmatter (harness-converted to
+  SubagentStop for dispatched subagents, per code.claude.com/docs hooks +
+  sub-agents references) that blocks the specialist from finishing until its
+  final message ends with the marker — enforcement at the specialist's own
+  stop covers sync and async identically, before the parent consumes
+  anything. Fail-open on `stop_hook_active` (never blocks twice, never
+  wedges; harness hard-caps at 8 blocks regardless). Plugin mode routes the
+  same guard via a `SubagentStop` entry in hooks.json (payload carries
+  `agent_type`; foreign-plugin subagents are never policed). The Codex path
+  enforces the same contract in `bin/agent-workforce-dispatch` (exit 3 with
+  RESUME guidance when the real-task result lacks the marker; the marker-only
+  policy preflight is exempt).
+- **A killed agent fires no hooks of its own.** Marker absence is detectable
+  wherever the result text lands, but nothing runs *at* the moment of a
+  turn-cap death; detection is always at the consumption point.
+
 ## Corrections to prior records
 
 `docs/superpowers/specs/2026-07-22-innovation-awards-audit-fixes-design.md`

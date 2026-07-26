@@ -7,7 +7,7 @@ set -u
 
 MODE="${1:-}"
 case "$MODE" in
-  secrets|audit|dispatch|cost|closeout-stop|archive-run|session-start) ;;
+  secrets|audit|dispatch|cost|closeout-stop|subagent-stop|archive-run|session-start) ;;
   *)
     printf 'agent-workforce plugin router: unknown routing mode: %s\n' "$MODE" >&2
     exit 2
@@ -27,6 +27,24 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 if [ "$MODE" = "closeout-stop" ]; then
   printf '%s' "$INPUT" | python3 "$HERE/agent_team_closeout.py"
   exit $?
+fi
+
+# SubagentStop carries the subagent's agent_type in its payload; the report
+# guard itself scopes by role below (non-workforce subagents fall through the
+# roster check and are never policed).
+if [ "$MODE" = "subagent-stop" ]; then
+  ROLE="$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null)" || exit 0
+  case "$ROLE" in
+    agent-workforce:*) ROLE="${ROLE#agent-workforce:}" ;;
+    *:*) exit 0 ;;
+  esac
+  case "$ROLE" in
+    architect|builder|debugger|verifier|reviewer|deployer|executor|researcher|ops|scribe|ticketer)
+      printf '%s' "$INPUT" | bash "$HERE/agent-team-report-guard.sh"
+      exit $?
+      ;;
+    *) exit 0 ;;
+  esac
 fi
 
 # Transcript archiver self-scopes by event (Stop vs SessionEnd) and is

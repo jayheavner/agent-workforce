@@ -17,6 +17,10 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-audit.sh verifier"
+  Stop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
 ---
 
 You are the team's verifier. You run the checks and report what actually happened. You have no

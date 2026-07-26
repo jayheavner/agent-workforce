@@ -120,6 +120,17 @@ expect_rc 0 cost "$COST_PAYLOAD" "orchestrator cost router returned an error"
 find "$TMPDIR_T/cost" -type f -name "*--$SID.json" -print -quit 2>/dev/null | grep -q . \
   && ok || bad "orchestrator cost router did not invoke cost accounting"
 
+# SubagentStop route: a workforce specialist ending without the report marker
+# is blocked (Stop-decision JSON); a compliant or foreign subagent passes.
+SUBSTOP_BAD="$(jq -cn '{agent_type:"builder",stop_hook_active:false,last_assistant_message:"partial work and"}')"
+OUT="$(printf '%s' "$SUBSTOP_BAD" | bash "$ROUTER" subagent-stop 2>/dev/null)"
+printf '%s' "$OUT" | jq -e '.decision == "block"' >/dev/null 2>&1 \
+  && ok || bad "subagent-stop route did not block a marker-less specialist report"
+SUBSTOP_GOOD="$(jq -cn '{agent_type:"agent-workforce:builder",stop_hook_active:false,last_assistant_message:"Done.\n\nWORKFORCE_REPORT: builder | complete"}')"
+expect_rc 0 subagent-stop "$SUBSTOP_GOOD" "subagent-stop route blocked a compliant report"
+expect_rc 0 subagent-stop "$(jq -cn '{agent_type:"other-plugin:builder",stop_hook_active:false,last_assistant_message:"x"}')" \
+  "subagent-stop route policed a foreign plugin subagent"
+
 # A sync result with no WORKFORCE_REPORT marker is an interrupted agent: the
 # route exits 2 (reconcile-and-resume fed back) but cost accounting still runs.
 rm -f "$TMPDIR_T/cost/"*"--$SID.json" 2>/dev/null

@@ -49,6 +49,7 @@ grep -qi "faster from the human's own shell" "$AGENTS/orchestrator.md" && no "or
 # signal is meaningful for every role.
 for a in architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer; do
   grep -q "WORKFORCE_REPORT: $a" "$AGENTS/$a.md" && ok || no "$a carries the WORKFORCE_REPORT contract"
+  grep -q 'agent-team-report-guard.sh' "$AGENTS/$a.md" && ok || no "$a wires the report guard Stop hook"
 done
 
 # Criteria-before-code: the orchestrator authors ACCEPTANCE CRITERIA, the
@@ -61,6 +62,16 @@ grep -q "ACCEPTANCE CRITERIA" "$HERE/../hooks/agent-team-dispatch-guard.sh" && o
 # plugin router runs it on its cost route.
 grep -q 'agent-team-interrupt-guard.sh' "$AGENTS/orchestrator.md" && ok || no "orchestrator wires the interrupt guard"
 grep -q 'agent-team-interrupt-guard.sh' "$HERE/../hooks/agent-team-plugin-router.sh" && ok || no "plugin router runs the interrupt guard"
+
+# The skill mirror (skill-mode sessions run without hooks) carries the same
+# contracts, and the Codex dispatcher enforces the report marker mechanically.
+SKILL="$HERE/../skills/agent-workforce/SKILL.md"
+ROLES="$HERE/../skills/agent-workforce/references/roles.md"
+for needle in "WORKFORCE_REPORT" "ACCEPTANCE CRITERIA" "RESUME"; do
+  grep -q "$needle" "$SKILL" && ok || no "SKILL.md carries $needle"
+  grep -q "$needle" "$ROLES" && ok || no "roles.md carries $needle"
+done
+grep -q "WORKFORCE_REPORT" "$HERE/../bin/agent-workforce-dispatch" && ok || no "Codex dispatcher enforces WORKFORCE_REPORT"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
