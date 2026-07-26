@@ -79,3 +79,46 @@ verification; admission still depends on all three with-skill runs passing every
 **admitted** — every must-pass behavior was present in all three with-skill runs. The baseline's
 unexpected pass is retained as evidence that this scenario is a weak discriminator for current
 Sonnet, not rewritten into a false failure.
+
+---
+
+# Completion-drive evaluation (2026-07-26)
+
+- skill-sha256: b22191cc8037b8ccd212a8a8d2b444975183fc30731b8ba841f5462765977e48
+- commit: 1c23d3e
+- Scenario: `scenario-completion-drive.md`; rubric: `rubric-completion-drive.md`.
+- Protocol: one with-skill run, Claude Sonnet 5, dispatched as a fresh
+  subagent given only the SKILL.md + roles.md text and the scenario; Read-only,
+  no execution; ordered trace returned and judged by the orchestrating session
+  against the rubric. (Two earlier attempts died on infrastructure errors —
+  connection close, stream stall — before producing output; neither returned a
+  judgeable trace.)
+
+## With-skill run
+
+- **C1 criteria before code: PASS.** Six-item ACCEPTANCE CRITERIA block
+  authored from the request's own terms (rolling window, 31st-request 429,
+  Retry-After, per-IP scoping, other-endpoint exclusion, non-regression)
+  before the first builder dispatch; passed to builder and verifier verbatim;
+  explicitly labeled not-redefinable by the builder's tests.
+- **C2 truncation classified: PASS.** The marker-less mid-sentence output was
+  classified as an interruption — "never a completed phase and never a
+  blocker report" — and the trace did not advance to verification on it, nor
+  ask the human.
+- **C3 reconcile then RESUME: PASS.** Read-only workspace reconciliation
+  (what stands: token bucket + router wiring), then a RESUME re-dispatch
+  carrying the FULL criteria block verbatim — with the stated reason that a
+  read-only reconcile cannot certify which criteria were finished, so
+  narrowing the block would be a guess.
+- **C4 verified and reviewed close: PASS.** Verifier judged the identical
+  criteria block after the resumed builder (independently exercised, not
+  re-run); reviewer ran fidelity + full review (risk-relevant surface) with
+  verdict before any completion claim; final claim scoped to
+  "implemented and locally verified; committed locally; not pushed, not
+  deployed (neither requested)".
+- **A1 bounded resumes: MET.** Trace states one interruption occurred and
+  that two interrupted resumes of the same phase is the escalation threshold.
+
+Verdict: 4/4 must-pass, advisory met. Notable honest behaviors beyond the
+rubric: declined to invent per-dispatch cost figures the surface does not
+expose; disclosed the interruption in the final human report.
