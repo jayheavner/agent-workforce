@@ -74,6 +74,24 @@ if [ "$VALID" -ne 1 ]; then
   exit 2
 fi
 
+# Criteria-before-code (2026-07-26 checks-balances spec §1): builder and
+# verifier dispatches must carry an ACCEPTANCE CRITERIA block, authored by the
+# orchestrator from the plan or the original request — the builder's own tests
+# are never the definition of done, and the verifier judges the same criteria
+# the builder was given, verbatim.
+case "$TYPE" in
+  builder|verifier)
+    PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
+    case "$PROMPT" in
+      *"ACCEPTANCE CRITERIA"*) : ;;
+      *)
+        printf 'agent-team dispatch guard: a %s dispatch must carry an "ACCEPTANCE CRITERIA" block. Author the criteria BEFORE the code exists — from the architect plan when one ran, from the original request otherwise; behavior-level and falsifiable — and pass the identical block to both the builder and the verifier. The builder'"'"'s own tests are scaffolding for its red/green loop, never the bar. Re-issue this dispatch with the criteria included.\n' "$TYPE" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+esac
+
 # T6: serialize git-mutating dispatches ({builder, executor, deployer}) per
 # checkout. Only these roles are policed; skip the scan entirely otherwise.
 IS_SERIALIZED_ROLE=0

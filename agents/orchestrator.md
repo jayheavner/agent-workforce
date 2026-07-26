@@ -22,6 +22,8 @@ hooks:
     - matcher: Agent
       hooks:
         - type: command
+          command: "$HOME/.claude/hooks/agent-team-interrupt-guard.sh"
+        - type: command
           command: "$HOME/.claude/hooks/agent-team-cost.sh"
   Stop:
     - hooks:
@@ -71,8 +73,8 @@ model. Then go. Do not wait for approval of the triage.
 | Shape | Route |
 |---|---|
 | Question / lookup | Answer from evidence: your own shell for local facts, a `haiku` researcher for the world. Never from memory. |
-| Trivial action (clear intent, cheap, reversible) | ONE dispatch — executor or builder, cheapest capable model. No spec, no review. |
-| Clear, contained build (established pattern, one subsystem) | builder (plans + builds + tests, TDD) → verifier. Add the reviewer only for risky surfaces (security, data integrity, outward-facing). |
+| Trivial action (clear intent, cheap, reversible) | ONE executor dispatch, cheapest capable model. No spec, no review. If it needs the builder, it is code: one-line criteria, then verifier + fidelity review (`haiku`) still apply. |
+| Clear, contained build (established pattern, one subsystem) | builder (builds + tests against criteria you author, TDD) → verifier + reviewer in fidelity mode (cheap model). Upgrade to full review for risky surfaces (security, data integrity, outward-facing). |
 | Real design decisions (several components, open choices) | architect (ONE combined spec+plan) → builder → verifier and reviewer in parallel. |
 | Multi-system / production / high-risk | researcher first if open factual questions → architect (deep; `fable` only with a stated reason) → builder(s) → verifier and reviewer → deployer when authorized → post-deploy smoke. |
 | Symptom ("X is broken", "why is Y wrong") | debugger FIRST with the full symptom; route the fix by the root cause it returns. Relay its actionable first sentence verbatim. |
@@ -93,7 +95,13 @@ stated reason). The reviewer must run a different model than the builder whose w
 **Dispatch mechanics.** Every dispatch prompt carries: the objective, the route context, exact
 paths (workspace, spec/plan, status note when they exist), what was already established (facts
 proven this session — don't make specialists re-derive them), and the deliverable the next phase
-needs. Frame builder dispatch envelopes per
+needs. Every builder dispatch additionally carries an `ACCEPTANCE CRITERIA` block you author
+BEFORE the code exists — from the architect's plan when one ran, from the human's request in its
+own terms otherwise; behavior-level and falsifiable (a guard blocks builder and verifier
+dispatches without one). Pass the identical block verbatim to the verifier: the builder's tests
+are its working instruments, never the bar, and whoever writes the code is never the last author
+of what "done" means. That criteria block is the task's completion ledger — every completion
+claim you make traces to it. Frame builder dispatch envelopes per
 `skills/agent-workforce/references/plan-formatting.md` — notation from the target model's
 vendor, stance from its tier; on an unrecognized vendor family dispatch `unframed-fallback` and
 note it. Run independent dispatches in parallel; git-mutating dispatches (builder, executor,
@@ -102,7 +110,19 @@ this dispatch` only when that is literally true. Every 10th dispatch the guard f
 re-triage acknowledgment; treat it as a real question about proportionality, not a formality.
 Verifier or reviewer findings go back to the builder with the findings attached — at most two
 repair loops, then escalate to the human with the full history. After the final code edit,
-re-run the verifier before any completion claim.
+re-run the verifier before any completion claim, and obtain a review verdict — the reviewer's
+fidelity mode (cheap model, delivered diff vs the original request) at minimum, full review for
+risky surfaces; the Stop hook refuses builder-work closeouts without both.
+
+**Interrupted dispatches.** Every specialist report ends with a `WORKFORCE_REPORT: <role> |
+complete|partial|blocked` line. A returned dispatch with no such marker was cut off (turn cap,
+context exhaustion, crash) — a guard flags sync results mechanically; apply the same rule
+yourself to background completions arriving by task-notification. Never advance the route on an
+interrupted dispatch's partial output and never treat it as a blocker report: inspect the
+workspace read-only (its commits, test state, files touched), then re-dispatch the same role
+with what verifiably stands, the remaining acceptance criteria, and the word RESUME. After two
+interrupted resumes of the same phase, escalate with the evidence. `partial` is different — a
+deliberate early stop with what-stands/what-remains — and routes like any other report.
 
 ## Discovered work — fix, ticket, or stop; never narrate
 

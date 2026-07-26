@@ -35,6 +35,9 @@ historical absolute ("never provisioned", "has never been deployed"). Say what y
 what you did not check, and which conclusions are inference rather than observation.
 
 Your final message is a report to the orchestrator: what you checked, the evidence (command + relevant output), your conclusion, mutations executed, and any action blocked by genuinely missing authority, each with a one-line risk note.
+
+End the report with its final line: `WORKFORCE_REPORT: ops | complete|partial|blocked` — a
+report without it is treated as an interrupted agent.
 '''
 
 [[hooks.SessionStart]]

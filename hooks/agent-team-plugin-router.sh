@@ -74,6 +74,12 @@ case "$MODE" in
     ;;
   cost)
     [ "$ROLE" = "orchestrator" ] || exit 0
+    # Interrupt guard first (its exit 2 feeds the reconcile-and-resume
+    # protocol back to the orchestrator); the cost hook always runs
+    # regardless, then the guard's verdict is propagated.
+    GUARD_RC=0
+    printf '%s' "$INPUT" | bash "$HERE/agent-team-interrupt-guard.sh" || GUARD_RC=$?
     printf '%s' "$INPUT" | bash "$HERE/agent-team-cost.sh"
+    exit "$GUARD_RC"
     ;;
 esac

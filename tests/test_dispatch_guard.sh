@@ -66,11 +66,31 @@ expect() { # $1 expected_rc, $2 json, $3 label
 expect_allow() { expect 0 "$1" "$2"; }
 expect_block() { expect 2 "$1" "$2"; }
 
-# All ten valid specialists allow.
-for a in architect builder debugger verifier reviewer deployer researcher ops scribe ticketer; do
+agent_json_p() { # $1 subagent_type $2 prompt
+  jq -cn --arg t "$1" --arg p "$2" '{tool_name:"Agent",tool_input:{subagent_type:$t,prompt:$p}}'
+}
+
+# Valid specialists allow. builder and verifier are covered separately below:
+# their dispatches additionally require an ACCEPTANCE CRITERIA block.
+for a in architect debugger reviewer deployer executor researcher ops scribe ticketer; do
   expect_allow "$(agent_json "$a")" "valid: $a allows"
   expect_allow "$(agent_json "agent-workforce:$a")" "valid plugin namespace: $a allows"
 done
+
+# Criteria-before-code: a builder or verifier dispatch must carry the literal
+# ACCEPTANCE CRITERIA marker — the bar is authored upstream of the code, so the
+# builder is never the last author of what "done" means.
+expect_block "$(agent_json builder)" "builder without prompt blocks (no criteria)"
+expect_block "$(agent_json_p builder 'implement the widget, TDD')" "builder prompt without criteria blocks"
+expect_block "$(agent_json verifier)" "verifier without prompt blocks (no criteria)"
+expect_block "$(agent_json_p verifier 'run the suite')" "verifier prompt without criteria blocks"
+expect_allow "$(agent_json_p builder 'Implement the widget.
+ACCEPTANCE CRITERIA
+- widget renders')" "builder with ACCEPTANCE CRITERIA allows"
+expect_allow "$(agent_json_p verifier 'ACCEPTANCE CRITERIA
+- widget renders')" "verifier with ACCEPTANCE CRITERIA allows"
+expect_allow "$(agent_json_p 'agent-workforce:builder' 'ACCEPTANCE CRITERIA: x')" "plugin-namespace builder with criteria allows"
+expect_block "$(agent_json_p 'agent-workforce:builder' 'do it')" "plugin-namespace builder without criteria blocks"
 
 # Missing / empty / harness-default / unknown all block.
 expect_block "$(jq -cn '{tool_name:"Agent",tool_input:{description:"do a thing"}}')" "missing subagent_type blocks"

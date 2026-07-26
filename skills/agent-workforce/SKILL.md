@@ -49,8 +49,8 @@ Do not claim a model override, independent reviewer, permission boundary, or exa
 | Shape | Route |
 |---|---|
 | Question / lookup | Answer from evidence; never from memory |
-| Trivial action (clear, cheap, reversible) | ONE specialist phase, cheapest capable model — no spec, no review |
-| Clear, contained build | Builder (plans + builds + tests, TDD) -> verifier; reviewer only for risky surfaces |
+| Trivial action (clear, cheap, reversible) | ONE executor phase, cheapest capable model — no spec, no review. If it needs the builder it is code: one-line criteria, then verifier + fidelity review still apply |
+| Clear, contained build | Builder (builds + tests against criteria authored upstream, TDD) -> verifier + reviewer in fidelity mode; full review for risky surfaces |
 | Real design decisions | Architect (ONE combined spec+plan) -> builder -> verifier and reviewer |
 | Multi-system / production / high-risk | Research when needed -> architect deep -> builder(s) -> verifier and reviewer -> authorized deployment -> smoke |
 
@@ -69,9 +69,11 @@ Use in-thread specialist subagents only when the active surface exposes an actua
 
 Give every specialist complete context: objective, tier, workspace, relevant artifacts, applicable role contract, mutation boundary, and the exact deliverable the next phase needs. Ask the specialist to read only the relevant section of [roles.md](references/roles.md) plus any task-specific bundled skills.
 
+Author every builder phase's `ACCEPTANCE CRITERIA` block BEFORE the build — from the architect's plan when one ran, from the human's request in its own terms otherwise; behavior-level and falsifiable — and give the verifier the identical block verbatim. The builder's own tests are never the bar: whoever writes the code is never the last author of what "done" means. The criteria block is the task's completion ledger; every completion claim traces to it.
+
 When subagents are unavailable on a surface that never supports local profiles, offer reduced mode and wait for explicit acceptance. If accepted, run the same phases sequentially in the main thread, announce `single-thread fallback` once, and label reviewer independence as `degraded: same conversation and model`. On local Codex, missing profiles are an installation failure, not a fallback condition.
 
-After every specialist completes, verify its final line matches `WORKFORCE_PROFILE: <requested profile> | <model> | <effort>`. Reject a missing or mismatched marker and retry the dispatch once with the exact profile name; after a second mismatch, stop with the evidence. When relaying a debugger report, preserve its actionable first sentence faithfully before adding route context or interpretation.
+After every specialist completes, verify its report carries `WORKFORCE_REPORT: <role> | complete|partial|blocked` in its final lines (directly above the Codex `WORKFORCE_PROFILE: <requested profile> | <model> | <effort>` final line, whose check is unchanged: reject a missing or mismatched profile marker and retry the dispatch once with the exact profile name; after a second mismatch, stop with the evidence). A missing WORKFORCE_REPORT marker means the agent was cut off — turn cap, context exhaustion, crash — never a completed phase and never a blocker report: reconcile the workspace read-only (its commits, test state, files touched), re-dispatch the same role with what verifiably stands, the remaining acceptance criteria, and the word RESUME; after two interrupted resumes of the same phase, escalate with the evidence. In single-thread fallback these checks are yours alone — no mechanical guard runs there; say so when labeling the fallback. When relaying a debugger report, preserve its actionable first sentence faithfully before adding route context or interpretation.
 
 ## Work consequential decisions
 

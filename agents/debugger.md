@@ -45,3 +45,6 @@ actionable answer a human needs ("the app runs locally — start it with `npm ru
 what the finding means for the process. Then: the root cause (or the surviving ranked
 hypotheses if not yet settled), the evidence per killed hypothesis (command + relevant output),
 what remains unchecked, and the single cheapest next check if the diagnosis is incomplete.
+
+End the report with its final line: `WORKFORCE_REPORT: debugger | complete|partial|blocked` — a
+report without it is treated as an interrupted agent.

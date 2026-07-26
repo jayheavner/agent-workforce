@@ -75,9 +75,9 @@ bash_payload() { # $1 role, $2 command
   jq -cn --arg r "$1" --arg c "$2" \
     '{agent_type:$r,tool_name:"Bash",tool_input:{command:$c}}'
 }
-agent_payload() { # $1 role, $2 subagent type
-  jq -cn --arg r "$1" --arg t "$2" \
-    '{agent_type:$r,tool_name:"Agent",tool_input:{subagent_type:$t}}'
+agent_payload() { # $1 role, $2 subagent type [$3 prompt]
+  jq -cn --arg r "$1" --arg t "$2" --arg p "${3:-}" \
+    '{agent_type:$r,tool_name:"Agent",tool_input:{subagent_type:$t,prompt:$p}}'
 }
 
 expect_rc 0 secrets "$(bash_payload builder 'sam deploy')" \
@@ -99,8 +99,10 @@ grep -q "role=executor ran=npm install left-pad" "$TMPDIR_T/audit.log" \
 
 expect_rc 2 dispatch "$(agent_payload orchestrator general-purpose)" \
   "orchestrator dispatch guard was not enforced"
-expect_rc 0 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder')" \
+expect_rc 0 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it. ACCEPTANCE CRITERIA: widget renders')" \
   "namespaced orchestrator could not dispatch a namespaced specialist"
+expect_rc 2 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it.')" \
+  "builder dispatch without ACCEPTANCE CRITERIA was not blocked in plugin mode"
 expect_rc 0 dispatch "$(agent_payload builder general-purpose)" \
   "dispatch guard leaked into a specialist"
 expect_rc 0 dispatch "$(agent_payload unrelated-agent general-purpose)" \
@@ -113,10 +115,19 @@ SID='11111111-1111-1111-1111-111111111111'
 TRANSCRIPT="$TMPDIR_T/session.jsonl"
 touch "$TRANSCRIPT"
 COST_PAYLOAD="$(jq -cn --arg sid "$SID" --arg transcript "$TRANSCRIPT" \
-  '{agent_type:"orchestrator",tool_name:"Agent",session_id:$sid,transcript_path:$transcript,cwd:"/tmp/plugin-test",tool_response:{agentId:"a",agentType:"builder"}}')"
+  '{agent_type:"orchestrator",tool_name:"Agent",session_id:$sid,transcript_path:$transcript,cwd:"/tmp/plugin-test",tool_response:{agentId:"a",agentType:"builder",status:"completed",content:[{type:"text",text:"Built.\n\nWORKFORCE_REPORT: builder | complete"}]}}')"
 expect_rc 0 cost "$COST_PAYLOAD" "orchestrator cost router returned an error"
 find "$TMPDIR_T/cost" -type f -name "*--$SID.json" -print -quit 2>/dev/null | grep -q . \
   && ok || bad "orchestrator cost router did not invoke cost accounting"
+
+# A sync result with no WORKFORCE_REPORT marker is an interrupted agent: the
+# route exits 2 (reconcile-and-resume fed back) but cost accounting still runs.
+rm -f "$TMPDIR_T/cost/"*"--$SID.json" 2>/dev/null
+TRUNCATED_PAYLOAD="$(jq -cn --arg sid "$SID" --arg transcript "$TRANSCRIPT" \
+  '{agent_type:"orchestrator",tool_name:"Agent",session_id:$sid,transcript_path:$transcript,cwd:"/tmp/plugin-test",tool_response:{agentId:"a",agentType:"builder",status:"completed",content:[{type:"text",text:"Made progress on"}]}}')"
+expect_rc 2 cost "$TRUNCATED_PAYLOAD" "truncated dispatch did not fire the interrupt guard through the cost route"
+find "$TMPDIR_T/cost" -type f -name "*--$SID.json" -print -quit 2>/dev/null | grep -q . \
+  && ok || bad "cost accounting skipped when the interrupt guard fired"
 
 # Exercise the launcher without starting a Claude session, requiring auth, or
 # installing into any real profile (--no-install skips the freshness check;

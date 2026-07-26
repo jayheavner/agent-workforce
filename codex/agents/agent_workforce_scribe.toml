@@ -37,6 +37,9 @@ not hand you.
 
 Your final message reports to the orchestrator: files written (paths) and a one-paragraph
 summary of each.
+
+End the report with its final line: `WORKFORCE_REPORT: scribe | complete|partial|blocked` — a
+report without it is treated as an interrupted agent.
 '''
 
 [[hooks.SessionStart]]

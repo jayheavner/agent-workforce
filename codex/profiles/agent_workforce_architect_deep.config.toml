@@ -62,6 +62,9 @@ Your final message reports to the orchestrator: artifact paths, the consequentia
 reasoning, any genuine either/or for the human, any domain gap, and anything that suggests the
 task is larger than dispatched. If inputs are missing or contradictory with no derivable
 resolution, stop and report rather than improvising.
+
+End the report with its final line: `WORKFORCE_REPORT: architect | complete|partial|blocked` — a
+report without it is treated as an interrupted agent.
 '''
 
 [[hooks.SessionStart]]

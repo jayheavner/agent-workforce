@@ -44,5 +44,23 @@ grep -qE 'agent_team_closeout\.py" (dispatch|subagent-stop|stop)' "$AGENTS/orche
 # The stale escape hatch is gone: no agent tells the human to run commands.
 grep -qi "faster from the human's own shell" "$AGENTS/orchestrator.md" && no "orchestrator still has the own-shell escape hatch" || ok
 
+# Checks-and-balances (2026-07-26 spec): every specialist carries the
+# WORKFORCE_REPORT marker contract, so the interrupt guard's missing-marker
+# signal is meaningful for every role.
+for a in architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer; do
+  grep -q "WORKFORCE_REPORT: $a" "$AGENTS/$a.md" && ok || no "$a carries the WORKFORCE_REPORT contract"
+done
+
+# Criteria-before-code: the orchestrator authors ACCEPTANCE CRITERIA, the
+# builder treats them as the bar, and the guard enforces their presence.
+grep -q "ACCEPTANCE CRITERIA" "$AGENTS/orchestrator.md" && ok || no "orchestrator authors ACCEPTANCE CRITERIA"
+grep -q "ACCEPTANCE CRITERIA" "$AGENTS/builder.md" && ok || no "builder names the ACCEPTANCE CRITERIA contract"
+grep -q "ACCEPTANCE CRITERIA" "$HERE/../hooks/agent-team-dispatch-guard.sh" && ok || no "dispatch guard enforces ACCEPTANCE CRITERIA"
+
+# The orchestrator wires the interrupt guard on PostToolUse(Agent), and the
+# plugin router runs it on its cost route.
+grep -q 'agent-team-interrupt-guard.sh' "$AGENTS/orchestrator.md" && ok || no "orchestrator wires the interrupt guard"
+grep -q 'agent-team-interrupt-guard.sh' "$HERE/../hooks/agent-team-plugin-router.sh" && ok || no "plugin router runs the interrupt guard"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

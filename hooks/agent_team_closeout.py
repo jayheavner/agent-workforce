@@ -265,6 +265,20 @@ def ledger_checks(last_text, roles, order, cwd):
                 "edit: dispatch the verifier against the delivered work before "
                 "closing out.")
 
+    # 1b. Independent review after the last code edit (builder work only,
+    #     same proportionality floor as check 1). Verification proves the
+    #     stated criteria; review is the only check of judgment — spec
+    #     fidelity at minimum (2026-07-26 checks-balances spec §2).
+    if "builder" in roles and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
+        last_builder = max(i for i, r in enumerate(order) if r == "builder")
+        if not any(r == "reviewer" for r in order[last_builder + 1:]):
+            problems.append(
+                "Builder work closed without an independent review verdict: "
+                "no reviewer dispatch follows the last builder. Dispatch the "
+                "reviewer against the delivered diff — fidelity mode (delivered "
+                "vs the original request) at minimum, full code review for "
+                "risky surfaces — before closing out.")
+
     # 2. Every commit hash claimed in the final message must exist in this
     #    checkout's object store.
     if in_git_repo(cwd):

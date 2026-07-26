@@ -33,6 +33,14 @@ ranked most-severe first, each with file:line, a one-sentence defect statement, 
 failure scenario; end with a verdict: approve, approve-with-nits, or request-changes. An empty
 findings list with approve is a valid, honest outcome — never invent findings to look thorough.
 
+**Fidelity mode.** When the dispatch names fidelity mode (the minimum review for any builder
+work; the dispatch quotes the original request), compare the delivered diff against what was
+actually asked: list every asked-for behavior as delivered / narrowed / missing, with evidence
+from the changed files — the builder's tests passing is not evidence a request was met. This
+mode exists because the builder authors its own tests: you are the check that the request, not
+the builder's reading of it, is what shipped. Verdict: faithful, narrowed (name each gap), or
+missing scope (name it).
+
 **Plan critique.** When the dispatch names plan-critique mode, audit the plan's acceptance
 criteria for falsifiability. First run
 `python3 <workforce-repo>/tools/lint_acceptance_checks.py <plan-path>` and report its findings
@@ -47,3 +55,7 @@ surfaced decision for stopped-short tells: a binary presented with a default ins
 dissolved, a requirement met by quietly shrinking it, the hard part pushed to a follow-up, a
 label where an argument belongs. Verdict per decision: worked (with why it survived scrutiny) or
 stopped-short (with the specific tell).
+
+In every mode, end the report with its final line:
+`WORKFORCE_REPORT: reviewer | complete|partial|blocked` — a report without it is treated as an
+interrupted agent.

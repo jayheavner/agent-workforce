@@ -520,12 +520,16 @@ class CloseoutStopHookTest(unittest.TestCase):
         return repo
 
     def build_and_verify(self) -> list[dict[str, object]]:
-        """builder then verifier, both resolved — the contract-correct shape."""
+        """builder, then verifier and reviewer — the contract-correct shape:
+        builder work needs fresh verification AND an independent review verdict
+        after the last builder dispatch."""
         return [
             self.dispatch("tu_1", "builder"),
             self.result("tu_1"),
             self.dispatch("tu_2", "verifier"),
             self.result("tu_2"),
+            self.dispatch("tu_3", "reviewer"),
+            self.result("tu_3"),
         ]
 
     def test_dirty_tree_after_mutating_dispatch_blocks(self) -> None:
@@ -627,6 +631,42 @@ class CloseoutStopHookTest(unittest.TestCase):
         result = self.run_hook(self.payload(transcript))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_builder_verified_but_unreviewed_blocks(self) -> None:
+        """(h2) Verification alone is not independence of judgment: builder
+        work with no reviewer after the last builder -> block demands review."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "builder"),
+                self.result("tu_1"),
+                self.dispatch("tu_2", "verifier"),
+                self.result("tu_2"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("review", decision["reason"])
+
+    def test_reviewer_before_final_builder_blocks(self) -> None:
+        """(h2) A review predating the last code edit is stale."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "reviewer"),
+                self.result("tu_1"),
+                self.dispatch("tu_2", "builder"),
+                self.result("tu_2"),
+                self.dispatch("tu_3", "verifier"),
+                self.result("tu_3"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("review", decision["reason"])
 
     def test_verifier_before_final_builder_blocks(self) -> None:
         """(h) Verification predating the last code edit is stale."""
