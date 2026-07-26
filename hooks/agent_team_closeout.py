@@ -265,6 +265,29 @@ def ledger_checks(last_text, roles, order, cwd):
                 "edit: dispatch the verifier against the delivered work before "
                 "closing out.")
 
+    # 1a. Plan critique before build (design routes only): an architect whose
+    #     plan flowed straight into a builder was never independently
+    #     critiqued. Requires a reviewer dispatch between the first architect
+    #     and the first subsequent builder. Design-only sessions (no builder
+    #     after the architect) are exempt — the human may be the next reader.
+    if ("architect" in roles and "builder" in roles
+            and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text):
+        first_architect = next(
+            i for i, r in enumerate(order) if r == "architect")
+        builders_after = [i for i, r in enumerate(order)
+                         if r == "builder" and i > first_architect]
+        if builders_after:
+            first_builder = builders_after[0]
+            if not any(r == "reviewer"
+                       for r in order[first_architect + 1:first_builder]):
+                problems.append(
+                    "The architect's plan went straight to a builder with no "
+                    "independent critique between them. Dispatch the reviewer "
+                    "in plan-critique mode against the plan before building — "
+                    "or, when the build already happened, against the plan "
+                    "now, and route any findings through a repair loop before "
+                    "closing out.")
+
     # 1b. Independent review after the last code edit (builder work only,
     #     same proportionality floor as check 1). Verification proves the
     #     stated criteria; review is the only check of judgment — spec

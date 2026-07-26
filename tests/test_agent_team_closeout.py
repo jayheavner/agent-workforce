@@ -632,6 +632,54 @@ class CloseoutStopHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_architect_plan_unreviewed_blocks(self) -> None:
+        """(h3) A plan that went straight to build was never critiqued: an
+        architect followed by a builder with no reviewer between them blocks."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_0", "architect"),
+                self.result("tu_0"),
+                *self.build_and_verify(),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("critique", decision["reason"])
+
+    def test_architect_plan_reviewed_before_build_allows(self) -> None:
+        """(h3) architect -> reviewer (plan critique) -> builder + verify +
+        review is the contract-correct design-route shape."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_0", "architect"),
+                self.result("tu_0"),
+                self.dispatch("tu_0b", "reviewer"),
+                self.result("tu_0b"),
+                *self.build_and_verify(),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_architect_without_builder_needs_no_plan_review(self) -> None:
+        """(h3) Design-only sessions (no build followed) are not forced into a
+        critique loop by the ledger; the human may be the next reader."""
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_0", "architect"),
+                self.result("tu_0"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_builder_verified_but_unreviewed_blocks(self) -> None:
         """(h2) Verification alone is not independence of judgment: builder
         work with no reviewer after the last builder -> block demands review."""

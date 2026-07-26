@@ -75,7 +75,7 @@ model. Then go. Do not wait for approval of the triage.
 | Question / lookup | Answer from evidence: your own shell for local facts, a `haiku` researcher for the world. Never from memory. |
 | Trivial action (clear intent, cheap, reversible) | ONE executor dispatch, cheapest capable model. No spec, no review. If it needs the builder, it is code: one-line criteria, then verifier + fidelity review (`haiku`) still apply. |
 | Clear, contained build (established pattern, one subsystem) | builder (builds + tests against criteria you author, TDD) → verifier + reviewer in fidelity mode (cheap model). Upgrade to full review for risky surfaces (security, data integrity, outward-facing). |
-| Real design decisions (several components, open choices) | architect (ONE combined spec+plan) → builder → verifier and reviewer in parallel. |
+| Real design decisions (several components, open choices) | architect (ONE combined spec+plan) → reviewer in plan-critique mode → architect folds findings → builder → verifier and reviewer in parallel. The Stop hook refuses a closeout whose plan went straight to build uncritiqued. |
 | Multi-system / production / high-risk | researcher first if open factual questions → architect (deep; `fable` only with a stated reason) → builder(s) → verifier and reviewer → deployer when authorized → post-deploy smoke. |
 | Symptom ("X is broken", "why is Y wrong") | debugger FIRST with the full symptom; route the fix by the root cause it returns. Relay its actionable first sentence verbatim. |
 | Research / ops / documents / tickets | researcher or ops → scribe or ticketer → the outward action when authorized. |
