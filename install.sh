@@ -147,6 +147,9 @@ bash -n "$REPO/hooks/agent-team-dispatch-guard.sh" || fail "dispatch guard faile
 bash -n "$REPO/hooks/agent-team-interrupt-guard.sh" || fail "interrupt guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-report-guard.sh" ] || fail "hooks/agent-team-report-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-report-guard.sh" || fail "report guard failed bash -n"
+[ -f "$REPO/tools/lint_acceptance_checks.py" ] || fail "tools/lint_acceptance_checks.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/tools/lint_acceptance_checks.py" || fail "acceptance-check lint failed Python syntax validation"
 [ -f "$REPO/hooks/agent-team-plugin-router.sh" ] || fail "hooks/agent-team-plugin-router.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed bash -n"
 [ -f "$REPO/hooks/agent_team_closeout.py" ] || fail "hooks/agent_team_closeout.py is missing from repo"
@@ -411,6 +414,7 @@ PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
 PREEXISTING_IGUARD=0
 PREEXISTING_RGUARD=0
+PREEXISTING_LINT=0
 PREEXISTING_DEFAULTS=0
 PREEXISTING_CLOSEOUT=0
 PREEXISTING_COSTREPORT=0
@@ -420,6 +424,7 @@ PREEXISTING_BUDGETS=0
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-interrupt-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-interrupt-guard.sh" "$BACKUP/"; PREEXISTING_IGUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-report-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-report-guard.sh" "$BACKUP/"; PREEXISTING_RGUARD=1; }
+[ -f "$HOOKS_DIR/lint_acceptance_checks.py" ] && { cp "$HOOKS_DIR/lint_acceptance_checks.py" "$BACKUP/"; PREEXISTING_LINT=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
 [ -f "$HOOKS_DIR/cost_report.py" ] && { cp "$HOOKS_DIR/cost_report.py" "$BACKUP/"; PREEXISTING_COSTREPORT=1; }
@@ -479,6 +484,7 @@ restore() {
       agent-team-dispatch-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-interrupt-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-report-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      lint_acceptance_checks.py) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-process-assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
@@ -525,6 +531,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_GUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-guard.sh"
   [ "$PREEXISTING_IGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-interrupt-guard.sh"
   [ "$PREEXISTING_RGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-report-guard.sh"
+  [ "$PREEXISTING_LINT" -eq 0 ] && rm -f "$HOOKS_DIR/lint_acceptance_checks.py"
   [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
   [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
   [ "$PREEXISTING_COSTREPORT" -eq 0 ] && rm -f "$HOOKS_DIR/cost_report.py"
@@ -554,6 +561,7 @@ if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup
 if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/cost_report.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost report tool copy failed; rolled back"; fi
 if ! cp "$REPO/tools/auto-approve-safe-deletes.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "delete guard copy failed; rolled back"; fi
+if ! cp "$REPO/tools/lint_acceptance_checks.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "acceptance-check lint copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch budgets copy failed; rolled back"; fi

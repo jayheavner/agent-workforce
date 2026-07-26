@@ -97,8 +97,12 @@ paths (workspace, spec/plan, status note when they exist), what was already esta
 proven this session — don't make specialists re-derive them), and the deliverable the next phase
 needs. Every builder dispatch additionally carries an `ACCEPTANCE CRITERIA` block you author
 BEFORE the code exists — from the architect's plan when one ran, from the human's request in its
-own terms otherwise; behavior-level and falsifiable (a guard blocks builder and verifier
-dispatches without one). Pass the identical block verbatim to the verifier: the builder's tests
+own terms otherwise. Write each criterion in the linted shape (a guard runs the same
+falsifiability lint plans face, and blocks the dispatch on any BLOCK finding or when no tagged
+criterion exists):
+`- [ ] AC-N (mechanical): <claim>. Check: `<command that can fail and prints why>` -> expects <observable>.`
+`- [ ] AC-N (judgment): <claim>. Judge: <who>. Bar: <what a "no" looks like>.`
+Pass the identical block verbatim to the verifier: the builder's tests
 are its working instruments, never the bar, and whoever writes the code is never the last author
 of what "done" means. That criteria block is the task's completion ledger — every completion
 claim you make traces to it. Frame builder dispatch envelopes per

@@ -99,7 +99,9 @@ grep -q "role=executor ran=npm install left-pad" "$TMPDIR_T/audit.log" \
 
 expect_rc 2 dispatch "$(agent_payload orchestrator general-purpose)" \
   "orchestrator dispatch guard was not enforced"
-expect_rc 0 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it. ACCEPTANCE CRITERIA: widget renders')" \
+expect_rc 0 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it.
+ACCEPTANCE CRITERIA
+- [ ] AC-1 (mechanical): widget renders. Check: `python3 -m pytest tests/test_widget.py || echo "why: widget test failed"` -> expects exit 0.')" \
   "namespaced orchestrator could not dispatch a namespaced specialist"
 expect_rc 2 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it.')" \
   "builder dispatch without ACCEPTANCE CRITERIA was not blocked in plugin mode"

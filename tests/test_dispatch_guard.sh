@@ -77,20 +77,37 @@ for a in architect debugger reviewer deployer executor researcher ops scribe tic
   expect_allow "$(agent_json "agent-workforce:$a")" "valid plugin namespace: $a allows"
 done
 
-# Criteria-before-code: a builder or verifier dispatch must carry the literal
-# ACCEPTANCE CRITERIA marker — the bar is authored upstream of the code, so the
-# builder is never the last author of what "done" means.
+# Criteria-before-code: a builder or verifier dispatch must carry an
+# ACCEPTANCE CRITERIA block authored upstream of the code, and the block must
+# survive the same falsifiability lint plans are held to
+# (tools/lint_acceptance_checks.py): at least one tagged criterion, no BLOCK
+# findings. A string match alone is a checkbox; the lint is the floor.
+GOOD_CRITERIA='Implement the widget.
+ACCEPTANCE CRITERIA
+- [ ] AC-1 (mechanical): slugify("A  B") returns "a-b". Check: `python3 -c "from slug import slugify; import sys; sys.exit(0 if slugify(chr(65)+chr(32)+chr(66))==chr(97)+chr(45)+chr(98) else 1)" || echo "why: wrong slug"` -> expects exit 0.
+- [ ] AC-2 (judgment): error messages are actionable. Judge: reviewer. Bar: a bare stack trace with no next step is a fail.'
+
 expect_block "$(agent_json builder)" "builder without prompt blocks (no criteria)"
 expect_block "$(agent_json_p builder 'implement the widget, TDD')" "builder prompt without criteria blocks"
 expect_block "$(agent_json verifier)" "verifier without prompt blocks (no criteria)"
 expect_block "$(agent_json_p verifier 'run the suite')" "verifier prompt without criteria blocks"
-expect_allow "$(agent_json_p builder 'Implement the widget.
-ACCEPTANCE CRITERIA
-- widget renders')" "builder with ACCEPTANCE CRITERIA allows"
-expect_allow "$(agent_json_p verifier 'ACCEPTANCE CRITERIA
-- widget renders')" "verifier with ACCEPTANCE CRITERIA allows"
-expect_allow "$(agent_json_p 'agent-workforce:builder' 'ACCEPTANCE CRITERIA: x')" "plugin-namespace builder with criteria allows"
+expect_allow "$(agent_json_p builder "$GOOD_CRITERIA")" "builder with lint-clean tagged criteria allows"
+expect_allow "$(agent_json_p verifier "$GOOD_CRITERIA")" "verifier with lint-clean tagged criteria allows"
+expect_allow "$(agent_json_p 'agent-workforce:builder' "$GOOD_CRITERIA")" "plugin-namespace builder with criteria allows"
 expect_block "$(agent_json_p 'agent-workforce:builder' 'do it')" "plugin-namespace builder without criteria blocks"
+
+# Quality floor: the marker alone is no longer enough.
+expect_block "$(agent_json_p builder 'Build it.
+ACCEPTANCE CRITERIA: do the task well')" "vacuous criteria line blocks (no tagged criterion)"
+expect_block "$(agent_json_p builder 'Build it.
+ACCEPTANCE CRITERIA
+- [ ] AC-1 (mechanical): it works. Check: `echo ok` -> expects ok.')" "tautological check blocks"
+expect_block "$(agent_json_p builder 'Build it.
+ACCEPTANCE CRITERIA
+- [ ] AC-1 (mechanical): file present. Check: `test -f slug.py` -> expects exit 0.')" "silent existence probe blocks"
+expect_allow "$(agent_json_p builder 'Build it.
+ACCEPTANCE CRITERIA
+- [ ] AC-1 (mechanical): file present. Check: `test -f slug.py || echo "why: slug.py missing"` -> expects exit 0.')" "same probe with failure output allows"
 
 # Missing / empty / harness-default / unknown all block.
 expect_block "$(jq -cn '{tool_name:"Agent",tool_input:{description:"do a thing"}}')" "missing subagent_type blocks"

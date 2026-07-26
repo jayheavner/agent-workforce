@@ -78,14 +78,45 @@ fi
 # verifier dispatches must carry an ACCEPTANCE CRITERIA block, authored by the
 # orchestrator from the plan or the original request — the builder's own tests
 # are never the definition of done, and the verifier judges the same criteria
-# the builder was given, verbatim.
+# the builder was given, verbatim. The block is held to the SAME
+# falsifiability lint plans are held to (lint_acceptance_checks.py): at least
+# one tagged criterion, zero BLOCK findings. Marker presence alone is a
+# checkbox and does not pass.
+CRITERIA_SHAPE='  - [ ] AC-N (mechanical): <claim>. Check: `<command that can fail and prints why>` -> expects <observable>.
+  - [ ] AC-N (judgment): <claim>. Judge: <who>. Bar: <what a "no" looks like>.'
 case "$TYPE" in
   builder|verifier)
     PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
     case "$PROMPT" in
       *"ACCEPTANCE CRITERIA"*) : ;;
       *)
-        printf 'agent-team dispatch guard: a %s dispatch must carry an "ACCEPTANCE CRITERIA" block. Author the criteria BEFORE the code exists — from the architect plan when one ran, from the original request otherwise; behavior-level and falsifiable — and pass the identical block to both the builder and the verifier. The builder'"'"'s own tests are scaffolding for its red/green loop, never the bar. Re-issue this dispatch with the criteria included.\n' "$TYPE" >&2
+        printf 'agent-team dispatch guard: a %s dispatch must carry an "ACCEPTANCE CRITERIA" block. Author the criteria BEFORE the code exists — from the architect plan when one ran, from the original request otherwise — and pass the identical block to both the builder and the verifier. The builder'"'"'s own tests are scaffolding for its red/green loop, never the bar. Criterion shape:\n%s\nRe-issue this dispatch with the criteria included.\n' "$TYPE" "$CRITERIA_SHAPE" >&2
+        exit 2
+        ;;
+    esac
+    # Falsifiability lint. Installed: ships beside this guard in the hooks
+    # dir. Repo checkout: lives in the sibling tools/ dir. Its absence means
+    # a broken install and this guard fails closed rather than degrading to a
+    # string match.
+    GUARD_DIR="$(cd "$(dirname "$0")" && pwd)"
+    LINT="$GUARD_DIR/lint_acceptance_checks.py"
+    [ -f "$LINT" ] || LINT="$GUARD_DIR/../tools/lint_acceptance_checks.py"
+    if [ ! -f "$LINT" ]; then
+      printf 'agent-team dispatch guard: lint_acceptance_checks.py is missing beside this guard — the install is incomplete, so criteria quality cannot be verified. Blocking rather than failing open; run bash install.sh from the workforce repo.\n' >&2
+      exit 2
+    fi
+    CRITERIA_FILE="$(mktemp "${TMPDIR:-/tmp}/dispatch-criteria.XXXXXX")"
+    printf '%s\n' "$PROMPT" | sed -n '/ACCEPTANCE CRITERIA/,$p' > "$CRITERIA_FILE"
+    LINT_OUT="$(python3 "$LINT" "$CRITERIA_FILE" 2>&1)"
+    LINT_RC=$?
+    rm -f "$CRITERIA_FILE"
+    if [ "$LINT_RC" -eq 1 ]; then
+      printf 'agent-team dispatch guard: the ACCEPTANCE CRITERIA block in this %s dispatch failed the falsifiability lint:\n%s\nFix the flagged criteria (each finding names the repair) and re-issue the dispatch.\n' "$TYPE" "$LINT_OUT" >&2
+      exit 2
+    fi
+    case "$LINT_OUT" in
+      *"no tagged acceptance criteria found"*)
+        printf 'agent-team dispatch guard: the ACCEPTANCE CRITERIA block in this %s dispatch contains no tagged criterion, so nothing in it is checkable. Write at least one criterion in the shape:\n%s\nRe-issue the dispatch with real criteria.\n' "$TYPE" "$CRITERIA_SHAPE" >&2
         exit 2
         ;;
     esac

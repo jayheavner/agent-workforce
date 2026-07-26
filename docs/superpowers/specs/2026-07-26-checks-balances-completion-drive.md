@@ -161,14 +161,16 @@ existing `WORKFORCE_PROFILE` final line.
 
 ## Designed limitations (stated, not hidden)
 
-- **Presence, not quality.** The guards mechanize that the checks RUN — a
-  criteria block exists, a verifier and reviewer follow the last builder, a
-  report ended on purpose. No hook can judge whether criteria are meaningful
-  or a review is rigorous; that judgment lives in the reviewer's fidelity
-  mode (which checks against the original request, independent of criteria
-  quality) and ultimately the human. A vacuous ACCEPTANCE CRITERIA line
-  satisfies the guard; the rote-receipts failure (2026-07-17) says any
-  attempt to schema-check quality would make this worse, not better.
+- **Criteria quality is mechanized to the falsifiability floor, no further.**
+  The dispatch guard runs `lint_acceptance_checks.py` (the same lint plan
+  criteria face) over the block: at least one tagged criterion required, any
+  BLOCK finding (missing Check, tautological check, silent probe) blocks the
+  dispatch. A vacuous "do the task" line therefore does NOT pass. What no
+  hook can judge is semantic adequacy — whether formally-valid criteria
+  actually cover the request; that lives in the reviewer's fidelity mode
+  (which compares delivered work to the original request, independent of the
+  criteria) and ultimately the human. Review rigor itself is likewise
+  contract, not mechanism.
 - **Async dispatches — mechanical at the source.** The PostToolUse guard sees
   sync results only; a background dispatch's completion arrives as a
   task-notification no hook inspects. Closed by `agent-team-report-guard.sh`:
