@@ -48,8 +48,16 @@ exit 0
 EOF
 chmod +x "$TMP/bin/claude"
 
+# HOME is sandboxed for every launcher invocation: install.sh writes hooks to
+# $HOME/.claude/hooks and the command shim to $HOME/.local/bin, so an
+# un-sandboxed run clobbers the REAL user's shim with this test's temp
+# checkout path (live incident 2026-07-26: `agent-workforce` on PATH exec'd a
+# deleted /var/folders/... checkout).
+SANDBOX_HOME="$TMP/home"
+mkdir -p "$SANDBOX_HOME"
 run_launcher() { # $1 checkout dir, $2 profile dir, $3 log label
   CLAUDE_STUB_LOG="$TMP/$3.log" \
+  HOME="$SANDBOX_HOME" \
   CLAUDE_CONFIG_DIR="$2" \
   PATH="$TMP/bin:$PATH" \
   bash "$1/bin/agent-workforce" 2> "$TMP/$3.stderr"
@@ -114,9 +122,25 @@ grep -q "claude-stub" "$TMP/c.log" \
   && pass "launch proceeded despite unreachable origin" \
   || fail "launch proceeded despite unreachable origin"
 
+# Isolation proof: every write the launcher's install made landed in the
+# sandbox HOME, and any shim it planted points inside this test's TMP —
+# never at the real user's checkout or home.
+[ -f "$SANDBOX_HOME/.local/bin/agent-workforce" ] \
+  && pass "shim installed into the sandbox HOME" \
+  || fail "shim installed into the sandbox HOME"
+# Match on the unique mktemp basename: the full $TMP string is unreliable in
+# a containment grep (macOS TMPDIR ends in "/" so $TMP carries a double
+# slash, and /var vs /private/var differ by resolution).
+if [ -f "$SANDBOX_HOME/.local/bin/agent-workforce" ] \
+   && ! grep -q "$(basename "$TMP")" "$SANDBOX_HOME/.local/bin/agent-workforce"; then
+  fail "sandbox shim does not point into the test checkout — content: $(tail -1 "$SANDBOX_HOME/.local/bin/agent-workforce")"
+else
+  pass "sandbox shim points into the test checkout"
+fi
+
 # --- (d) --no-install skips the origin check entirely ------------------------
 if CLAUDE_STUB_LOG="$TMP/d.log" CLAUDE_CONFIG_DIR="$TMP/profile-d" \
-   PATH="$TMP/bin:$PATH" \
+   PATH="$TMP/bin:$PATH" HOME="$SANDBOX_HOME" \
    bash "$TMP/checkout/bin/agent-workforce" --no-install 2> "$TMP/d.stderr"; then
   pass "--no-install launch exits 0"
 else
