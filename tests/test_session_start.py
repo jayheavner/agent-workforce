@@ -61,6 +61,186 @@ class SessionStartHookTest(unittest.TestCase):
         self.git(repo, "commit", "-qm", "seed")
         return repo
 
+    # --- reconcile (dead-orchestrator detection, issue #8) ----------------
+
+    def write_jsonl(self, path: Path, records: list) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+    def dispatch_rec(self, role: str = "builder", tid: str = "t1") -> dict:
+        return {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Agent", "id": tid,
+             "input": {"subagent_type": role}}]}}
+
+    def tool_result_rec(self, tid: str = "t1") -> dict:
+        return {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": tid, "content": "done"}]}}
+
+    def assistant_text_rec(self, text: str) -> dict:
+        return {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": text}]}}
+
+    def txdir(self) -> Path:
+        d = self.root / "transcripts"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def with_transcript(self, transcript: Path) -> str:
+        return json.dumps({"cwd": str(self.root),
+                           "transcript_path": str(transcript)})
+
+    def test_reconcile_dead_session_warns(self) -> None:
+        d = self.txdir()
+        dead = d / "dead.jsonl"
+        self.write_jsonl(dead, [
+            self.dispatch_rec("builder", "t1"),
+            self.tool_result_rec("t1"),
+            self.assistant_text_rec(
+                "Now the cost report. Locating my transcript to run the "
+                "reporter."),
+            {"type": "assistant", "isApiErrorMessage": True,
+             "message": {"content": [{"type": "text", "text":
+                "API Error: Connection closed mid-response."}]}},
+        ])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(dead, (1000, 1000))
+        os.utime(current, (2000, 2000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertIn("reconcile:", ctx)
+        self.assertIn("dead.jsonl", ctx)
+        self.assertIn("died mid-closeout", ctx)
+
+    def test_reconcile_paused_session_no_warn(self) -> None:
+        d = self.txdir()
+        prior = d / "paused.jsonl"
+        self.write_jsonl(prior, [
+            self.dispatch_rec("architect", "t1"),
+            self.tool_result_rec("t1"),
+            self.assistant_text_rec(
+                "Design done. WORKFORCE_PAUSE: HUMAN_DECISION — awaiting gate."),
+        ])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(prior, (1000, 1000)); os.utime(current, (2000, 2000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertNotIn("reconcile:", ctx)
+
+    def test_reconcile_no_dispatch_session_no_warn(self) -> None:
+        d = self.txdir()
+        prior = d / "chat.jsonl"
+        self.write_jsonl(prior, [
+            self.assistant_text_rec("Just a conversation, no dispatches.")])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(prior, (1000, 1000)); os.utime(current, (2000, 2000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertNotIn("reconcile:", ctx)
+
+    def test_reconcile_completed_closeout_no_warn(self) -> None:
+        d = self.txdir()
+        prior = d / "done.jsonl"
+        self.write_jsonl(prior, [
+            self.dispatch_rec("builder", "t1"),
+            self.tool_result_rec("t1"),
+            self.assistant_text_rec(
+                "All shipped.\n\n## Cost report\n| total | $1.23 |"),
+        ])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(prior, (1000, 1000)); os.utime(current, (2000, 2000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertNotIn("reconcile:", ctx)
+
+    def test_reconcile_current_session_not_flagged(self) -> None:
+        d = self.txdir()
+        current = d / "current.jsonl"
+        self.write_jsonl(current, [
+            self.dispatch_rec("builder", "t1"),
+            self.tool_result_rec("t1"),
+            self.assistant_text_rec("Working... no closeout yet."),
+        ])
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertNotIn("reconcile:", ctx)
+
+    def test_reconcile_missing_transcript_path_no_warn(self) -> None:
+        ctx = self.context(self.run_hook(self.root))
+        self.assertNotIn("reconcile:", ctx)
+
+    def test_reconcile_garbage_prior_fails_open(self) -> None:
+        d = self.txdir()
+        prior = d / "garbage.jsonl"
+        prior.write_text("not json\n\x00 broken line\n", encoding="latin-1")
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(prior, (1000, 1000)); os.utime(current, (2000, 2000))
+        result = self.run_hook(self.root, raw=self.with_transcript(current))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("reconcile:", self.context(result))
+
+    def test_reconcile_recent_clean_masks_older_dead(self) -> None:
+        d = self.txdir()
+        dead = d / "dead.jsonl"
+        self.write_jsonl(dead, [
+            self.dispatch_rec("builder", "t1"),
+            self.tool_result_rec("t1"),
+            self.assistant_text_rec("No closeout — I died."),
+        ])
+        clean = d / "clean.jsonl"
+        self.write_jsonl(clean, [
+            self.assistant_text_rec("Quick chat, nothing dispatched.")])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(dead, (1000, 1000)); os.utime(clean, (2000, 2000))
+        os.utime(current, (3000, 3000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertNotIn("reconcile:", ctx)
+
+    # --- added 2026-07-26 (plan-critique SHIP-WITH-FIXES, AC9/AC10) -------
+
+    def test_reconcile_dead_newest_among_several_warns(self) -> None:
+        d = self.txdir()
+        older_clean = d / "older_clean.jsonl"
+        self.write_jsonl(older_clean, [
+            self.assistant_text_rec("Quick chat, nothing dispatched.")])
+        newest_dead = d / "newest_dead.jsonl"
+        self.write_jsonl(newest_dead, [
+            self.dispatch_rec("builder", "t1"),
+            self.tool_result_rec("t1"),
+            self.assistant_text_rec("No closeout — I died too."),
+        ])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(older_clean, (1000, 1000))
+        os.utime(newest_dead, (2000, 2000))
+        os.utime(current, (3000, 3000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertIn("reconcile:", ctx)
+        self.assertIn("newest_dead.jsonl", ctx)
+
+    def test_reconcile_empty_last_text_death_warns(self) -> None:
+        d = self.txdir()
+        dead = d / "silent_death.jsonl"
+        self.write_jsonl(dead, [
+            self.dispatch_rec("builder", "t1"),
+            self.tool_result_rec("t1"),
+        ])
+        current = d / "current.jsonl"
+        current.write_text("", encoding="utf-8")
+        os.utime(dead, (1000, 1000)); os.utime(current, (2000, 2000))
+        ctx = self.context(self.run_hook(self.root,
+                                         raw=self.with_transcript(current)))
+        self.assertIn("reconcile:", ctx)
+        self.assertIn("silent_death.jsonl", ctx)
+
     # --- resilience -------------------------------------------------------
 
     def test_garbage_stdin_allows(self) -> None:
