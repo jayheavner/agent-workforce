@@ -213,6 +213,31 @@ hide." Mapping and enforcement:
 - **A killed agent fires no hooks of its own.** Marker absence is detectable
   wherever the result text lands, but nothing runs *at* the moment of a
   turn-cap death; detection is always at the consumption point.
+- **A dead orchestrator is caught at the next start, not in real time
+  (2026-07-26, issue #8).** The killed-agent limitation above has a partial
+  close for the orchestrator itself: `session_start.py` (`reconcile_lines`)
+  reads the single most-recent prior session transcript for the project and,
+  when it shows specialist dispatches (`total > 0`) but its final message
+  carries neither the closeout cost marker nor `WORKFORCE_PAUSE`, surfaces a
+  `reconcile:` warning at the next launch. What this closes: a headless
+  orchestrator that dies mid-closeout (e.g. `claude -p` exiting 0 on
+  "Connection closed mid-response" after deliverables land but before the cost
+  table prints) is no longer silent — the next session names it. What remains,
+  stated plainly: (a) detection is deferred to the next session start, never
+  real-time — nothing runs at the moment of death; (b) only the final report
+  and telemetry are recoverable after the fact — the already-committed
+  deliverables were never at risk, but any uncommitted tail dies with the
+  process; (c) discovery inspects only the single most-recent prior transcript,
+  so a plain session started before anyone reconciles will mask an older dead
+  one — the deliberate trade that keeps the warning from nagging on every
+  subsequent start forever; (d) the signal is a STATE, not a cause — any
+  specialist-dispatching session that ends without a cost report or a pause
+  trips it, which includes an enforcement-cap allow, a stale-read allow, and
+  an operator closing an interactive session before the forced closeout, not
+  only a genuine mid-process death. This is intentional: the state (no
+  reconciled cost report) is what `scan_transcript` can actually detect; the
+  cause is not, so the warning names the state and leaves the cause to the
+  operator's inspection.
 
 ## Corrections to prior records
 
