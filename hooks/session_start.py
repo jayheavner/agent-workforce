@@ -33,6 +33,8 @@ import sys
 FETCH_TIMEOUT = int(os.environ.get("WORKFORCE_FETCH_TIMEOUT", "20"))
 CHECK_TIMEOUT = int(os.environ.get("WORKFORCE_READY_CHECK_TIMEOUT", "15"))
 PROJECT_FILE = os.path.join(".workforce", "project.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAUSE_MARKER = "WORKFORCE_PAUSE: HUMAN_DECISION"
 
 
 def run(cmd, cwd, timeout, env=None):
@@ -198,6 +200,80 @@ def probe_lines(cwd):
     return lines
 
 
+def reconcile_lines(payload):
+    """Catch an orchestrator that died mid-closeout, at the NEXT start.
+
+    Why it exists: a headless `claude -p` orchestrator that dies after
+    deliverables commit but before the closeout cost table prints still
+    exits 0, and a killed process fires no Stop hook — so
+    agent_team_closeout never grades the truncated final message and the
+    death is silent (issue #8, observed live 2026-07-26). Detection must
+    live at a consumption point that survives the death: the next session's
+    start.
+
+    Discovery: the current session's transcript_path names the per-project
+    transcript directory; prior sessions are its sibling *.jsonl files.
+    Inspect ONLY the single most-recent prior (highest mtime, excluding the
+    current transcript by absolute path) — bounded to one extra scan and
+    self-clearing, so the warning never nags across unrelated later
+    sessions (a later plain session masking an older dead one is the
+    accepted trade).
+
+    Predicate (all must hold to warn): the prior had specialist dispatches
+    (total > 0) AND its final message carries neither COST_MARKER (a normal
+    closeout) NOR PAUSE_MARKER (an intentional human-decision pause).
+
+    :param payload: the SessionStart hook payload dict; uses
+        transcript_path.
+    :returns: a one-element list with the operator warning, or [] when
+        there is nothing to reconcile.
+    :raises: nothing — every failure path returns [] (main() also
+        try/excepts this call).
+    """
+    if not isinstance(payload, dict):
+        return []
+    transcript = payload.get("transcript_path")
+    if not isinstance(transcript, str) or not transcript:
+        return []
+    tdir = os.path.dirname(transcript)
+    if not os.path.isdir(tdir):
+        return []
+    current = os.path.abspath(transcript)
+    priors = []
+    for name in os.listdir(tdir):
+        if not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(tdir, name)
+        if os.path.abspath(path) == current:
+            continue
+        try:
+            priors.append((os.path.getmtime(path), path))
+        except OSError:
+            continue
+    if not priors:
+        return []
+    priors.sort()
+    prior = priors[-1][1]
+    sys.path.insert(0, HERE)
+    from agent_team_closeout import scan_transcript, COST_MARKER
+    total, _in_flight, _roles, _order, last_text = scan_transcript(prior)
+    if total == 0:
+        return []
+    if COST_MARKER in last_text or PAUSE_MARKER in last_text:
+        return []
+    name = os.path.basename(prior)
+    return ["reconcile: prior session " + name + " dispatched specialists "
+            "but ended without a closeout cost report or a "
+            "WORKFORCE_PAUSE. It may have died mid-closeout (e.g. a "
+            "headless run whose connection dropped after deliverables "
+            "committed but before the cost table printed), been "
+            "interrupted/closed by the operator, or been allowed to stop "
+            "at the enforcement cap. Committed deliverables are "
+            "unaffected; the final report/telemetry for this session may "
+            "be missing. Inspect " + prior + " — recover the numbers with "
+            "`bin/agent-workforce-cost-report --transcript " + prior + "`."]
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -208,6 +284,10 @@ def main():
     lines = []
     try:
         lines.extend(launch_mode_lines())
+    except Exception:
+        pass
+    try:
+        lines.extend(reconcile_lines(payload))
     except Exception:
         pass
     try:
