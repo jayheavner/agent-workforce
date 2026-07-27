@@ -59,8 +59,9 @@ visible to hook subprocesses.
 | architect | opus-4-8 | high | Specs, plans; drafts new skills/agents for team growth | Docs + provisional skills/agents |
 | builder | sonnet-5 | high | TDD implementation, direct or from a plan | Code + local git; no deploy, no push to main |
 | debugger | sonnet-5 | high | Root-cause diagnosis with evidence | None (read + run) |
-| verifier | sonnet-5 | — | Tests + acceptance evidence | None (read + run) |
-| reviewer | opus-4-8 | high | Code/security review; plan + spec critique | None (read only) |
+| verifier | sonnet-5 | — | Runs the given criteria AND independently tries to break them | None (read + run) |
+| reviewer | opus-4-8 | high | Code/security review; fidelity (delivered vs requested), plan + spec critique | None (read only) |
+| test-author | sonnet-5 | high | Acceptance suite from a reviewed plan, before the builder; red-proven | Test files + local git only |
 | deployer | sonnet-5 | medium | Cloud deploys with rollback discipline | Deploys within authorization |
 | executor | sonnet-5 | — | Authorized shell work; commit finalizer | Within dispatched intent |
 | researcher | sonnet-5 | — | Web/Glean/codebase facts with citations | None |
@@ -78,10 +79,10 @@ Model pins live in frontmatter and `hooks/agent-model-defaults.json` (drift-test
 | Shape | Route |
 |---|---|
 | Question / lookup | Evidence, never memory — own shell or a `haiku` researcher |
-| Trivial action | ONE dispatch |
-| Clear, contained build | builder → verifier (+ reviewer only for risky surfaces) |
-| Real design decisions | architect (one combined spec+plan) → builder → verifier ∥ reviewer |
-| Multi-system / production | researcher → architect deep → builder(s) → verifier ∥ reviewer → deployer → smoke |
+| Trivial action | ONE executor dispatch; if it needs the builder it is code and the full builder chain applies |
+| Clear, contained build | orchestrator authors lint-clean acceptance criteria → builder → verifier ∥ reviewer (fidelity mode; full review for risky surfaces) |
+| Real design decisions | architect (one combined spec+plan) → reviewer plan-critique → architect folds findings → test-author (red acceptance suite) → builder (makes it pass; never edits it) → verifier ∥ reviewer |
+| Multi-system / production | researcher → architect deep → same critique/test-author/build chain → deployer → smoke |
 | Symptom ("X broken") | debugger first, fix routed by root cause |
 | Research / ops / docs / tickets | specialist → artifact → authorized outward action |
 
@@ -95,9 +96,11 @@ is decided and disclosed at closeout.
 |---|---|---|
 | Secrets guard | `hooks/agent-team-secrets.sh` | Blocks credential values being written to files (the one blocking safety rule) |
 | Audit log | `hooks/agent-team-audit.sh` | One line per shell command per role → `~/.claude/logs/agent-team-audit.log` |
-| Dispatch guard | `hooks/agent-team-dispatch-guard.sh` | Valid `subagent_type` only; serializes git-mutating dispatches; every 10th dispatch requires a budget acknowledgment (the $51 stop-loss) |
+| Dispatch guard | `hooks/agent-team-dispatch-guard.sh` | Valid `subagent_type` only; builder/verifier/test-author dispatches must carry an ACCEPTANCE CRITERIA block that survives the falsifiability lint (`lint_acceptance_checks.py` — a vacuous line blocks); serializes git-mutating dispatches; every 10th dispatch requires a budget acknowledgment (the $51 stop-loss) |
+| Report guard | `hooks/agent-team-report-guard.sh` | Stop/SubagentStop on every specialist: blocks the specialist from finishing until its report ends with `WORKFORCE_REPORT: <role> \| complete\|partial\|blocked` — covers sync and background dispatches at the source; never blocks twice |
+| Interrupt guard | `hooks/agent-team-interrupt-guard.sh` | PostToolUse(Agent) on the orchestrator: a sync result with no report marker = a killed agent → reconcile-and-RESUME protocol, never a completed phase (Codex path: dispatcher exits 3 on the same signal) |
 | Cost collection | `hooks/agent-team-cost.sh` | Exact per-dispatch token/cost file per session (PostToolUse) |
-| Priced closeout | `hooks/agent_team_closeout.py` | Stop hook: computes the whole-session cost report and blocks the final message until it is included; requires dirty-tree honesty; enforces the delivery ledger (verifier after last builder, claimed commits exist, claimed status notes exist, "deployed" needs a deployer) — every check verified against transcript/git/filesystem, never self-reported; bounded at 3 blocks (never wedges); writes telemetry mechanically |
+| Priced closeout | `hooks/agent_team_closeout.py` | Stop hook: computes the whole-session cost report and blocks the final message until it is included; requires dirty-tree honesty; enforces the delivery ledger (plan critique between architect and builder, test-author before the first builder on design routes, verifier AND reviewer after the last builder, claimed commits exist, claimed status notes exist, "deployed" needs a deployer) — every check verified against transcript/git/filesystem, never self-reported; bounded at 3 blocks (never wedges); writes telemetry mechanically |
 | Cost report | `bin/agent-workforce-cost-report` | Prints the exact session table on demand — **including the orchestrator's own usage** |
 | Session grounding | `hooks/session_start.py` | SessionStart: fetches origin and injects ahead/behind as fact; reads `.workforce/project.json` (tracker declaration + tool ready-checks) and injects named OK/FAIL results — no agent reasons from a stale checkout or guesses at tooling |
 | Launcher self-update | `bin/agent-workforce` | Checks origin before launch, fast-forwards a clean checkout, records any remaining deficit for the cost report to stamp (a stale clone can no longer self-certify as fresh) |
