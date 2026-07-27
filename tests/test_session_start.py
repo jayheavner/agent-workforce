@@ -28,6 +28,7 @@ class SessionStartHookTest(unittest.TestCase):
         self.env = dict(os.environ)
         self.env["WORKFORCE_FETCH_TIMEOUT"] = "10"
         self.env["WORKFORCE_READY_CHECK_TIMEOUT"] = "5"
+        self.env.pop("WORKFORCE_LAUNCH_MODE", None)
 
     def run_hook(self, cwd: Path, raw: str | None = None):
         payload = raw if raw is not None else json.dumps({"cwd": str(cwd)})
@@ -73,6 +74,32 @@ class SessionStartHookTest(unittest.TestCase):
         self.assertIn("UNDECLARED", ctx)
         self.assertIn("/onboard-project", ctx)
         self.assertNotIn("git sync", ctx)
+
+    # --- launch-mode tripwire ---------------------------------------------
+
+    def test_direct_launch_without_launcher_warns_loudly(self) -> None:
+        plain = self.root / "direct"
+        plain.mkdir()
+        ctx = self.context(self.run_hook(plain))
+        self.assertIn("DEGRADED", ctx)
+        self.assertIn("bin/agent-workforce", ctx)
+        self.assertIn("permission prompts", ctx)
+
+    def test_snapshot_launch_via_launcher_stays_silent(self) -> None:
+        plain = self.root / "snap"
+        plain.mkdir()
+        self.env["WORKFORCE_LAUNCH_MODE"] = "snapshot"
+        ctx = self.context(self.run_hook(plain))
+        self.assertNotIn("DEGRADED", ctx)
+
+    def test_plugin_launch_notes_expected_prompts(self) -> None:
+        plain = self.root / "plug"
+        plain.mkdir()
+        self.env["WORKFORCE_LAUNCH_MODE"] = "plugin"
+        ctx = self.context(self.run_hook(plain))
+        self.assertNotIn("DEGRADED", ctx)
+        self.assertIn("plugin mode", ctx)
+        self.assertIn("permission prompts", ctx)
 
     # --- git sync ---------------------------------------------------------
 

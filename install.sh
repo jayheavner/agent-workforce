@@ -677,6 +677,28 @@ else
   warn "settings.json at $CLAUDE_DIR has an unexpected shape — delete-guard wiring NOT merged; fix the file and re-run install"
 fi
 
+# --- command shim: one obvious command from anywhere -----------------------
+# 2026-07-26 (Jay, test machine): `claude --agent orchestrator` looks
+# equivalent to the launcher but silently drops --permission-mode
+# bypassPermissions and the freshness pass — and both the README and this
+# installer's old closing message taught exactly that command. The fix is to
+# make the right way the easy way: ship an `agent-workforce` command onto
+# PATH that execs this repo's launcher. Shim failure warns, never fails the
+# install — the repo launcher always remains the fallback.
+SHIM_DIR="$HOME/.local/bin"
+SHIM="$SHIM_DIR/agent-workforce"
+if mkdir -p "$SHIM_DIR" 2>/dev/null \
+   && printf '#!/usr/bin/env bash\n# Installed by agent-workforce install.sh — always exec the repo launcher,\n# which self-updates and freshens the profile before starting the team.\nexec "%s/bin/agent-workforce" "$@"\n' "$REPO" > "$SHIM" 2>/dev/null \
+   && chmod +x "$SHIM" 2>/dev/null; then
+  echo "install: command shim installed at $SHIM"
+  case ":$PATH:" in
+    *":$SHIM_DIR:"*) : ;;
+    *) warn "$SHIM_DIR is not on PATH — the 'agent-workforce' command will not resolve until you add: export PATH=\"$SHIM_DIR:\$PATH\"" ;;
+  esac
+else
+  warn "could not install the command shim at $SHIM — start the team with $REPO/bin/agent-workforce instead"
+fi
+
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;
 # a manifest failure does not undo an already-successful install.
@@ -708,8 +730,11 @@ AGENT_COUNT="$(find "$REPO/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr
 SKILL_COUNT="$(find "$REPO/skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l | tr -d ' ')"
 echo "install: OK — $AGENT_COUNT agents + $SKILL_COUNT skills installed into profile $CLAUDE_DIR, policy hook + cost hook installed, build $COMMIT recorded, backup at $BACKUP"
 echo "install: verify any time with: bash install.sh --check --profile \"$CLAUDE_DIR\""
+# Never recommend `claude --agent orchestrator` here: it starts the same
+# orchestrator without bypassPermissions or the freshness check, and a
+# degraded session gives no signal beyond the session-start tripwire.
 if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then
-  echo "install: start the team with: claude --agent orchestrator"
+  echo "install: start the team with: agent-workforce"
 else
-  echo "install: start the team with: CLAUDE_CONFIG_DIR=\"$CLAUDE_DIR\" claude --agent orchestrator"
+  echo "install: start the team with: CLAUDE_CONFIG_DIR=\"$CLAUDE_DIR\" agent-workforce"
 fi

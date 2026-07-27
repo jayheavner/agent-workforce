@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """session_start.py — SessionStart hook: ground the session in verified reality.
 
-Two duties, both fail-open and read-only toward the project tree:
+Three duties, all fail-open and read-only toward the project tree:
+
+0. Launch-mode tripwire: name a session that skipped bin/agent-workforce
+   (see launch_mode_lines) so a degraded start is never silent.
 
 1. Git sync (decision 2026-07-22): fetch origin and report ahead/behind for
    the current branch, so no agent can reason from a stale checkout without
@@ -79,6 +82,29 @@ def git_sync_lines(cwd):
     behind, ahead = (counts.split() + ["0", "0"])[:2]
     return [f"git sync: fetched origin; {branch} is {ahead} ahead / "
             f"{behind} behind {upstream}."]
+
+
+def launch_mode_lines():
+    """Tripwire (decision 2026-07-26): a session must prove it came through
+    bin/agent-workforce. `claude --agent orchestrator` looks identical to a
+    launcher session but silently drops --permission-mode bypassPermissions
+    and the staleness/self-update pass — the operator gets a degraded session
+    with no signal. The launcher exports WORKFORCE_LAUNCH_MODE; its absence
+    IS the signal."""
+    mode = os.environ.get("WORKFORCE_LAUNCH_MODE")
+    if mode == "snapshot":
+        return []
+    if mode == "plugin":
+        return ["launch mode: live plugin mode — per-agent permissionMode is "
+                "not honored; permission prompts are expected. Snapshot mode "
+                "(bin/agent-workforce without --plugin) removes them."]
+    return ["launch mode: DEGRADED — this session was not started through "
+            "bin/agent-workforce (no WORKFORCE_LAUNCH_MODE in the "
+            "environment). Expect permission prompts on every mutation, and "
+            "the profile may be stale: neither bypassPermissions nor the "
+            "freshness check ran. Tell the human now, in your first reply: "
+            "exit and restart with `agent-workforce` (or "
+            "`./bin/agent-workforce` from the repo checkout)."]
 
 
 def load_project(cwd):
@@ -180,6 +206,10 @@ def main():
     cwd = payload.get("cwd") if isinstance(payload, dict) else None
     cwd = cwd or os.getcwd()
     lines = []
+    try:
+        lines.extend(launch_mode_lines())
+    except Exception:
+        pass
     try:
         lines.extend(git_sync_lines(cwd))
     except Exception:

@@ -170,6 +170,23 @@ LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$P
 EXPECTED="$(printf '%s\n' --plugin-dir "$REPO" --agent builder --help)"
 [ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "plugin launcher did not pass plugin directory and user arguments exactly"
 
+# The launcher proves itself to the session it starts: WORKFORCE_LAUNCH_MODE
+# reaches the claude process in both modes, so the session-start tripwire can
+# name a direct `claude --agent orchestrator` start (no marker) as DEGRADED.
+mkdir -p "$TMPDIR_T/env-bin"
+cat > "$TMPDIR_T/env-bin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${WORKFORCE_LAUNCH_MODE:-UNSET}"
+EOF
+chmod +x "$TMPDIR_T/env-bin/claude"
+cp "$TMPDIR_T/fake-bin/jq" "$TMPDIR_T/env-bin/jq"
+LAUNCH_ENV="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/env-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --no-install)"
+[ "$LAUNCH_ENV" = "snapshot" ] && ok || bad "snapshot launch did not export WORKFORCE_LAUNCH_MODE=snapshot"
+LAUNCH_ENV="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/env-bin:$PATH" \
+  bash "$REPO/bin/agent-workforce" --plugin)"
+[ "$LAUNCH_ENV" = "plugin" ] && ok || bad "plugin launch did not export WORKFORCE_LAUNCH_MODE=plugin"
+
 # Hook-health: a broken hook script in the profile is reported on stderr both
 # BEFORE launch and AFTER the session exits (the fullscreen TUI wipes
 # pre-launch output; the post-exit line is the one that stays visible), while

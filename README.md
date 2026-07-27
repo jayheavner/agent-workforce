@@ -12,21 +12,36 @@ autonomy-first redesign) supersedes the process-assurance era; the original team
 
 ## Quick start
 
+First time on a machine:
+
 ```bash
 git clone https://github.com/jayheavner/agent-workforce.git
 cd agent-workforce
-./bin/agent-workforce
+./bin/agent-workforce        # installs the team into your profile, then starts it
 ```
 
-The launcher checks the active profile (`CLAUDE_CONFIG_DIR`, default `~/.claude`) against the
-current checkout and **self-installs when stale** — a stale profile can no longer run quietly,
-which was the previous generation's dominant failure. Then it starts
-`claude --agent orchestrator`. Give it a task; it triages in one paragraph and goes.
+Every time after that, from any directory:
 
 ```bash
-CLAUDE_CONFIG_DIR="$HOME/.claude-work" ./bin/agent-workforce   # another profile
-./bin/agent-workforce --no-install                             # skip freshness check
-./bin/agent-workforce --plugin                                 # legacy live plugin mode
+agent-workforce
+```
+
+That one command is the whole interface. The installer puts an `agent-workforce` shim at
+`~/.local/bin/agent-workforce` (it warns if that directory is not on your PATH); the shim runs
+the repo launcher, which fetches the latest build, checks the active profile
+(`CLAUDE_CONFIG_DIR`, default `~/.claude`) against the checkout, **self-installs when stale**,
+and starts the orchestrator with full autonomy. Give it a task; it triages in one paragraph
+and goes.
+
+> **Do not start the team with `claude --agent orchestrator`.** It looks identical but
+> silently drops `--permission-mode bypassPermissions` and the freshness check: every mutation
+> prompts, and the agents may be stale. The session-start hook flags such sessions as
+> DEGRADED and the orchestrator will tell you to restart.
+
+```bash
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" agent-workforce   # another profile
+agent-workforce --no-install                             # skip freshness check
+agent-workforce --plugin                                 # legacy live plugin mode
 ```
 
 Snapshot install is the primary mode on purpose: plugin-shipped agents ignore `hooks`,
@@ -151,7 +166,7 @@ reports the drift.
 
 ## Shakedown
 
-After first setup: `./bin/agent-workforce`, then give it a disposable task ("Build a CLI tool
+After first setup: `agent-workforce`, then give it a disposable task ("Build a CLI tool
 in a fresh temp project named csv2json-2 that converts CSV to JSON; skip deploy"). Expect: a
 one-paragraph triage naming builder → verifier (a contained build — architect would be
 over-routing), no approval questions, no permission prompts, a commit, one status note, and a

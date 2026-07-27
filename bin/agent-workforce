@@ -41,7 +41,9 @@ if [ "$MODE" = "plugin" ]; then
   # per-agent permissionMode is NOT honored — expect permission prompts.
   # Bash 3.2 with `set -u` treats an empty array expansion as unbound; the
   # `+word` form keeps a zero-arg launch safe (same idiom as install.sh).
-  exec claude --plugin-dir "$ROOT" ${ARGS[@]+"${ARGS[@]}"}
+  # WORKFORCE_LAUNCH_MODE lets the session-start hook name the launch path
+  # as fact; a session without it gets the DEGRADED warning.
+  WORKFORCE_LAUNCH_MODE=plugin exec claude --plugin-dir "$ROOT" ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 PROFILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -159,6 +161,10 @@ hook_health_report() {
 # post-exit health report can run; the session's exit code is preserved.
 hook_health_report
 status=0
+# WORKFORCE_LAUNCH_MODE proves to the session-start hook that this session
+# came through the launcher; direct `claude --agent orchestrator` starts lack
+# it and are named DEGRADED in the session's own context.
+WORKFORCE_LAUNCH_MODE=snapshot \
 claude --agent orchestrator --permission-mode bypassPermissions ${ARGS[@]+"${ARGS[@]}"} || status=$?
 hook_health_report
 exit "$status"

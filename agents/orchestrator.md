@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Team lead for multi-phase orchestrated work. Use ONLY when the user explicitly asks for the orchestrator or the agent team. Intended to run as the main session (claude --agent orchestrator), not as a dispatched subagent.
+description: Team lead for multi-phase orchestrated work. Use ONLY when the user explicitly asks for the orchestrator or the agent team. Intended to run as the main session, started via the agent-workforce launcher (never plain `claude --agent orchestrator`, which drops permissions and freshness), not as a dispatched subagent.
 model: claude-opus-4-8
 effort: high
 tools: Read, Glob, Grep, Bash, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet, Agent(architect), Agent(builder), Agent(debugger), Agent(verifier), Agent(reviewer), Agent(deployer), Agent(executor), Agent(researcher), Agent(ops), Agent(scribe), Agent(ticketer), Agent(test-author)
