@@ -156,18 +156,25 @@ exit 0
 EOF
 chmod +x "$TMPDIR_T/fake-bin/claude" "$TMPDIR_T/fake-bin/jq"
 
+# Effort is pinned from the orchestrator role file, not left to the profile's
+# ambient effortLevel (2026-07-29 decision; see tests/test_launcher_effort_pin.sh).
+# Derived here rather than hard-coded so the role file stays authoritative.
+ORCH_EFFORT="$(awk '/^---$/{n++; if (n==2) exit} n==1 && /^effort:/{
+  sub(/^effort:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit}' \
+  "$REPO/agents/orchestrator.md")"
+
 # Snapshot mode (the default) launches the orchestrator in bypassPermissions
-# (2026-07-19 decision) with user args AFTER the default flag, so a
-# caller-supplied --permission-mode wins.
+# (2026-07-19 decision) with user args AFTER the default flags, so a
+# caller-supplied --permission-mode or --effort wins.
 LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$PATH" \
   bash "$REPO/bin/agent-workforce" --no-install --help)"
-EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --help)"
+EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --effort "$ORCH_EFFORT" --help)"
 [ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "snapshot launcher did not launch the orchestrator with user arguments exactly"
 
 # Legacy live plugin mode still routes through --plugin-dir.
 LAUNCH_ARGS="$(CLAUDE_CONFIG_DIR="$TMPDIR_T/profile" PATH="$TMPDIR_T/fake-bin:$PATH" \
   bash "$REPO/bin/agent-workforce" --plugin --agent builder --help)"
-EXPECTED="$(printf '%s\n' --plugin-dir "$REPO" --agent builder --help)"
+EXPECTED="$(printf '%s\n' --plugin-dir "$REPO" --effort "$ORCH_EFFORT" --agent builder --help)"
 [ "$LAUNCH_ARGS" = "$EXPECTED" ] && ok || bad "plugin launcher did not pass plugin directory and user arguments exactly"
 
 # The launcher proves itself to the session it starts: WORKFORCE_LAUNCH_MODE
@@ -203,7 +210,7 @@ else
 fi
 HH_OUT="$(CLAUDE_CONFIG_DIR="$BROKEN_PROFILE" PATH="$TMPDIR_T/fake-bin:$PATH" \
   bash "$REPO/bin/agent-workforce" --no-install --help 2>/dev/null)"
-EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --help)"
+EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --effort "$ORCH_EFFORT" --help)"
 [ "$HH_OUT" = "$EXPECTED" ] && ok || bad "hook-health reporting leaked into launcher stdout"
 
 # The launcher preserves the session's exit code now that claude is no longer

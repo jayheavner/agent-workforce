@@ -36,6 +36,33 @@ for a in "$@"; do
   esac
 done
 
+# Effort is pinned on the command line, not left to the profile. The
+# `effortLevel` in settings.json applies to every session and the
+# orchestrator's frontmatter `effort:` never reached the main session:
+# transcript evidence 2026-07-29 shows opus-4-8 orchestrator sessions running
+# at `medium` while the role declares `high`, and plain opus-5 sessions
+# running at the profile's `xhigh`. `xhigh` is rejected by the API whenever
+# extended thinking is off ("effort 'xhigh' is not supported when thinking is
+# disabled on this model") and the rejection lands on the FIRST request, so an
+# ambient effort can kill the session before it takes a turn. The role file
+# stays the single source of truth; a bad or absent declaration is soft —
+# it warns and leaves the session default alone rather than blocking a launch.
+EFFORT_ARGS=()
+declared_effort="$(awk '/^---$/{n++; if (n==2) exit} n==1 && /^effort:/{
+  sub(/^effort:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit}' \
+  "$ROOT/agents/orchestrator.md" 2>/dev/null || true)"
+case "$declared_effort" in
+  low|medium|high|xhigh|max)
+    EFFORT_ARGS=(--effort "$declared_effort")
+    ;;
+  "")
+    echo "agent-workforce: agents/orchestrator.md declares no effort — leaving the profile's effort in place." >&2
+    ;;
+  *)
+    echo "agent-workforce: agents/orchestrator.md declares unknown effort '$declared_effort' — leaving the profile's effort in place." >&2
+    ;;
+esac
+
 if [ "$MODE" = "plugin" ]; then
   # Legacy live plugin mode: hooks route through hooks.json + the router, but
   # per-agent permissionMode is NOT honored — expect permission prompts.
@@ -43,7 +70,8 @@ if [ "$MODE" = "plugin" ]; then
   # `+word` form keeps a zero-arg launch safe (same idiom as install.sh).
   # WORKFORCE_LAUNCH_MODE lets the session-start hook name the launch path
   # as fact; a session without it gets the DEGRADED warning.
-  WORKFORCE_LAUNCH_MODE=plugin exec claude --plugin-dir "$ROOT" ${ARGS[@]+"${ARGS[@]}"}
+  WORKFORCE_LAUNCH_MODE=plugin exec claude --plugin-dir "$ROOT" \
+    ${EFFORT_ARGS[@]+"${EFFORT_ARGS[@]}"} ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 PROFILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -165,6 +193,7 @@ status=0
 # came through the launcher; direct `claude --agent orchestrator` starts lack
 # it and are named DEGRADED in the session's own context.
 WORKFORCE_LAUNCH_MODE=snapshot \
-claude --agent orchestrator --permission-mode bypassPermissions ${ARGS[@]+"${ARGS[@]}"} || status=$?
+claude --agent orchestrator --permission-mode bypassPermissions \
+  ${EFFORT_ARGS[@]+"${EFFORT_ARGS[@]}"} ${ARGS[@]+"${ARGS[@]}"} || status=$?
 hook_health_report
 exit "$status"

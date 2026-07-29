@@ -104,6 +104,7 @@ is decided and disclosed at closeout.
 | Cost report | `bin/agent-workforce-cost-report` | Prints the exact session table on demand — **including the orchestrator's own usage** |
 | Session grounding | `hooks/session_start.py` | SessionStart: fetches origin and injects ahead/behind as fact; reads `.workforce/project.json` (tracker declaration + tool ready-checks) and injects named OK/FAIL results — no agent reasons from a stale checkout or guesses at tooling |
 | Launcher self-update | `bin/agent-workforce` | Checks origin before launch, fast-forwards a clean checkout, records any remaining deficit for the cost report to stamp (a stale clone can no longer self-certify as fresh) |
+| Launcher effort pin | `bin/agent-workforce` | Passes `--effort` from `agents/orchestrator.md` so the role's declared effort is what actually runs — the profile's ambient `effortLevel` no longer decides, and an effort the model rejects (`xhigh` with thinking off) can no longer kill the session on its first request. A caller's own `--effort` still wins |
 
 Projects onboard via `/onboard-project` (writes `.workforce/project.json`); an undeclared issue
 tracker nags in every cost report until declared. Discovered work follows

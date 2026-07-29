@@ -44,7 +44,12 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@"\n' > "$TMP/bin/claude"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/jq"
 chmod +x "$TMP/bin/claude" "$TMP/bin/jq"
 OUT="$(CLAUDE_CONFIG_DIR="$PROFILE" PATH="$TMP/bin:$PATH" "$SHIM" --no-install --help 2>/dev/null)"
-EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --help)"
+# Effort is pinned from the orchestrator role file (2026-07-29 decision; see
+# tests/test_launcher_effort_pin.sh), derived so the role file stays authoritative.
+ORCH_EFFORT="$(awk '/^---$/{n++; if (n==2) exit} n==1 && /^effort:/{
+  sub(/^effort:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit}' \
+  "$REPO/agents/orchestrator.md")"
+EXPECTED="$(printf '%s\n' --agent orchestrator --permission-mode bypassPermissions --effort "$ORCH_EFFORT" --help)"
 [ "$OUT" = "$EXPECTED" ] \
   && pass "shim launch is byte-identical to the repo launcher's" \
   || fail "shim launch is byte-identical to the repo launcher's — got: $OUT"
