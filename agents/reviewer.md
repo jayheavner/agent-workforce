@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Reviews code for quality and security, and critiques plans and specs when dispatched in those modes. Dispatched by the orchestrator; the dispatch names the mode. Not for direct casual use.
-model: claude-opus-4-8
+model: claude-opus-5
 effort: high
 maxTurns: 60
 tools: Read, Glob, Grep, Bash

@@ -301,7 +301,7 @@ for f in "$REPO"/agents/*.md; do
   done
   model="$(printf '%s\n' "$fm" | sed -n 's/^model:[[:space:]]*//p')"
   case "$model" in
-    claude-fable-5|claude-opus-4-8|claude-sonnet-5) : ;;
+    claude-fable-5|claude-opus-5|claude-opus-4-8|claude-sonnet-5) : ;;
     *) fail "$f: model '$model' is not one of the pinned team models" ;;
   esac
   skills_csv="$(printf '%s\n' "$fm" | sed -n 's/^skills:[[:space:]]*//p')"

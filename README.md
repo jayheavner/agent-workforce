@@ -55,12 +55,12 @@ visible to hook subprocesses.
 
 | Agent | Model | Effort | Role | Mutation rights |
 |---|---|---|---|---|
-| orchestrator | opus-4-8 | high | Triage, route, dispatch, closeout. Main session; read-only shell for facts | None (read + dispatch) |
-| architect | opus-4-8 | high | Specs, plans; drafts new skills/agents for team growth | Docs + provisional skills/agents |
+| orchestrator | opus-5 | high | Triage, route, dispatch, closeout. Main session; read-only shell for facts | None (read + dispatch) |
+| architect | opus-5 | high | Specs, plans; drafts new skills/agents for team growth | Docs + provisional skills/agents |
 | builder | sonnet-5 | high | TDD implementation, direct or from a plan | Code + local git; no deploy, no push to main |
 | debugger | sonnet-5 | high | Root-cause diagnosis with evidence | None (read + run) |
 | verifier | sonnet-5 | — | Runs the given criteria AND independently tries to break them | None (read + run) |
-| reviewer | opus-4-8 | high | Code/security review; fidelity (delivered vs requested), plan + spec critique | None (read only) |
+| reviewer | opus-5 | high | Code/security review; fidelity (delivered vs requested), plan + spec critique | None (read only) |
 | test-author | sonnet-5 | high | Acceptance suite from a reviewed plan, before the builder; red-proven | Test files + local git only |
 | deployer | sonnet-5 | medium | Cloud deploys with rollback discipline | Deploys within authorization |
 | executor | sonnet-5 | — | Authorized shell work; commit finalizer | Within dispatched intent |
