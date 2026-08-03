@@ -289,6 +289,54 @@ expect_allow \
 
 rm -f "$NINE_PRIOR" "$TEN_PRIOR" "$EIGHTEEN_PRIOR"
 
+# --- a typed lane refusal cannot be re-routed to the wrong role.
+# THE INCIDENT'S FIRST MOVE (2026-08-03): the scribe refused source-and-test work
+# as out of its lane, and the refusal was read as "find a wider tool." The
+# refusal is now a marker this guard consumes.
+write_refusal_transcript() { # $1 refused path -> prints transcript path
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-refusal.XXXXXX")"
+  jq -nc --arg role scribe \
+    '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"toolu_ref_1",name:"Agent",input:{subagent_type:$role}}]}}' \
+    >"$path"
+  jq -nc --arg t "Cannot do this: it is source and a test, not a document.
+WORKFORCE_REFUSAL: out-of-lane | $1
+WORKFORCE_REPORT: scribe | blocked" \
+    '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"toolu_ref_1",content:[{type:"text",text:$t}]}]}}' \
+    >>"$path"
+  printf '%s' "$path"
+}
+
+REFUSAL_TR="$(write_refusal_transcript "src/screening/prompts/guidance.json")"
+expect_block \
+  "$(agent_json_with_transcript executor "$REFUSAL_TR" "PARALLEL_SAFE: no git mutation in this dispatch
+Apply the fix to src/screening/prompts/guidance.json and land it")" \
+  "refused source path re-routed to the executor blocks"
+expect_block \
+  "$(agent_json_with_transcript test-author "$REFUSAL_TR" "ACCEPTANCE CRITERIA
+  - [ ] AC-1 (mechanical): the gate is category-blind. Check: \`pytest -q tests/unit\` -> expects 0 failures.
+Write it into src/screening/prompts/guidance.json")" \
+  "refused source path re-routed to the test-author blocks"
+expect_allow \
+  "$(agent_json_with_transcript builder "$REFUSAL_TR" "WORKTREE: /tmp/wt-a
+ACCEPTANCE CRITERIA
+  - [ ] AC-1 (mechanical): the gate is category-blind. Check: \`pytest -q tests/unit\` -> expects 0 failures.
+Change src/screening/prompts/guidance.json")" \
+  "refused source path routed to the builder allows"
+expect_allow \
+  "$(agent_json_with_transcript executor "$REFUSAL_TR" "PARALLEL_SAFE: no git mutation in this dispatch
+Install the dependencies")" \
+  "unrelated dispatch after a refusal is untouched"
+
+# A refused DOC path belongs to the scribe, so the same rule points the other way.
+DOC_REFUSAL_TR="$(write_refusal_transcript "docs/STATUS-task.md")"
+expect_block \
+  "$(agent_json_with_transcript builder "$DOC_REFUSAL_TR" "WORKTREE: /tmp/wt-b
+ACCEPTANCE CRITERIA
+  - [ ] AC-1 (mechanical): the note exists. Check: \`test -f docs/STATUS-task.md\` -> expects exit 0.
+Write docs/STATUS-task.md")" \
+  "refused doc path re-routed to the builder blocks"
+
 # --- roster drift: the guard allowlist, agents/, and the orchestrator's
 # Agent(...) tools must name exactly the same specialists, or a grown agent
 # silently becomes undispatchable (three-touchpoint rule in growing-the-team).

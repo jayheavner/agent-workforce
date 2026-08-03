@@ -156,6 +156,8 @@ for lane in $LANES; do
 done
 IFS="$old_ifs"
 
-printf 'agent-team lane guard: this %s targets %s, outside the %s lane (%s under %s). That path belongs to another role — a document is the scribe'"'"'s, a plan or a skill is the architect'"'"'s, a test is the test-author'"'"'s, and source is the builder'"'"'s. Return the work to the orchestrator naming the file and what it needs; do not route around the lane by writing through a shell.\n' \
-  "$TOOL" "$TARGET" "$ROLE" "$(printf '%s' "$LANES" | tr ':' ' ')" "$ROOT" >&2
+REL="$TARGET"
+case "$REL" in "$ROOT"/*) REL="${REL#"$ROOT"/}" ;; esac
+printf 'agent-team lane guard: this %s targets %s, outside the %s lane (%s under %s). That path belongs to another role — a document is the scribe'"'"'s, a plan or a skill is the architect'"'"'s, a test is the test-author'"'"'s, and source is the builder'"'"'s. Return the work to the orchestrator naming the file and what it needs; do not route around the lane by writing through a shell.\nReport the refusal in the typed form, on its own line, so the re-route is checked mechanically rather than re-interpreted:\n  WORKFORCE_REFUSAL: out-of-lane | %s\n' \
+  "$TOOL" "$TARGET" "$ROLE" "$(printf '%s' "$LANES" | tr ':' ' ')" "$ROOT" "$REL" >&2
 exit 2

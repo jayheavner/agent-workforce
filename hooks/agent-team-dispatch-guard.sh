@@ -24,6 +24,13 @@ readonly WORKTREE_REQUIRED_ROLES="builder"
 readonly WORKTREE_MARKER_PREFIX="WORKTREE:"
 readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: no git mutation in this dispatch"
 readonly BUDGETS_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-budgets.json"
+readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
+# A specialist that refuses work as outside its lane says so in a line the
+# orchestrator cannot reinterpret. The 2026-08-03 incident turned on a correct
+# refusal arriving as prose: the scribe declined source-and-test work, and the
+# orchestrator read the refusal as "find a wider tool" rather than "wrong role."
+# A typed refusal lets this guard challenge the re-route mechanically.
+readonly REFUSAL_MARKER="WORKFORCE_REFUSAL: out-of-lane"
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -129,6 +136,59 @@ case "$TYPE" in
     esac
     ;;
 esac
+
+# --- Re-routing a typed lane refusal to the wrong role.
+# When a specialist has refused a path as outside its lane, the next dispatch
+# carrying that same path must go to the role whose lane covers it. Anything else
+# is the incident's exact move: a refusal treated as license to widen.
+lane_owner() { # $1 repo-relative path -> the role whose lane owns it
+  local owner=""
+  if [ -f "$LANES_FILE" ]; then
+    owner="$(jq -r --arg p "$1" '
+      (.role_lanes // {}) | to_entries
+      | map(select(.value | type == "array" and any(
+            . as $l | ($l | tostring | sub("/+$"; "")) as $lane
+            | $p == $lane or ($p | startswith($lane + "/")))))
+      | if length == 0 then "" else (.[0].key) end
+    ' "$LANES_FILE" 2>/dev/null)"
+  fi
+  # Nothing else claims it, so it is source or tests: the builder's.
+  [ -n "$owner" ] || owner="builder"
+  printf '%s' "$owner"
+}
+
+TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
+if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
+  CWD="$(printf '%s' "$PARSED" | jq -r '.cwd // empty')"
+  ROOT=""
+  [ -n "$CWD" ] && [ -d "$CWD" ] && ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  REFUSED="$(jq -rs --arg m "$REFUSAL_MARKER" '
+    [ .[] | .. | strings | select(contains($m))
+      | [ splits("\n") ] | map(select(contains($m))) | .[] ]
+    | unique | .[]
+  ' "$TRANSCRIPT" 2>/dev/null)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    refused_path="${line#*"$REFUSAL_MARKER"}"
+    refused_path="${refused_path#*|}"
+    refused_path="$(printf '%s' "$refused_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[`"'"'"']//g')"
+    [ -n "$refused_path" ] || continue
+    case "$PROMPT" in *"$refused_path"*) ;; *) continue ;; esac
+    rel="$refused_path"
+    if [ -n "$ROOT" ]; then
+      case "$rel" in "$ROOT"/*) rel="${rel#"$ROOT"/}" ;; esac
+    fi
+    owner="$(lane_owner "$rel")"
+    if [ "$TYPE" != "$owner" ]; then
+      printf 'agent-team dispatch guard: %s was already refused as out of lane by another specialist, and this dispatch routes it to the %s. A lane refusal is a routing correction, never permission to widen: %s belongs to the %s. Re-dispatch it there, or drop that path from this dispatch if the work genuinely differs.\n' \
+        "$refused_path" "$TYPE" "$rel" "$owner" >&2
+      exit 2
+    fi
+  done <<EOF
+$REFUSED
+EOF
+fi
 
 # Workspace isolation for git-mutating dispatches ({builder, executor,
 # deployer, test-author}). Only these roles are policed; skip the scan entirely
