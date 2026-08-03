@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -192,6 +192,16 @@ jq -e --argjson roles "$COMMITTED_DEFAULTS" '
   .models as $M | [$roles[] | in($M)] | all
 ' "$REPO/hooks/model-rates.json" >/dev/null \
   || fail "agent-model-defaults.json: every pin must exist in model-rates.json"
+# Write lanes: the acceptance suite the builder may not author is configuration,
+# so a broken or missing file must fail the install rather than degrade to a
+# guard with no rule (the guard's own fallback is the strict default).
+[ -f "$REPO/hooks/agent-team-lanes.json" ] || fail "hooks/agent-team-lanes.json is missing from repo"
+jq empty "$REPO/hooks/agent-team-lanes.json" || fail "agent-team-lanes.json is not valid JSON"
+jq -e '.acceptance_suite_paths | type == "array" and length > 0
+       and (all(.[]; type == "string" and length > 0 and (startswith("/") | not)))' \
+  "$REPO/hooks/agent-team-lanes.json" >/dev/null \
+  || fail "agent-team-lanes.json: .acceptance_suite_paths must be a non-empty array of worktree-relative paths"
+
 [ -f "$REPO/tools/agent-team-scoreboard.sh" ] || fail "tools/agent-team-scoreboard.sh is missing from repo"
 bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed bash -n"
 # The outer installer runs these once. Sandbox installs launched by
@@ -427,6 +437,7 @@ PREEXISTING_DEFAULTS=0
 PREEXISTING_CLOSEOUT=0
 PREEXISTING_COSTREPORT=0
 PREEXISTING_BUDGETS=0
+PREEXISTING_LANES=0
 [ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
@@ -438,6 +449,7 @@ PREEXISTING_BUDGETS=0
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
 [ -f "$HOOKS_DIR/cost_report.py" ] && { cp "$HOOKS_DIR/cost_report.py" "$BACKUP/"; PREEXISTING_COSTREPORT=1; }
 [ -f "$HOOKS_DIR/agent-team-budgets.json" ] && { cp "$HOOKS_DIR/agent-team-budgets.json" "$BACKUP/"; PREEXISTING_BUDGETS=1; }
+[ -f "$HOOKS_DIR/agent-team-lanes.json" ] && { cp "$HOOKS_DIR/agent-team-lanes.json" "$BACKUP/"; PREEXISTING_LANES=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -503,6 +515,7 @@ restore() {
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-model-defaults.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-budgets.json) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-lanes.json) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -546,6 +559,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
   [ "$PREEXISTING_COSTREPORT" -eq 0 ] && rm -f "$HOOKS_DIR/cost_report.py"
   [ "$PREEXISTING_BUDGETS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-budgets.json"
+  [ "$PREEXISTING_LANES" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lanes.json"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -576,6 +590,7 @@ if ! cp "$REPO/tools/lint_acceptance_checks.py" "$HOOKS_DIR/"; then restore; cle
 if ! cp "$REPO/hooks/model-rates.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "rates file copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "model defaults copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch budgets copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-lanes.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "write lanes copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done

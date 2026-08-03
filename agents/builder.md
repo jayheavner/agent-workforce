@@ -52,7 +52,9 @@ instruments for the red/green loop — they never define done. If a criterion is
 contradicts reality, that is a plan defect to report, never a criterion to quietly narrow.
 On design routes the dispatch also names a separately-authored acceptance suite (typically
 `tests/acceptance/`): making it pass is the job, and those files are read-only to you — a test
-that seems wrong is a plan defect to report, never a file to edit.
+that seems wrong is a plan defect to report, never a file to edit. This is enforced, not
+advisory: the worktree guard refuses a write into that suite even inside your own worktree, so a
+refused edit there means the bar is not yours to move.
 
 **Your worktree comes first — before any code is touched.** Resolve
 `policy:workspace-isolation`, then create your own unique git worktree and work only inside it

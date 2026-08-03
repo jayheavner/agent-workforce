@@ -19,6 +19,15 @@
 # CONTEXT.md all live in the parent checkout and the builder must read them.
 # Only mutation is confined.
 #
+# Second rule, same event: the separately-authored acceptance suite is read-only
+# to the builder even inside its own worktree. Whoever writes the code is never
+# the last author of the bar it is judged against — builder.md has said so in
+# prose since the checks-and-balances spec, and prose is what failed on
+# 2026-08-03 when a single actor authored a change, its test, and its own
+# verdict. The suite's location is configuration (agent-team-lanes.json beside
+# this guard, overridable per project in .workforce/project.json) because it is
+# not the same directory in every repository.
+#
 # Known limit, stated rather than hidden: for Bash the confinement is the
 # working directory plus any explicit `git -C <path>`. A command that changes
 # directory internally and then writes is not caught here — the Stop backstop
@@ -31,6 +40,11 @@ set -u
 
 readonly POLICED_ROLES="builder"
 readonly WORKTREE_MARKER_PREFIX="WORKTREE:"
+# Shipped default for the read-only acceptance suite. Config that cannot be read
+# falls back to this rather than to "no rule": a missing config file is a broken
+# install, never permission to edit your own bar.
+readonly DEFAULT_ACCEPTANCE_PATHS="tests/acceptance"
+readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
 ROLE="${1:-}"
 
 # Roles other than the policed ones are none of this guard's business.
@@ -99,6 +113,40 @@ is_linked_worktree() { # $1 path
   head -n1 "$1/.git" 2>/dev/null | grep -Eq '^gitdir: .*/\.git/worktrees/[^/]+[[:space:]]*$'
 }
 
+# The main checkout behind a linked worktree: its .git file points at
+# <main>/.git/worktrees/<name>, so the prefix before that is the main checkout.
+main_checkout() { # $1 linked worktree
+  local gitdir
+  gitdir="$(head -n1 "$1/.git" 2>/dev/null | sed -e 's/^gitdir:[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  case "$gitdir" in
+    */.git/worktrees/*) printf '%s' "${gitdir%%/.git/worktrees/*}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Acceptance-suite paths relative to the worktree root, one per line. Resolution
+# order: this project's declaration, then the shipped config, then the built-in
+# default — so a repository whose suite is not tests/acceptance says so once in
+# .workforce/project.json instead of losing the rule.
+acceptance_paths() {
+  local main="" override="" shipped=""
+  if main="$(main_checkout "$DECLARED")" && [ -f "$main/.workforce/project.json" ]; then
+    override="$(jq -r '.acceptance_suite_paths[]? // empty' "$main/.workforce/project.json" 2>/dev/null)"
+  fi
+  if [ -n "$override" ]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+  if [ -f "$LANES_FILE" ]; then
+    shipped="$(jq -r '.acceptance_suite_paths[]? // empty' "$LANES_FILE" 2>/dev/null)"
+    if [ -n "$shipped" ]; then
+      printf '%s\n' "$shipped"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$DEFAULT_ACCEPTANCE_PATHS"
+}
+
 # The worktree the dispatch assigned to this builder, read from its transcript.
 declared_worktree() {
   [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] || return 0
@@ -153,6 +201,19 @@ case "$TOOL" in
     fi
     TARGET="$(canonical_path "$TARGET_RAW")"
     path_within "$TARGET" "$DECLARED" || refuse "$TARGET" "this $TOOL"
+
+    # Inside the worktree, the acceptance suite is still not the builder's to write.
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      case "$rel" in /*) continue ;; esac
+      if path_within "$TARGET" "$(canonical_path "$DECLARED/${rel%/}")"; then
+        printf 'agent-team worktree guard: this %s targets %s, inside the separately-authored acceptance suite (%s). That suite is the bar this build is judged against, authored by an agent that never writes the code, and it is read-only to you — a test that looks wrong is a plan defect to report, never a file to edit. Make the suite pass, or report the defect.\n' \
+          "$TOOL" "$TARGET" "$rel" >&2
+        exit 2
+      fi
+    done <<EOF
+$(acceptance_paths)
+EOF
     ;;
   Bash)
     COMMAND="$(printf '%s' "$PARSED" | jq -r '.tool_input.command // empty')"

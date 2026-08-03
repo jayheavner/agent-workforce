@@ -77,6 +77,17 @@ allow builder "$(write_payload "$WT_MINE/new.py" "$TR_MINE")" "write inside own 
 allow builder "$(edit_payload "$WT_MINE/file.txt" "$TR_MINE")" "edit inside own worktree allows"
 allow builder "$(write_payload "$WT_MINE/pkg/deep/mod.py" "$TR_MINE")" "write deep inside own worktree allows"
 
+# --- the separately-authored acceptance suite is read-only to the builder, even
+# inside its own worktree: whoever writes the code is never the last author of
+# the bar it is judged against. Prose in builder.md until 2026-08-03; enforced
+# here after an executor authored a change and its own test in one actor.
+block builder "$(write_payload "$WT_MINE/tests/acceptance/test_ac.py" "$TR_MINE")" \
+  "write into the acceptance suite blocks"
+block builder "$(edit_payload "$WT_MINE/tests/acceptance/test_ac.py" "$TR_MINE")" \
+  "edit in the acceptance suite blocks"
+allow builder "$(write_payload "$WT_MINE/tests/unit/test_x.py" "$TR_MINE")" \
+  "write into the builder's own test dirs allows"
+
 # --- THE REQUIREMENT: writes anywhere else are refused.
 block builder "$(write_payload "$MAIN/file.txt" "$TR_MINE")" "write into the parent checkout blocks"
 block builder "$(edit_payload "$MAIN/file.txt" "$TR_MINE")" "edit in the parent checkout blocks"
