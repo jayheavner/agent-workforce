@@ -75,12 +75,33 @@ TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
 # exist yet (the builder creates files as it goes). Resolves the deepest
 # existing ancestor, then re-appends the remainder, so traversal like
 # `<wt>/../../file` cannot masquerade as being inside the worktree.
-canonical_path() {
-  local raw="$1" head tail_part
-  case "$raw" in
+normalize_abs() { # $1 raw -> absolute path with no . or .. segments
+  local p="$1" out="" seg old
+  case "$p" in
     /*) ;;
-    *) raw="${CWD:-$PWD}/$raw" ;;
+    *) p="${CWD:-$PWD}/$p" ;;
   esac
+  old="$IFS"; IFS='/'
+  for seg in $p; do
+    IFS="$old"
+    case "$seg" in
+      ''|'.') ;;
+      '..') out="${out%/*}" ;;
+      *) out="$out/$seg" ;;
+    esac
+    IFS='/'
+  done
+  IFS="$old"
+  printf '%s' "${out:-/}"
+}
+
+canonical_path() {
+  local raw head tail_part
+  # Traversal is resolved textually FIRST. Walking existing ancestors alone
+  # cannot resolve `<wt>/nope/../../file`: the middle segment does not exist, so
+  # the walk gives up and the raw string still carries the worktree prefix —
+  # which path_within would then accept. That is a confinement bypass.
+  raw="$(normalize_abs "$1")"
   head="$raw"
   tail_part=""
   while [ -n "$head" ] && [ ! -d "$head" ]; do
@@ -91,7 +112,7 @@ canonical_path() {
     head="$parent"
   done
   if [ -d "$head" ]; then
-    head="$(cd "$head" 2>/dev/null && pwd -P)" || head="$1"
+    head="$(cd "$head" 2>/dev/null && pwd -P)" || head="$raw"
   fi
   printf '%s' "${head%/}${tail_part:+/$tail_part}"
 }

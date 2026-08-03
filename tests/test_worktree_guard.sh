@@ -98,6 +98,13 @@ block builder "$(write_payload "$WORK/loose.txt" "$TR_MINE")" "write outside any
 # Path trickery must not escape: a traversal that lands in the parent checkout
 # is the parent checkout.
 block builder "$(write_payload "$WT_MINE/../../../file.txt" "$TR_MINE")" "traversal out of the worktree blocks"
+# A traversal whose MIDDLE segment does not exist cannot be resolved by walking
+# existing ancestors, so before 2026-08-03 it kept the worktree prefix and was
+# accepted as inside. Normalization now happens textually first.
+block builder "$(write_payload "$WT_MINE/nope/../../../file.txt" "$TR_MINE")" \
+  "traversal through a missing directory still blocks"
+block builder "$(write_payload "$WT_MINE/nope/../../task-b-b2/file.txt" "$TR_MINE")" \
+  "traversal through a missing directory into another worktree blocks"
 
 # --- Bash: the working directory must be the builder's worktree, and an
 # explicit -C outside it is a write it does not own.

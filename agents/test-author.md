@@ -13,6 +13,8 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh test-author"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-lane-guard.sh test-author"
   PostToolUse:
     - matcher: Bash
       hooks:

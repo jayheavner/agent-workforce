@@ -7,5 +7,10 @@
     "docs",
     "plans",
     "doc-inventory"
-  ]
+  ],
+  "role_lanes": {
+    "scribe": ["docs", "plans", "doc-inventory"],
+    "architect": ["plans", "docs", "skills", "agents"],
+    "test-author": ["tests"]
+  }
 }

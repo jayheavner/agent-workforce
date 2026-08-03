@@ -57,6 +57,26 @@ awk '/^  (Stop|SubagentStop):/{p=1} /^  (PreToolUse|PostToolUse):/{p=0} p && /wo
 grep -q 'agent-team-worktree-guard.sh' "$HERE/../install.sh" \
   && ok || no "install.sh installs the worktree guard"
 
+# Every other file-writing role is confined to the paths its role is for. These
+# were prose in each agent's own instructions until 2026-08-03, and prose is what
+# the incident routed around: the scribe refused correctly, and the work went to
+# a role with no boundary at all.
+for a in scribe architect test-author; do
+  grep -q "agent-team-lane-guard.sh $a" "$AGENTS/$a.md" \
+    && ok || no "$a wires the lane guard"
+  awk '/^  PreToolUse:/{p=1} /^  (PostToolUse|Stop|SubagentStop):/{p=0} p && /lane-guard/{found=1} END{exit !found}' \
+    "$AGENTS/$a.md" && ok || no "$a wires the lane guard as PreToolUse prevention"
+done
+grep -q 'agent-team-lane-guard.sh' "$HERE/../install.sh" \
+  && ok || no "install.sh installs the lane guard"
+# The builder is deliberately NOT lane-guarded: its confinement is its worktree,
+# policed by the worktree guard, which also holds the acceptance-suite rule.
+grep -q 'agent-team-lane-guard.sh' "$AGENTS/builder.md" \
+  && no "builder must not wire the lane guard (its guard is the worktree guard)" || ok
+# The executor carries no file-authoring tools, so it needs no write lane.
+grep -q 'agent-team-lane-guard.sh' "$AGENTS/executor.md" \
+  && no "executor must not need a lane guard (it has no file-authoring tools)" || ok
+
 # The closeout hook is a single Stop-hook entrypoint (payload on stdin, no
 # subcommands) wired in the orchestrator's frontmatter.
 grep -qE '^  Stop:' "$AGENTS/orchestrator.md" \

@@ -12,6 +12,8 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh architect"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-lane-guard.sh architect"
   Stop:
     - hooks:
         - type: command
