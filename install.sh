@@ -197,10 +197,11 @@ jq -e --argjson roles "$COMMITTED_DEFAULTS" '
 # guard with no rule (the guard's own fallback is the strict default).
 [ -f "$REPO/hooks/agent-team-lanes.json" ] || fail "hooks/agent-team-lanes.json is missing from repo"
 jq empty "$REPO/hooks/agent-team-lanes.json" || fail "agent-team-lanes.json is not valid JSON"
-jq -e '.acceptance_suite_paths | type == "array" and length > 0
-       and (all(.[]; type == "string" and length > 0 and (startswith("/") | not)))' \
-  "$REPO/hooks/agent-team-lanes.json" >/dev/null \
-  || fail "agent-team-lanes.json: .acceptance_suite_paths must be a non-empty array of worktree-relative paths"
+jq -e '["acceptance_suite_paths", "doc_paths"]
+       | all(. as $k | ($lanes[$k] | type == "array" and length > 0
+             and (all(.[]; type == "string" and length > 0 and (startswith("/") | not)))))' \
+  --argjson lanes "$(cat "$REPO/hooks/agent-team-lanes.json")" -n >/dev/null \
+  || fail "agent-team-lanes.json: .acceptance_suite_paths and .doc_paths must each be a non-empty array of relative paths"
 
 [ -f "$REPO/tools/agent-team-scoreboard.sh" ] || fail "tools/agent-team-scoreboard.sh is missing from repo"
 bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed bash -n"

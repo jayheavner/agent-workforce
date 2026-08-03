@@ -2,5 +2,10 @@
   "description": "Write lanes the workforce guards enforce. Shipped defaults; a project overrides a key by declaring it in its own .workforce/project.json. A key that cannot be read falls back to the guard's built-in default, never to 'no rule'.",
   "acceptance_suite_paths": [
     "tests/acceptance"
+  ],
+  "doc_paths": [
+    "docs",
+    "plans",
+    "doc-inventory"
   ]
 }

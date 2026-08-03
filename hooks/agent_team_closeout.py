@@ -49,6 +49,10 @@ import time
 MAX_BLOCKS = 3
 COST_MARKER = "## Cost report"
 MUTATING_ROLES = {"builder", "executor", "deployer", "test-author"}
+# Changes under these top-level directories are documentation, so they do not
+# pull the separation rules in. Everything else counts as code. Overridable per
+# project via .workforce/project.json, shipped default in agent-team-lanes.json.
+DEFAULT_DOC_PATHS = ("docs", "plans", "doc-inventory")
 # Only phrases that actually acknowledge DIRT count. "commit"/"committed" were
 # removed deliberately: they satisfied the check in exactly the failure case it
 # exists to catch (claiming a commit happened while the tree is dirty).
@@ -243,6 +247,108 @@ def in_git_repo(cwd):
         return False
 
 
+def _git_lines(cwd, *args, timeout=20):
+    """Stripped stdout lines, or [] when git cannot answer."""
+    try:
+        out = subprocess.run(["git", "-C", cwd, *args],
+                             capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if out.returncode != 0:
+        return []
+    return [ln for ln in (l.strip() for l in out.stdout.splitlines()) if ln]
+
+
+def doc_lane_paths(cwd):
+    """Top-level directories whose changes are documentation, not code.
+
+    Project declaration first, then the shipped lanes config, then the built-in
+    default. A config that cannot be read falls back to the default, never to
+    "everything is documentation" — the strict side is the safe side here.
+    """
+    for path, key in ((os.path.join(cwd, ".workforce", "project.json"), "doc_paths"),
+                      (os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "agent-team-lanes.json"), "doc_paths")):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                declared = json.load(fh).get(key)
+        except (OSError, ValueError):
+            continue
+        if isinstance(declared, list):
+            clean = [str(p).strip("/") for p in declared
+                     if isinstance(p, str) and p.strip("/")]
+            if clean:
+                return tuple(clean)
+    return DEFAULT_DOC_PATHS
+
+
+def _integrated_ref(cwd):
+    """The ref standing for "already integrated" — the shared checkout's upstream.
+
+    Resolved once and reused for every worktree: a builder's worktree line has no
+    upstream of its own, so asking each tree about its own upstream would find
+    nothing for exactly the trees that hold the new code.
+    """
+    upstream = _git_lines(cwd, "rev-parse", "--abbrev-ref",
+                          "--symbolic-full-name", "@{upstream}")
+    if upstream:
+        return upstream[0]
+    for candidate in ("origin/HEAD", "origin/main", "origin/master"):
+        if _git_lines(cwd, "rev-parse", "--verify", "--quiet", candidate):
+            return candidate
+    return None
+
+
+def _changed_paths(tree, base):
+    """Paths this tree has moved away from the integrated ref: uncommitted
+    modifications plus anything its commits touch that base does not have."""
+    paths = set()
+    for line in _git_lines(tree, "status", "--porcelain"):
+        entry = line[3:] if len(line) > 3 else ""
+        if " -> " in entry:                      # rename: the destination is the write
+            entry = entry.split(" -> ", 1)[1]
+        entry = entry.strip().strip('"')
+        if entry:
+            paths.add(entry)
+    if base:
+        paths.update(_git_lines(tree, "diff", "--name-only", f"{base}...HEAD"))
+    return paths
+
+
+def pending_code_paths(cwd):
+    """Code paths changed and not yet integrated, across this checkout AND every
+    linked worktree — builders commit inside their own worktrees, so a check that
+    only looked at the shared checkout would read "nothing changed" for exactly
+    the work it exists to police.
+
+    Keying on what changed rather than on which role ran is the point: a control
+    keyed on the actor is switched off by choosing a different actor (2026-08-03,
+    a source-and-test change routed to the executor skipped every separation rule
+    below because none of them mentioned that role).
+
+    An empty result means "this checkout can see no un-integrated code change" —
+    which is also what a repo with no upstream and a clean tree looks like, so
+    this is evidence for firing a rule, never proof that nothing happened.
+    """
+    if not in_git_repo(cwd):
+        return []
+    docs = doc_lane_paths(cwd)
+    trees = [cwd]
+    for line in _git_lines(cwd, "worktree", "list", "--porcelain"):
+        if line.startswith("worktree "):
+            other = line.split(" ", 1)[1].strip()
+            if other and other != cwd and os.path.isdir(other):
+                trees.append(other)
+    base = _integrated_ref(cwd)
+    code = set()
+    for tree in trees:
+        for path in _changed_paths(tree, base):
+            top = path.split("/", 1)[0]
+            if top not in docs:
+                code.add(path)
+    return sorted(code)
+
+
 def ledger_checks(last_text, roles, order, cwd):
     """The resurrected delivery ledger — machine-verifiable checks ONLY.
 
@@ -254,16 +360,40 @@ def ledger_checks(last_text, roles, order, cwd):
     """
     problems = []
 
-    # 1. Fresh verification after the last code edit (builder work only —
-    #    executor one-shots stay inside the proportionality floor).
-    if "builder" in roles and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
-        last_builder = max(i for i, r in enumerate(order) if r == "builder")
-        if not any(r == "verifier" for r in order[last_builder + 1:]):
+    # The separation rules below fire on EITHER a builder dispatch or a code
+    # change this checkout can see, whichever is present. Role alone was the
+    # trigger until 2026-08-03, when a source-and-test change routed to the
+    # executor sailed past all of them because none of them named that role; the
+    # retired comment called that "the proportionality floor". Proportionality is
+    # preserved by the path classification instead — installs, cleanups, commits
+    # and documentation produce no code delta and still pull in nothing.
+    code_paths = pending_code_paths(cwd)
+    builder_idxs = [i for i, r in enumerate(order) if r == "builder"]
+    if builder_idxs:
+        # A builder ran: anchor on it, so a closeout commit by another mutating
+        # role after verification does not re-demand verification of itself.
+        code_anchor = max(builder_idxs)
+    else:
+        mutating_idxs = [i for i, r in enumerate(order) if r in MUTATING_ROLES]
+        code_anchor = max(mutating_idxs) if mutating_idxs else -1
+    code_authored = bool(builder_idxs) or bool(code_paths)
+    changed_note = ""
+    if not builder_idxs and code_paths:
+        shown = ", ".join(code_paths[:4])
+        more = f" (+{len(code_paths) - 4} more)" if len(code_paths) > 4 else ""
+        changed_note = (f" This session's un-integrated code changes: {shown}{more}. "
+                        "Naming a role other than builder does not make code "
+                        "changes exempt.")
+
+    # 1. Fresh verification after the last code edit.
+    if code_authored and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
+        if not any(r == "verifier" for r in order[code_anchor + 1:]):
             problems.append(
-                "A builder ran after the last verifier dispatch (or no verifier "
-                "ran at all). Fresh verification must follow the final code "
-                "edit: dispatch the verifier against the delivered work before "
-                "closing out.")
+                "Code changed in this session with no verifier dispatch after "
+                "the last agent that could have written it (or no verifier ran "
+                "at all). Fresh verification must follow the final code edit: "
+                "dispatch the verifier against the delivered work before "
+                "closing out." + changed_note)
 
     # 1a. Plan critique before build (design routes only): an architect whose
     #     plan flowed straight into a builder was never independently
@@ -301,16 +431,14 @@ def ledger_checks(last_text, roles, order, cwd):
                     "the plan and route the builder to make the suite pass "
                     "before closing out.")
 
-    # 1b. Independent review after the last code edit (builder work only,
-    #     same proportionality floor as check 1). Verification proves the
-    #     stated criteria; review is the only check of judgment — spec
-    #     fidelity at minimum (2026-07-26 checks-balances spec §2).
-    if "builder" in roles and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
-        last_builder = max(i for i, r in enumerate(order) if r == "builder")
-        if not any(r == "reviewer" for r in order[last_builder + 1:]):
+    # 1b. Independent review after the last code edit, same trigger as check 1.
+    #     Verification proves the stated criteria; review is the only check of
+    #     judgment — spec fidelity at minimum (2026-07-26 checks-balances §2).
+    if code_authored and "WORKFORCE_PAUSE: HUMAN_DECISION" not in last_text:
+        if not any(r == "reviewer" for r in order[code_anchor + 1:]):
             problems.append(
-                "Builder work closed without an independent review verdict: "
-                "no reviewer dispatch follows the last builder. Dispatch the "
+                "Code changed in this session and closed without an independent "
+                "review verdict: no reviewer dispatch follows it. Dispatch the "
                 "reviewer against the delivered diff — fidelity mode (delivered "
                 "vs the original request) at minimum, full code review for "
                 "risky surfaces — before closing out.")

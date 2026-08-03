@@ -718,6 +718,133 @@ class CloseoutStopHookTest(unittest.TestCase):
         self.assertEqual(decision["decision"], "block")
         self.assertIn("review", decision["reason"])
 
+    def _make_repo_with_pending(self, relpath: str) -> Path:
+        """A clean checkout whose upstream is missing one commit touching relpath.
+
+        The change-keyed trigger needs a real un-integrated delta, and the only
+        honest way to have one is a real upstream to be ahead of.
+        """
+        slug = relpath.replace("/", "-").replace(".", "-")
+        origin = Path(self.temp.name) / f"origin-{slug}.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+                       check=True, capture_output=True)
+        repo = Path(self.temp.name) / f"work-{slug}"
+        repo.mkdir()
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", "-C", str(repo), *args],
+                           check=True, capture_output=True)
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "Closeout Test")
+        (repo / "base.txt").write_text("base\n", encoding="utf-8")
+        git("add", "base.txt")
+        git("commit", "-qm", "test: baseline")
+        git("remote", "add", "origin", str(origin))
+        git("push", "-q", "-u", "origin", "main")
+        target = repo / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed\n", encoding="utf-8")
+        git("add", relpath)
+        git("commit", "-qm", "test: pending change")
+        return repo
+
+    def test_code_change_without_builder_still_needs_verifier(self) -> None:
+        """THE 2026-08-03 HOLE: a source change routed to the executor skipped
+        every separation rule because the rules named the builder. The trigger is
+        now the change, so naming another role exempts nothing."""
+        repo = self._make_repo_with_pending("src/app.py")
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "executor"),
+                self.result("tu_1"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("verifier", decision["reason"])
+        self.assertIn("src/app.py", decision["reason"])
+
+    def test_code_change_without_builder_still_needs_review(self) -> None:
+        """Same trigger, judgment half: verification is not independence."""
+        repo = self._make_repo_with_pending("hooks/guard.sh")
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "executor"),
+                self.result("tu_1"),
+                self.dispatch("tu_2", "verifier"),
+                self.result("tu_2"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("review", decision["reason"])
+
+    def test_code_change_verified_and_reviewed_allows(self) -> None:
+        """The contract-correct shape passes on the change-keyed path too."""
+        repo = self._make_repo_with_pending("src/app.py")
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "executor"),
+                self.result("tu_1"),
+                self.dispatch("tu_2", "verifier"),
+                self.result("tu_2"),
+                self.dispatch("tu_3", "reviewer"),
+                self.result("tu_3"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_documentation_change_pulls_in_no_separation_rules(self) -> None:
+        """Proportionality: the floor the retired role exemption was protecting
+        is now held by the path classification instead — a docs-only delta after
+        an executor dispatch demands nothing."""
+        repo = self._make_repo_with_pending("docs/STATUS-x.md")
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "executor"),
+                self.result("tu_1"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_code_change_in_a_linked_worktree_is_seen(self) -> None:
+        """Builders commit inside their own worktrees, so a check that only read
+        the shared checkout would report "nothing changed" for exactly the work
+        it exists to police."""
+        repo = self._make_repo_with_pending("docs/note.md")
+        wt = Path(self.temp.name) / "wt-builder"
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q",
+                        str(wt), "-b", "task-a"], check=True, capture_output=True)
+        (wt / "src").mkdir(parents=True, exist_ok=True)
+        (wt / "src" / "feature.py").write_text("code\n", encoding="utf-8")
+        for args in (("add", "src/feature.py"), ("commit", "-qm", "feat: in worktree")):
+            subprocess.run(["git", "-C", str(wt), *args],
+                           check=True, capture_output=True)
+        transcript = self.write_transcript(
+            [
+                self.dispatch("tu_1", "executor"),
+                self.result("tu_1"),
+                self.assistant_text(self.closeout_text(), "msg_2"),
+            ]
+        )
+        result = self.run_hook(self.payload(transcript, cwd=str(repo)))
+        decision = json.loads(result.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("src/feature.py", decision["reason"])
+
     def test_reviewer_before_final_builder_blocks(self) -> None:
         """(h2) A review predating the last code edit is stale."""
         transcript = self.write_transcript(
