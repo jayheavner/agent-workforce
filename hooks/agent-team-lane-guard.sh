@@ -28,6 +28,10 @@
 # its lane is refused, never allowed by default.
 set -u
 
+# shellcheck source=/dev/null
+[ -r "$(dirname "$0")/agent-team-guard-log.sh" ] && . "$(dirname "$0")/agent-team-guard-log.sh"
+command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
+
 ROLE="${1:-}"
 readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
 # Built-in fallback, used only when config cannot be read. Same shape as the
@@ -61,6 +65,7 @@ if ! command -v jq >/dev/null 2>&1; then
   # for them an unverifiable write is a block.
   case "$ROLE" in
     scribe|architect|test-author)
+      guard_log lane "$ROLE" block "jq unavailable"
       printf 'agent-team lane guard: jq is not available, so this write cannot be confirmed inside the %s lane. Blocking rather than failing open.\n' "$ROLE" >&2
       exit 2 ;;
     *) exit 0 ;;
@@ -71,6 +76,7 @@ PARSED="$(printf '%s' "$INPUT" | jq -c '.' 2>/dev/null)"
 if [ -z "$PARSED" ]; then
   case "$ROLE" in
     scribe|architect|test-author)
+      guard_log lane "$ROLE" block "invalid payload"
       printf 'agent-team lane guard: stdin was not valid JSON, so this write cannot be confirmed inside the %s lane. Blocking rather than failing open.\n' "$ROLE" >&2
       exit 2 ;;
     *) exit 0 ;;
@@ -93,6 +99,7 @@ LANES="$(lane_spec)"
 
 TARGET_RAW="$(printf '%s' "$PARSED" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
 if [ -z "$TARGET_RAW" ]; then
+  guard_log lane "$ROLE" block "no file path in $TOOL"
   printf 'agent-team lane guard: a %s call carried no file path, so it cannot be confirmed inside the %s lane. Blocking rather than failing open.\n' "$TOOL" "$ROLE" >&2
   exit 2
 fi
@@ -158,6 +165,7 @@ IFS="$old_ifs"
 
 REL="$TARGET"
 case "$REL" in "$ROOT"/*) REL="${REL#"$ROOT"/}" ;; esac
+guard_log lane "$ROLE" block "$REL"
 printf 'agent-team lane guard: this %s targets %s, outside the %s lane (%s under %s). That path belongs to another role — a document is the scribe'"'"'s, a plan or a skill is the architect'"'"'s, a test is the test-author'"'"'s, and source is the builder'"'"'s. Return the work to the orchestrator naming the file and what it needs; do not route around the lane by writing through a shell.\nReport the refusal in the typed form, on its own line, so the re-route is checked mechanically rather than re-interpreted:\n  WORKFORCE_REFUSAL: out-of-lane | %s\n' \
   "$TOOL" "$TARGET" "$ROLE" "$(printf '%s' "$LANES" | tr ':' ' ')" "$ROOT" "$REL" >&2
 exit 2

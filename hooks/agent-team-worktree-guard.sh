@@ -45,6 +45,10 @@ readonly WORKTREE_MARKER_PREFIX="WORKTREE:"
 # install, never permission to edit your own bar.
 readonly DEFAULT_ACCEPTANCE_PATHS="tests/acceptance"
 readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
+# shellcheck source=/dev/null
+[ -r "$(dirname "$0")/agent-team-guard-log.sh" ] && . "$(dirname "$0")/agent-team-guard-log.sh"
+command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
+
 ROLE="${1:-}"
 
 # Roles other than the policed ones are none of this guard's business.
@@ -210,6 +214,7 @@ esac
 refuse() { # $1 target $2 what
   printf 'agent-team worktree guard: %s targets %s, which is outside this builder'"'"'s worktree (%s). policy:workspace-isolation confines every write to your own worktree — never the parent checkout, never another builder'"'"'s tree. Re-run it inside %s, or report the mismatch as a plan defect if the work genuinely belongs elsewhere.\n' \
     "$2" "$1" "$DECLARED" "$DECLARED" >&2
+  guard_log worktree "$ROLE" block "$1"
   exit 2
 }
 
@@ -230,6 +235,7 @@ case "$TOOL" in
       if path_within "$TARGET" "$(canonical_path "$DECLARED/${rel%/}")"; then
         printf 'agent-team worktree guard: this %s targets %s, inside the separately-authored acceptance suite (%s). That suite is the bar this build is judged against, authored by an agent that never writes the code, and it is read-only to you — a test that looks wrong is a plan defect to report, never a file to edit. Make the suite pass, or report the defect.\n' \
           "$TOOL" "$TARGET" "$rel" >&2
+        guard_log worktree "$ROLE" block "acceptance-suite: $rel"
         exit 2
       fi
     done <<EOF

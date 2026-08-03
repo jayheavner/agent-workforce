@@ -31,6 +31,10 @@ readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
 # orchestrator read the refusal as "find a wider tool" rather than "wrong role."
 # A typed refusal lets this guard challenge the re-route mechanically.
 readonly REFUSAL_MARKER="WORKFORCE_REFUSAL: out-of-lane"
+# shellcheck source=/dev/null
+[ -r "$(dirname "$0")/agent-team-guard-log.sh" ] && . "$(dirname "$0")/agent-team-guard-log.sh"
+command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
+
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -183,6 +187,7 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     if [ "$TYPE" != "$owner" ]; then
       printf 'agent-team dispatch guard: %s was already refused as out of lane by another specialist, and this dispatch routes it to the %s. A lane refusal is a routing correction, never permission to widen: %s belongs to the %s. Re-dispatch it there, or drop that path from this dispatch if the work genuinely differs.\n' \
         "$refused_path" "$TYPE" "$rel" "$owner" >&2
+      guard_log dispatch "$TYPE" block "reroute of refused $rel"
       exit 2
     fi
   done <<EOF

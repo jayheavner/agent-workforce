@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -151,6 +151,8 @@ bash -n "$REPO/hooks/agent-team-report-guard.sh" || fail "report guard failed ba
 bash -n "$REPO/hooks/agent-team-worktree-guard.sh" || fail "worktree guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-lane-guard.sh" ] || fail "hooks/agent-team-lane-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-lane-guard.sh" || fail "lane guard failed bash -n"
+[ -f "$REPO/hooks/agent-team-guard-log.sh" ] || fail "hooks/agent-team-guard-log.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-guard-log.sh" || fail "guard block log failed bash -n"
 [ -f "$REPO/tools/lint_acceptance_checks.py" ] || fail "tools/lint_acceptance_checks.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/tools/lint_acceptance_checks.py" || fail "acceptance-check lint failed Python syntax validation"
@@ -431,6 +433,12 @@ for h in $RETIRED_HOOK_FILES; do
   [ -f "$HOOKS_DIR/$h" ] && { cp "$HOOKS_DIR/$h" "$BACKUP/"; RETIRED_PRESENT="$RETIRED_PRESENT $h"; }
 done
 PREEXISTING_COST=0
+PREEXISTING_SECRETS=0
+PREEXISTING_AUDIT=0
+PREEXISTING_ROUTER=0
+PREEXISTING_WTGUARD=0
+PREEXISTING_SESSIONSTART=0
+PREEXISTING_ARCHIVER=0
 PREEXISTING_RATES=0
 PREEXISTING_GUARD=0
 PREEXISTING_IGUARD=0
@@ -442,6 +450,12 @@ PREEXISTING_COSTREPORT=0
 PREEXISTING_BUDGETS=0
 PREEXISTING_LANES=0
 PREEXISTING_LANEGUARD=0
+PREEXISTING_GUARDLOG=0
+[ -f "$HOOKS_DIR/agent-team-secrets.sh" ] && { cp "$HOOKS_DIR/agent-team-secrets.sh" "$BACKUP/"; PREEXISTING_SECRETS=1; }
+[ -f "$HOOKS_DIR/agent-team-audit.sh" ] && { cp "$HOOKS_DIR/agent-team-audit.sh" "$BACKUP/"; PREEXISTING_AUDIT=1; }
+[ -f "$HOOKS_DIR/agent-team-plugin-router.sh" ] && { cp "$HOOKS_DIR/agent-team-plugin-router.sh" "$BACKUP/"; PREEXISTING_ROUTER=1; }
+[ -f "$HOOKS_DIR/session_start.py" ] && { cp "$HOOKS_DIR/session_start.py" "$BACKUP/"; PREEXISTING_SESSIONSTART=1; }
+[ -f "$HOOKS_DIR/debug_run_archiver.py" ] && { cp "$HOOKS_DIR/debug_run_archiver.py" "$BACKUP/"; PREEXISTING_ARCHIVER=1; }
 [ -f "$HOOKS_DIR/agent-team-cost.sh" ] && { cp "$HOOKS_DIR/agent-team-cost.sh" "$BACKUP/"; PREEXISTING_COST=1; }
 [ -f "$HOOKS_DIR/model-rates.json" ] && { cp "$HOOKS_DIR/model-rates.json" "$BACKUP/"; PREEXISTING_RATES=1; }
 [ -f "$HOOKS_DIR/agent-team-dispatch-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-guard.sh" "$BACKUP/"; PREEXISTING_GUARD=1; }
@@ -455,6 +469,7 @@ PREEXISTING_LANEGUARD=0
 [ -f "$HOOKS_DIR/agent-team-budgets.json" ] && { cp "$HOOKS_DIR/agent-team-budgets.json" "$BACKUP/"; PREEXISTING_BUDGETS=1; }
 [ -f "$HOOKS_DIR/agent-team-lanes.json" ] && { cp "$HOOKS_DIR/agent-team-lanes.json" "$BACKUP/"; PREEXISTING_LANES=1; }
 [ -f "$HOOKS_DIR/agent-team-lane-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-lane-guard.sh" "$BACKUP/"; PREEXISTING_LANEGUARD=1; }
+[ -f "$HOOKS_DIR/agent-team-guard-log.sh" ] && { cp "$HOOKS_DIR/agent-team-guard-log.sh" "$BACKUP/"; PREEXISTING_GUARDLOG=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -516,12 +531,15 @@ restore() {
       process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
       cost_report.py) cp "$b" "$HOOKS_DIR/" ;;
+      session_start.py) cp "$b" "$HOOKS_DIR/" ;;
+      debug_run_archiver.py) cp "$b" "$HOOKS_DIR/" ;;
       lint_completion_claims.py) cp "$b" "$HOOKS_DIR/" ;;
       model-rates.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-model-defaults.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-budgets.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-lanes.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-lane-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-guard-log.sh) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -567,6 +585,13 @@ cleanup_fresh() {
   [ "$PREEXISTING_BUDGETS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-budgets.json"
   [ "$PREEXISTING_LANES" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lanes.json"
   [ "$PREEXISTING_LANEGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lane-guard.sh"
+  [ "$PREEXISTING_SECRETS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-secrets.sh"
+  [ "$PREEXISTING_AUDIT" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-audit.sh"
+  [ "$PREEXISTING_ROUTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-plugin-router.sh"
+  [ "$PREEXISTING_WTGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-worktree-guard.sh"
+  [ "$PREEXISTING_SESSIONSTART" -eq 0 ] && rm -f "$HOOKS_DIR/session_start.py"
+  [ "$PREEXISTING_ARCHIVER" -eq 0 ] && rm -f "$HOOKS_DIR/debug_run_archiver.py"
+  [ "$PREEXISTING_GUARDLOG" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-guard-log.sh"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -599,6 +624,7 @@ if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cle
 if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch budgets copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-lanes.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "write lanes copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-lane-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "lane guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-guard-log.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "guard block log copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done

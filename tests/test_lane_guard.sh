@@ -102,5 +102,29 @@ block scribe "not json" "malformed stdin blocks a policed role"
 block scribe "" "empty stdin blocks a policed role"
 allow builder "not json" "malformed stdin passes through for an unpoliced role"
 
+# --- every block is recorded where it can be counted. A refusal that only
+# reaches the agent's stderr is invisible, and "the scribe was refused a source
+# write four times this week" is the leading indicator that routing is probing
+# for a way around a control.
+export AGENT_TEAM_TELEMETRY_DIR="$WORK/telemetry"
+printf '%s' "$(write_payload "$REPO/src/app.py")" | bash "$GUARD" scribe >/dev/null 2>&1
+LOG="$AGENT_TEAM_TELEMETRY_DIR/guard-blocks.jsonl"
+if [ -f "$LOG" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL [block is recorded to telemetry]"; fi
+if [ -f "$LOG" ] && [ "$(jq -r '.guard' "$LOG" | head -n1)" = "lane" ]; then
+  PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL [telemetry line names the guard]"; fi
+if [ -f "$LOG" ] && [ "$(jq -r '.role' "$LOG" | head -n1)" = "scribe" ]; then
+  PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL [telemetry line names the role]"; fi
+if [ -f "$LOG" ] && [ "$(jq -r '.detail' "$LOG" | head -n1)" = "src/app.py" ]; then
+  PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL [telemetry line names the refused path]"; fi
+# Telemetry must never create dirt in the repository the work is happening in.
+if [ -z "$(git -C "$REPO" status --porcelain)" ]; then
+  PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL [telemetry wrote into the client repo]"; fi
+# An unwritable telemetry dir must not change the verdict — a guard decision is
+# never allowed to depend on logging succeeding.
+export AGENT_TEAM_TELEMETRY_DIR="/dev/null/nope"
+block scribe "$(write_payload "$REPO/src/app.py")" "block still blocks when telemetry cannot be written"
+allow scribe "$(write_payload "$REPO/docs/ok.md")" "allow still allows when telemetry cannot be written"
+unset AGENT_TEAM_TELEMETRY_DIR
+
 echo "lane-guard tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
