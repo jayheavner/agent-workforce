@@ -56,10 +56,12 @@ branch this work didn't create.
 ## Cleanup
 
 After integration is confirmed — not before: delete the merged local
-branch, remove the working tree if one was created for this work
-(resolve `policy:workspace-isolation` for where work happens; where no
-policy defines it: leave existing worktrees as found), and report the end
-state — base branch, landed commit, and anything left uncommitted and why.
+branch and remove the worktree that was created for this work (resolve
+`policy:workspace-isolation` for where work happens; under the standard
+policy each builder made its own, so remove each one this task created and
+leave every other worktree as found). Then report the end state — base
+branch, landed commit, worktrees removed, and anything left uncommitted
+and why.
 
 If the tree holds unrelated changes, a conflict touches code this branch
 doesn't own, or there is no remote where the human expected one: say so

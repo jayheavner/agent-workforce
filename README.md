@@ -57,7 +57,7 @@ visible to hook subprocesses.
 |---|---|---|---|---|
 | orchestrator | opus-5 | high | Triage, route, dispatch, closeout. Main session; read-only shell for facts | None (read + dispatch) |
 | architect | opus-5 | high | Specs, plans; drafts new skills/agents for team growth | Docs + provisional skills/agents |
-| builder | sonnet-5 | high | TDD implementation, direct or from a plan | Code + local git; no deploy, no push to main |
+| builder | sonnet-5 | high | TDD implementation, direct or from a plan; creates its own unique worktree before touching code | Its own worktree only + local git; never another builder's tree or the parent checkout; no deploy, no push to main |
 | debugger | sonnet-5 | high | Root-cause diagnosis with evidence | None (read + run) |
 | verifier | sonnet-5 | — | Runs the given criteria AND independently tries to break them | None (read + run) |
 | reviewer | opus-5 | high | Code/security review; fidelity (delivered vs requested), plan + spec critique | None (read only) |
@@ -96,7 +96,7 @@ is decided and disclosed at closeout.
 |---|---|---|
 | Secrets guard | `hooks/agent-team-secrets.sh` | Blocks credential values being written to files (the one blocking safety rule) |
 | Audit log | `hooks/agent-team-audit.sh` | One line per shell command per role → `~/.claude/logs/agent-team-audit.log` |
-| Dispatch guard | `hooks/agent-team-dispatch-guard.sh` | Valid `subagent_type` only; builder/verifier/test-author dispatches must carry an ACCEPTANCE CRITERIA block that survives the falsifiability lint (`lint_acceptance_checks.py` — a vacuous line blocks); serializes git-mutating dispatches; every 10th dispatch requires a budget acknowledgment (the $51 stop-loss) |
+| Dispatch guard | `hooks/agent-team-dispatch-guard.sh` | Valid `subagent_type` only; builder/verifier/test-author dispatches must carry an ACCEPTANCE CRITERIA block that survives the falsifiability lint (`lint_acceptance_checks.py` — a vacuous line blocks); serializes git-mutating dispatches; every 10th dispatch requires a budget acknowledgment (the $51 stop-loss). **Known conflict:** `policy:workspace-isolation` now requires each builder to work in its own unique worktree and allows concurrent builders, but this guard still refuses a second builder while one is in flight — the code change to make the guard enforce worktree-uniqueness instead of serialization has not been made |
 | Report guard | `hooks/agent-team-report-guard.sh` | Stop/SubagentStop on every specialist: blocks the specialist from finishing until its report ends with `WORKFORCE_REPORT: <role> \| complete\|partial\|blocked` — covers sync and background dispatches at the source; never blocks twice |
 | Interrupt guard | `hooks/agent-team-interrupt-guard.sh` | PostToolUse(Agent) on the orchestrator: a sync result with no report marker = a killed agent → reconcile-and-RESUME protocol, never a completed phase (Codex path: dispatcher exits 3 on the same signal) |
 | Cost collection | `hooks/agent-team-cost.sh` | Exact per-dispatch token/cost file per session (PostToolUse) |

@@ -108,9 +108,13 @@ of what "done" means. That criteria block is the task's completion ledger — ev
 claim you make traces to it. Frame builder dispatch envelopes per
 `skills/agent-workforce/references/plan-formatting.md` — notation from the target model's
 vendor, stance from its tier; on an unrecognized vendor family dispatch `unframed-fallback` and
-note it. Run independent dispatches in parallel; git-mutating dispatches (builder, executor,
-deployer) are serialized per checkout by a guard — include `PARALLEL_SAFE: no git mutation in
-this dispatch` only when that is literally true. Every 10th dispatch the guard forces a
+note it. Run independent dispatches in parallel, builders included: every builder creates and
+works in its own unique worktree per `policy:workspace-isolation`, so two builders on disjoint
+files are isolated by construction and need no serialization. Name each builder's worktree in its
+dispatch (or require it to create and report one), never point two builders at one path, and only
+run builders concurrently when their tasks touch disjoint files and neither needs the other's
+uncommitted work. Carry each builder's reported worktree path into the verifier, reviewer, and
+deployer dispatches for that work, and integrate every builder branch at closeout. Every 10th dispatch the guard forces a
 re-triage acknowledgment; treat it as a real question about proportionality, not a formality.
 Verifier or reviewer findings go back to the builder with the findings attached — at most two
 repair loops, then escalate to the human with the full history. After the final code edit,
@@ -190,8 +194,9 @@ spec?), do not stall and do not wing it silently:
    included review.
 2. **Commit:** dispatch the executor to stage only this task's delta and commit (Conventional
    Commits). Never mix in pre-existing dirt. Then integrate exactly per the resolved
-   closeout-integration path — it is the only push/PR/merge authority. Remove only
-   clean, merged branches/worktrees this task created.
+   closeout-integration path — it is the only push/PR/merge authority. Integrate every builder
+   worktree branch this task created, then remove only clean, merged branches/worktrees this
+   task created.
 3. **Record:** ONE scribe status note (`docs/STATUS-<task-slug>.md`, `haiku`) covering outcome,
    evidence, deviations, decisions made-and-disclosed, and anything created under Growing the
    team. Status notes during the task exist only for a genuine interruption or handoff.

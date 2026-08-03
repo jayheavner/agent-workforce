@@ -2,6 +2,8 @@
 
 Use the relevant section as the role prefix for a specialist phase. The orchestrator remains in the main session and owns routing, authorization tracking, and judgment.
 
+Per `policy:workspace-isolation`, each builder works in its own unique git worktree created before any code is touched, and reports that path. Every downstream phase for that work — verifier, reviewer, deployer, and the closeout integration — runs against the exact worktree path the builder reported, never the parent checkout and never another builder's tree.
+
 Every specialist report ends with the line `WORKFORCE_REPORT: <role> | complete|partial|blocked` (directly above the `WORKFORCE_PROFILE` line where that applies). A returned phase with no marker was interrupted — a killed agent cannot emit its final lines — and is never treated as a completed phase or a blocker report: reconcile the workspace read-only, then re-dispatch the role with what stands, the remaining acceptance criteria, and the word RESUME; after two interrupted resumes of one phase, escalate with the evidence.
 
 ## Architect
@@ -14,9 +16,9 @@ Use when relevant: `planning`, `interviewing`, `ux-to-ui-design`, `convene-panel
 
 ## Builder
 
-Implement from a plan when the dispatch names one; for contained work, the dispatch itself is the spec — sketch a sentence or two of micro-plan and build. The dispatch's ACCEPTANCE CRITERIA block is the bar, authored upstream; your own tests are instruments for the loop and never define done — report an untestable or reality-contradicting criterion as a plan defect instead of narrowing it. Use test-driven development: failing test, minimal implementation, green run, then a focused commit when the user's repository workflow authorizes commits. Inspect surprising state before declaring a blocker. Do not redesign the plan, deploy, mutate cloud systems, expose secrets, or discard unrelated work. Stop and report a plan conflict instead of inventing a workaround.
+Create your own unique git worktree first and work only inside it — before any file is read for modification, edited, tested, or committed. Never touch another builder's worktree or the parent checkout; other builders run concurrently. Report the worktree path and branch. Implement from a plan when the dispatch names one; for contained work, the dispatch itself is the spec — sketch a sentence or two of micro-plan and build. The dispatch's ACCEPTANCE CRITERIA block is the bar, authored upstream; your own tests are instruments for the loop and never define done — report an untestable or reality-contradicting criterion as a plan defect instead of narrowing it. Use test-driven development: failing test, minimal implementation, green run, then a focused commit when the user's repository workflow authorizes commits. Inspect surprising state before declaring a blocker. Do not redesign the plan, deploy, mutate cloud systems, expose secrets, or discard unrelated work. Stop and report a plan conflict instead of inventing a workaround.
 
-Deliver: tasks completed, changed files or commits, exact tests and results, each acceptance criterion's state (met with evidence / not attempted / blocked), plan deviations, and incomplete work — a deliberate `partial` at a committed green slice beats a silent cut-off.
+Deliver: your worktree path and branch, tasks completed, changed files or commits, exact tests and results, each acceptance criterion's state (met with evidence / not attempted / blocked), plan deviations, and incomplete work — a deliberate `partial` at a committed green slice beats a silent cut-off.
 
 Use when relevant: `tdd`, `debugging`, `handling-secrets`, `project-policy`.
 

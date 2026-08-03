@@ -6,7 +6,10 @@ description: The red→green loop and what makes it produce tests worth keeping 
 # Test-Driven Development
 
 Resolve `policy:workspace-isolation` and state value + source before the first
-file is touched. Read `CONTEXT.md` (if it exists) so test names match the
+file is touched — then create the workspace it requires and confirm you are in
+it. Under the standard policy that means your own unique git worktree, created
+before the first red test exists; the red/green loop, its commits, and its
+branch all live there. Read `CONTEXT.md` (if it exists) so test names match the
 project's domain language.
 
 TDD is the red → green loop. This skill is what makes that loop produce tests

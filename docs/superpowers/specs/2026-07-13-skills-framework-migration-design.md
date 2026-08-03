@@ -47,6 +47,13 @@ an upstream-repository workflow.
 
 ## Consumer policy decision
 
+> **SUPERSEDED 2026-08-03 by human directive.** `policy:workspace-isolation` now requires every
+> builder to create and work in its own unique worktree before any code is touched, and permits
+> concurrent builders. The reasoning below is retained as the record of why the shared-checkout
+> resolution was chosen at the time; the orchestration, handoff, verification-path, and cleanup
+> changes it names as prerequisites are now the live requirement, and the dispatch guard's
+> serialization is a known outstanding conflict.
+
 The upstream organization example requires every code task to create a nested
 per-task worktree. The current workforce does not have an orchestrator-owned
 worktree creation and cleanup phase: all specialists intentionally operate on

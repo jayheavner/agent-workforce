@@ -22,7 +22,7 @@ policy-contract: 1
 
 **dependency-freshness** — versions verified current by web search (LTS + security advisories) and pinned exactly; never from memory; no ranges.
 
-**workspace-isolation** — the project checkout or worktree selected when the orchestrator session starts is the task workspace. Builder, verifier, reviewer, and deployer use that same explicit path for the full route; do not create a nested worktree from inside a specialist dispatch. Run only one code-writing task in a checkout at a time. Concurrent tasks require separate human-created checkouts or orchestrator sessions.
+**workspace-isolation** — every builder creates its own unique git worktree and works only inside it. No code is touched before that worktree exists: create it first, `cd` into it, and treat it as the workspace for the whole dispatch. Name it uniquely under the project's gitignored worktree directory (`<project>/.claude/worktrees/<task-slug>-<builder-instance>`), branched from the session's base branch. A builder never reads, writes, tests, or commits in another builder's worktree, and never edits the parent checkout. Builders therefore run in parallel by default — isolation is per worktree, so two builders on disjoint work need no serialization. Every builder report states its worktree path and branch; the orchestrator dispatches the verifier, reviewer, and deployer for that work against that exact path, and integrates each branch at closeout. Remove a worktree and its branch only after its work is integrated, and only ones the task created.
 
 **test-naming** — recommended: test_<what>_<condition>_<expected>; not a gate.
 
