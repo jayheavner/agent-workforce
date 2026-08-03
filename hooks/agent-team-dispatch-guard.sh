@@ -11,10 +11,17 @@
 set -u
 
 readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer test-author"
-# Git-mutating dispatches are serialized per checkout; MUTATING_ROLES in the
-# closeout hook serves baseline-capture logic and is a different set — do not
-# conflate the two.
+# Git-mutating dispatches are policed per TARGET, not per role: a dispatch that
+# declares its own worktree collides only with another live dispatch in the
+# same worktree, so builders in distinct worktrees run concurrently
+# (policy:workspace-isolation). A git-mutating dispatch that declares nothing
+# still serializes — an undeclared target cannot be proven disjoint from the
+# shared checkout. MUTATING_ROLES in the closeout hook serves baseline-capture
+# logic and is a different set — do not conflate the two.
 readonly GIT_SERIALIZED_ROLES="builder executor deployer test-author"
+# Roles that MUST declare a worktree: the policy gives every builder its own.
+readonly WORKTREE_REQUIRED_ROLES="builder"
+readonly WORKTREE_MARKER_PREFIX="WORKTREE:"
 readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: no git mutation in this dispatch"
 readonly BUDGETS_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-budgets.json"
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
@@ -123,8 +130,9 @@ case "$TYPE" in
     ;;
 esac
 
-# T6: serialize git-mutating dispatches ({builder, executor, deployer}) per
-# checkout. Only these roles are policed; skip the scan entirely otherwise.
+# Workspace isolation for git-mutating dispatches ({builder, executor,
+# deployer, test-author}). Only these roles are policed; skip the scan entirely
+# otherwise.
 IS_SERIALIZED_ROLE=0
 for name in $GIT_SERIALIZED_ROLES; do
   if [ "$TYPE" = "$name" ]; then
@@ -133,19 +141,65 @@ for name in $GIT_SERIALIZED_ROLES; do
   fi
 done
 
+# Normalize a declared worktree path for comparison: trim surrounding blanks
+# and any trailing slashes, so ".../wt", ".../wt/" and ".../wt  " are one
+# directory. Purely textual — the path need not exist yet, since the builder
+# creates it.
+normalize_worktree() {
+  printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's:/*$::'
+}
+
 if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
   PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
   case "$PROMPT" in
     *"$PARALLEL_SAFE_MARKER"*) exit 0 ;;
   esac
+
+  # The worktree this dispatch declares for itself, if any.
+  DECLARED_WORKTREE="$(normalize_worktree "$(
+    printf '%s\n' "$PROMPT" | sed -n "s/^[[:space:]]*${WORKTREE_MARKER_PREFIX}[[:space:]]*//p" | head -n1
+  )")"
+
+  WORKTREE_REQUIRED=0
+  for name in $WORKTREE_REQUIRED_ROLES; do
+    if [ "$TYPE" = "$name" ]; then
+      WORKTREE_REQUIRED=1
+      break
+    fi
+  done
+
+  if [ "$WORKTREE_REQUIRED" -eq 1 ] && [ -z "$DECLARED_WORKTREE" ]; then
+    printf 'agent-team dispatch guard: a %s dispatch must declare its own unique worktree. policy:workspace-isolation gives every builder a private git worktree created before any code is touched, and this guard cannot prove two builders are disjoint without the declaration. Add one line to the dispatch:\n  %s <project>/.claude/worktrees/<task-slug>-<builder-instance>\nUse a path no other live dispatch is using, and never the parent checkout.\n' \
+      "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
+    exit 2
+  fi
+
+  # A builder never works in the parent checkout. Enforced only when the
+  # harness supplies cwd; absence leaves the rule unenforced, not inverted.
+  if [ -n "$DECLARED_WORKTREE" ]; then
+    CWD="$(printf '%s' "$PARSED" | jq -r '.cwd // empty')"
+    if [ -n "$CWD" ] && [ -d "$CWD" ]; then
+      CHECKOUT_ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$CWD")"
+      if [ "$(normalize_worktree "$CHECKOUT_ROOT")" = "$DECLARED_WORKTREE" ]; then
+        printf 'agent-team dispatch guard: this %s dispatch declares the parent checkout (%s) as its worktree. policy:workspace-isolation forbids a builder editing the shared checkout — create a separate worktree under %s/.claude/worktrees/ and declare that path instead.\n' \
+          "$TYPE" "$DECLARED_WORKTREE" "$CHECKOUT_ROOT" >&2
+        exit 2
+      fi
+    fi
+  fi
+
   TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
   if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     # Background dispatches: the immediate tool_result is a launch stub
     # ("Async agent launched successfully"); the dispatch is only resolved by
     # a later task-notification carrying its tool_use id. A stub therefore
     # does NOT clear in-flight status; a notification does.
-    UNRESOLVED_ROLE="$(
-      jq -rs --arg roles "$GIT_SERIALIZED_ROLES" '
+    # One "<role><TAB><declared worktree>" line per still-in-flight
+    # git-mutating dispatch. The worktree is read from that dispatch's own
+    # prompt, so uniqueness is judged against what each builder was actually
+    # told to use.
+    UNRESOLVED_TARGETS="$(
+      jq -rs --arg roles "$GIT_SERIALIZED_ROLES" --arg marker "$WORKTREE_MARKER_PREFIX" '
         ($roles | split(" ")) as $serialized
         | ([ .[] | .. | strings
              | match("<tool-use-id>([^<]+)</tool-use-id>"; "g")
@@ -153,7 +207,15 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
         | reduce .[] as $line ({};
             ((($line.message.content // []) | if type == "array" then . else [] end))[] as $block
             | if ($block.type == "tool_use" and $block.name == "Agent")
-              then .[$block.id] = ($block.input.subagent_type // "")
+              then .[$block.id] = {
+                     role: ($block.input.subagent_type // ""),
+                     worktree: (
+                       ($block.input.prompt // "")
+                       | [ splits("\n") ]
+                       | map(select(startswith($marker)))
+                       | if length == 0 then "" else (.[0] | ltrimstr($marker)) end
+                     )
+                   }
               elif ($block.type == "tool_result" and $block.tool_use_id != null
                     and (([$block.content] | flatten
                           | map(if type == "object" then (.text // "") else tostring end)
@@ -164,13 +226,35 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
           )
         | to_entries[]
         | select((.key as $k | $notified | index($k) | not)
-                 and (.value as $r | $serialized | index($r)))
-        | .value
-      ' "$TRANSCRIPT" 2>/dev/null | head -n1
+                 and (.value.role as $r | $serialized | index($r)))
+        | "\(.value.role)\t\(.value.worktree)"
+      ' "$TRANSCRIPT" 2>/dev/null
     )"
-    if [ -n "$UNRESOLVED_ROLE" ]; then
-      printf 'agent-team dispatch guard: serialize git-mutating dispatches: %s still in flight. Wait for it to resolve, or include the exact prompt line "%s" if this dispatch makes no git mutation.\n' "$UNRESOLVED_ROLE" "$PARALLEL_SAFE_MARKER" >&2
-      exit 2
+
+    if [ -n "$UNRESOLVED_TARGETS" ]; then
+      if [ -n "$DECLARED_WORKTREE" ]; then
+        # Declared target: the only conflict is another live dispatch in the
+        # SAME worktree. Distinct worktrees are what makes concurrent builders
+        # legal, so they pass here.
+        while IFS="$(printf '\t')" read -r other_role other_wt; do
+          [ -n "$other_role" ] || continue
+          [ -n "$other_wt" ] || continue
+          if [ "$(normalize_worktree "$other_wt")" = "$DECLARED_WORKTREE" ]; then
+            printf 'agent-team dispatch guard: worktree collision: a %s dispatch is still in flight in %s, and no two dispatches may share a worktree (policy:workspace-isolation). Give this %s its own path — %s <project>/.claude/worktrees/<task-slug>-<builder-instance> — or wait for the other dispatch to resolve if this work must follow it.\n' \
+              "$other_role" "$DECLARED_WORKTREE" "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
+            exit 2
+          fi
+        done <<EOF
+$UNRESOLVED_TARGETS
+EOF
+      else
+        # Undeclared target: cannot be proven disjoint from the shared
+        # checkout, so the old serialization still applies.
+        FIRST_ROLE="$(printf '%s\n' "$UNRESOLVED_TARGETS" | head -n1 | cut -f1)"
+        printf 'agent-team dispatch guard: this %s dispatch declares no worktree, so it is treated as mutating the shared checkout, and a %s dispatch is still in flight. Wait for it to resolve, declare a %s path this dispatch owns, or include the exact prompt line "%s" if this dispatch makes no git mutation.\n' \
+          "$TYPE" "$FIRST_ROLE" "$WORKTREE_MARKER_PREFIX" "$PARALLEL_SAFE_MARKER" >&2
+        exit 2
+      fi
     fi
   fi
 fi

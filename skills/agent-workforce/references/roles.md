@@ -2,7 +2,7 @@
 
 Use the relevant section as the role prefix for a specialist phase. The orchestrator remains in the main session and owns routing, authorization tracking, and judgment.
 
-Per `policy:workspace-isolation`, each builder works in its own unique git worktree created before any code is touched, and reports that path. Every downstream phase for that work — verifier, reviewer, deployer, and the closeout integration — runs against the exact worktree path the builder reported, never the parent checkout and never another builder's tree.
+Per `policy:workspace-isolation`, each builder works in its own unique git worktree created before any code is touched; its dispatch names that path on a `WORKTREE: <path>` line (the dispatch guard requires it and rejects two live dispatches sharing a path), and its report repeats it. Every downstream phase for that work — verifier, reviewer, deployer, and the closeout integration — runs against the exact worktree path the builder reported, never the parent checkout and never another builder's tree.
 
 Every specialist report ends with the line `WORKFORCE_REPORT: <role> | complete|partial|blocked` (directly above the `WORKFORCE_PROFILE` line where that applies). A returned phase with no marker was interrupted — a killed agent cannot emit its final lines — and is never treated as a completed phase or a blocker report: reconcile the workspace read-only, then re-dispatch the role with what stands, the remaining acceptance criteria, and the word RESUME; after two interrupted resumes of one phase, escalate with the evidence.
 

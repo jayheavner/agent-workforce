@@ -32,6 +32,18 @@ grep -qi "approval" "$AGENTS/executor.md" 2>/dev/null && ok || no "executor has 
 grep -q "Agent(executor)" "$AGENTS/orchestrator.md" && ok || no "orchestrator tools include Agent(executor)"
 grep -q "executor" "$HERE/../hooks/agent-team-dispatch-guard.sh" && ok || no "dispatch guard admits executor"
 
+# workspace-isolation is enforced on the builder in both directions: prevention
+# before each write, and a Stop backstop that refuses completion outside a real
+# worktree. Both must stay wired or the policy is prose again.
+grep -q 'agent-team-worktree-guard.sh builder' "$AGENTS/builder.md" \
+  && ok || no "builder wires the worktree guard"
+awk '/^  PreToolUse:/{p=1} /^  PostToolUse:/{p=0} p && /worktree-guard/{found=1} END{exit !found}' "$AGENTS/builder.md" \
+  && ok || no "builder wires the worktree guard as PreToolUse prevention"
+awk '/^  (Stop|SubagentStop):/{p=1} /^  (PreToolUse|PostToolUse):/{p=0} p && /worktree-guard/{found=1} END{exit !found}' "$AGENTS/builder.md" \
+  && ok || no "builder wires the worktree guard as a Stop backstop"
+grep -q 'agent-team-worktree-guard.sh' "$HERE/../install.sh" \
+  && ok || no "install.sh installs the worktree guard"
+
 # The closeout hook is a single Stop-hook entrypoint (payload on stdin, no
 # subcommands) wired in the orchestrator's frontmatter.
 grep -qE '^  Stop:' "$AGENTS/orchestrator.md" \

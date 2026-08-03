@@ -110,8 +110,10 @@ claim you make traces to it. Frame builder dispatch envelopes per
 vendor, stance from its tier; on an unrecognized vendor family dispatch `unframed-fallback` and
 note it. Run independent dispatches in parallel, builders included: every builder creates and
 works in its own unique worktree per `policy:workspace-isolation`, so two builders on disjoint
-files are isolated by construction and need no serialization. Name each builder's worktree in its
-dispatch (or require it to create and report one), never point two builders at one path, and only
+files are isolated by construction and need no serialization. Every builder dispatch must carry the
+line `WORKTREE: <project>/.claude/worktrees/<task-slug>-<builder-instance>` — the guard rejects a
+builder without one, and rejects two live dispatches sharing a path. Never point two builders at one
+path, never name the parent checkout, and only
 run builders concurrently when their tasks touch disjoint files and neither needs the other's
 uncommitted work. Carry each builder's reported worktree path into the verifier, reviewer, and
 deployer dispatches for that work, and integrate every builder branch at closeout. Every 10th dispatch the guard forces a

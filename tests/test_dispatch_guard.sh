@@ -84,6 +84,7 @@ done
 # (tools/lint_acceptance_checks.py): at least one tagged criterion, no BLOCK
 # findings. A string match alone is a checkbox; the lint is the floor.
 GOOD_CRITERIA='Implement the widget.
+WORKTREE: /Users/jay/claude/proj/.claude/worktrees/widget-b1
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): slugify("A  B") returns "a-b". Check: `python3 -c "from slug import slugify; import sys; sys.exit(0 if slugify(chr(65)+chr(32)+chr(66))==chr(97)+chr(45)+chr(98) else 1)" || echo "why: wrong slug"` -> expects exit 0.
 - [ ] AC-2 (judgment): error messages are actionable. Judge: reviewer. Bar: a bare stack trace with no next step is a fail.'
@@ -109,6 +110,7 @@ expect_block "$(agent_json_p builder 'Build it.
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): file present. Check: `test -f slug.py` -> expects exit 0.')" "silent existence probe blocks"
 expect_allow "$(agent_json_p builder 'Build it.
+WORKTREE: /Users/jay/claude/proj/.claude/worktrees/probe-b1
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): file present. Check: `test -f slug.py || echo "why: slug.py missing"` -> expects exit 0.')" "same probe with failure output allows"
 
@@ -191,6 +193,77 @@ expect_allow \
   "no unresolved serialized dispatch allows"
 
 rm -f "$BUILDER_TRANSCRIPT" "$NO_MUTATING_TRANSCRIPT"
+
+# --- workspace-isolation: one unique worktree per builder, and concurrent
+# builders are REQUIRED. Serialization by role is replaced, for declared
+# dispatches, by collision detection on the declared worktree path. A builder
+# must declare `WORKTREE: <path>`; two builders in different worktrees run at
+# the same time; two pointed at one path is the only collision that blocks.
+WT_A='/Users/jay/claude/proj/.claude/worktrees/task-a-b1'
+WT_B='/Users/jay/claude/proj/.claude/worktrees/task-b-b2'
+CRITERIA_BODY='ACCEPTANCE CRITERIA
+- [ ] AC-1 (mechanical): slugify("A  B") returns "a-b". Check: `python3 -c "from slug import slugify; import sys; sys.exit(0 if slugify(chr(65)+chr(32)+chr(66))==chr(97)+chr(45)+chr(98) else 1)" || echo "why: wrong slug"` -> expects exit 0.'
+
+builder_prompt() { printf 'Implement it.\nWORKTREE: %s\n%s\n' "$1" "$CRITERIA_BODY"; }
+
+# A builder that declares no worktree cannot be checked for uniqueness and
+# violates the policy outright — block, with the fix named.
+expect_block \
+  "$(agent_json_p builder "Implement it.
+$CRITERIA_BODY")" \
+  "builder without a WORKTREE line blocks"
+
+# Ground truth: an unresolved builder that DID declare its worktree.
+write_unresolved_worktree_transcript() { # $1 role $2 worktree -> prints path
+  local path
+  path="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-wt.XXXXXX")"
+  jq -cn --arg role "$1" --arg p "Implement it.
+WORKTREE: $2" \
+    '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"toolu_wt_1",name:"Agent",input:{subagent_type:$role,prompt:$p}}]}}' \
+    >"$path"
+  printf '%s' "$path"
+}
+
+WT_A_INFLIGHT="$(write_unresolved_worktree_transcript builder "$WT_A")"
+
+# THE REQUIREMENT: parallel builders in distinct worktrees.
+expect_allow \
+  "$(agent_json_with_transcript builder "$WT_A_INFLIGHT" "$(builder_prompt "$WT_B")")" \
+  "second builder in a DIFFERENT worktree runs in parallel"
+
+# The one real collision: same path, both live.
+expect_block \
+  "$(agent_json_with_transcript builder "$WT_A_INFLIGHT" "$(builder_prompt "$WT_A")")" \
+  "second builder in the SAME worktree blocks"
+
+# Trailing-slash and whitespace variants are the same directory.
+expect_block \
+  "$(agent_json_with_transcript builder "$WT_A_INFLIGHT" "$(builder_prompt "$WT_A/")")" \
+  "same worktree with a trailing slash still blocks"
+
+# Sequential reuse is fine: test-author then builder in one worktree, the
+# first having resolved. This is the design-route handoff.
+WT_A_DONE="$(mktemp "${TMPDIR:-/tmp}/dispatch-guard-wt.XXXXXX")"
+cat "$WT_A_INFLIGHT" > "$WT_A_DONE"
+jq -cn '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"toolu_wt_1",content:[{type:"text",text:"WORKFORCE_REPORT: builder | complete"}]}]}}' >> "$WT_A_DONE"
+expect_allow \
+  "$(agent_json_with_transcript builder "$WT_A_DONE" "$(builder_prompt "$WT_A")")" \
+  "same worktree allowed once the prior builder resolved"
+
+# An undeclared git-mutating dispatch still serializes (it mutates the shared
+# checkout, and an undeclared target cannot be proven disjoint) — fail closed.
+expect_block \
+  "$(agent_json_with_transcript executor "$WT_A_INFLIGHT" "run the finalizer")" \
+  "undeclared executor still serializes behind a declared builder"
+
+# The parent checkout is never a builder's workspace.
+CHECKOUT_ROOT="$(cd "$HERE/.." && pwd)"
+expect_block \
+  "$(jq -cn --arg tp "$WT_A_INFLIGHT" --arg cwd "$CHECKOUT_ROOT" --arg p "$(builder_prompt "$CHECKOUT_ROOT")" \
+      '{tool_name:"Agent",transcript_path:$tp,cwd:$cwd,tool_input:{subagent_type:"builder",prompt:$p}}')" \
+  "builder declaring the parent checkout as its worktree blocks"
+
+rm -f "$WT_A_INFLIGHT" "$WT_A_DONE"
 
 # T12: dispatch-count budget ratchet. Default checkpoint 10 (from
 # hooks/agent-team-budgets.json). This is the incoming dispatch: transcript

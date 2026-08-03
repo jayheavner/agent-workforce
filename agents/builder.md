@@ -13,6 +13,8 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh builder"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh builder"
   PostToolUse:
     - matcher: Bash
       hooks:
@@ -21,7 +23,13 @@ hooks:
   Stop:
     - hooks:
         - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh builder"
+        - type: command
           command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
+  SubagentStop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh builder"
 ---
 
 You are the team's builder. Two dispatch shapes:
@@ -54,8 +62,11 @@ with a name unique to you (`<project>/.claude/worktrees/<task-slug>-<your-instan
 from the session's base branch, then `cd` into it and confirm with `git rev-parse --show-toplevel`
 that every later command runs there. You never read, write, test, or commit in another builder's
 worktree, and you never edit the parent checkout — other builders are running at the same time
-and their trees are not yours. If the dispatch names a worktree, use exactly that one; if a path
-you were given is already another builder's worktree, stop and report it rather than sharing it.
+and their trees are not yours. Your dispatch names your worktree on a `WORKTREE: <path>` line;
+use exactly that path, create it if it does not exist yet, and if it turns out to be another
+builder's tree, stop and report it rather than sharing it. This is enforced, not advisory: a hook
+refuses every write outside that worktree and refuses to let you finish if you never worked in a
+real one, so a refused edit means your target was wrong, never that the rule is negotiable.
 
 **Preflight before edits.** Inside your worktree, read the plan (when given), the actual
 workspace, and repository guidance. Confirm the named paths, symbols, and dependencies exist and
