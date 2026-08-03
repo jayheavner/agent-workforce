@@ -28,6 +28,19 @@ done
 # The executor's zero-approval path is closed by the deployer-pattern check.
 grep -qi "approval" "$AGENTS/executor.md" 2>/dev/null && ok || no "executor has the approval check"
 
+# Authoring source or tests is builder work, closed at the tool layer rather
+# than by a guard that can be reasoned past (2026-08-03: an executor hand-edited
+# a source file and its test, then committed, opened, and merged the PR as a
+# single actor — author, verifier, and integrator in one, with no independent
+# review). The executor is a shell runner and carries no file-authoring tools.
+EXEC_TOOLS="$(awk -F': *' '/^tools:/{print $2; exit}' "$AGENTS/executor.md")"
+for t in Write Edit NotebookEdit; do
+  printf '%s\n' "$EXEC_TOOLS" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | grep -qx "$t" && no "executor must not carry the $t tool" || ok
+done
+grep -q "is builder work" "$AGENTS/executor.md" \
+  && ok || no "executor names source/test authoring as builder work"
+
 # The orchestrator can dispatch the executor, and the dispatch guard admits it.
 grep -q "Agent(executor)" "$AGENTS/orchestrator.md" && ok || no "orchestrator tools include Agent(executor)"
 grep -q "executor" "$HERE/../hooks/agent-team-dispatch-guard.sh" && ok || no "dispatch guard admits executor"
