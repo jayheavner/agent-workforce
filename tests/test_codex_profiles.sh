@@ -71,8 +71,14 @@ else
   bad "a direct-launch Codex profile does not preserve its role runtime"
 fi
 
-python3 "$REPO/scripts/render_codex_agents.py" --check >/dev/null 2>&1 \
-  && ok || bad "generated Codex profiles are stale"
+# Staleness is the upstream cause of nearly every other failure in this suite:
+# the remaining assertions read the generated profiles, so one stale render
+# looks like broad Codex-installer breakage. Name the fix in the failure text.
+if python3 "$REPO/scripts/render_codex_agents.py" --check >/dev/null 2>&1; then
+  ok
+else
+  bad "generated Codex profiles are stale — an agents/*.md edit was not re-rendered; fix with: python3 scripts/render_codex_agents.py (then commit codex/). Other failures below are likely cascades of this one"
+fi
 
 if python3 - "$POLICY" "$PROFILE_DIR" <<'PY'
 import json

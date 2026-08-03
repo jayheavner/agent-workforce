@@ -207,6 +207,12 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_install_retire.sh" >/dev/null || fail "install-retire tests failed — run tests/test_install_retire.sh to see which"
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
+  bash "$REPO/tests/test_worktree_guard.sh" >/dev/null || fail "worktree guard tests failed — run tests/test_worktree_guard.sh to see which"
+  # An agents/*.md edit that was never re-rendered ships a Codex surface that
+  # contradicts the Claude surface. Cheap, deterministic, so gate on it here
+  # rather than discovering it as unrelated-looking Codex breakage later.
+  python3 "$REPO/scripts/render_codex_agents.py" --check >/dev/null 2>&1 \
+    || fail "generated Codex profiles are stale — run: python3 scripts/render_codex_agents.py (then commit codex/)"
   bash "$REPO/tests/test_closeout_hook.sh" >/dev/null || fail "closeout hook test failed — run tests/test_closeout_hook.sh to see which"
   bash "$REPO/tests/test_cost_report.sh" >/dev/null || fail "cost report tests failed — run tests/test_cost_report.sh to see which"
 fi

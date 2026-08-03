@@ -43,6 +43,7 @@ One failing criterion means the overall verdict is fail. Verdicts don't average.
 | Tests pass | The suite ran fresh, full output read (not a cached/partial run) |
 | Requirements met | Line-by-line checklist against the requirements (not "tests pass") |
 | Regression-tested | Red-green proof: pass → revert fix → MUST fail → restore → pass |
+| Failure is pre-existing | The suite run at the last commit BEFORE this work — `git worktree add <tmp> <base-sha>` and run it there (not `git stash`, which leaves your own committed changes in place and compares your work against itself) |
 
 ## Traps
 
@@ -52,3 +53,11 @@ One failing criterion means the overall verdict is fail. Verdicts don't average.
   mean it's correct; the server starting doesn't mean the endpoint answers.
 - **Wishful reading:** searching output for the success line and stopping.
   Search for the failure lines too.
+- **"Not mine" by assumption:** blaming a failure on pre-existing state is a
+  claim like any other and needs the base-commit run above. `git stash` proves
+  nothing once any part of the work is committed — the baseline you need is the
+  commit before the work started, not your working tree minus its latest edits.
+- **Generated artifacts:** editing a source file that something else is
+  rendered from leaves the rendered copy stale, and the failure surfaces far
+  from the edit. Before calling a suite failure unrelated, check whether your
+  change feeds a generator.

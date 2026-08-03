@@ -26,6 +26,12 @@ Every time after that, from any directory:
 agent-workforce
 ```
 
+**You install once, and never again.** After the first `./bin/agent-workforce`, every later change
+— merged, pulled, or edited locally — is picked up by the launcher itself, which refuses to start a
+stale profile. Never tell a human to run `install.sh` to pick up a change; the only manual step a
+change needs is landing it on the branch the launcher will see. `install.sh` by hand is for a new
+profile, a non-default `CLAUDE_CONFIG_DIR`, or diagnosing a broken install — not for delivery.
+
 That one command is the whole interface. The installer puts an `agent-workforce` shim at
 `~/.local/bin/agent-workforce` (it warns if that directory is not on your PATH); the shim runs
 the repo launcher, which fetches the latest build, checks the active profile
@@ -155,7 +161,11 @@ to override) — never inside the client project; read it with
 ## ChatGPT / Codex surface
 
 The Codex integration (plugin + companion profiles) carries the same role contracts, regenerated
-from `agents/*.md` by `scripts/render_codex_agents.py` — never hand-edit `codex/`. Install with
+from `agents/*.md` by `scripts/render_codex_agents.py` — never hand-edit `codex/`. **Any change to
+`agents/*.md` is incomplete until you run `python3 scripts/render_codex_agents.py`** and commit the
+regenerated `codex/` files in the same change; `tests/test_codex_profiles.sh` fails on the stale
+copies, and its failures read as unrelated Codex-installer breakage rather than pointing back at
+the role file you edited. Install with
 `bash install-codex.sh`; launch with `./bin/agent-workforce-codex`. Details and parity limits:
 `docs/chatgpt-codex-parity.md` and `skills/agent-workforce/references/`. Codex cannot produce
 Claude-style exact dollar reports; it reports the dispatch/model/effort audit instead.
