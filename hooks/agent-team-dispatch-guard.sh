@@ -31,6 +31,17 @@ readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
 # orchestrator read the refusal as "find a wider tool" rather than "wrong role."
 # A typed refusal lets this guard challenge the re-route mechanically.
 readonly REFUSAL_MARKER="WORKFORCE_REFUSAL: out-of-lane"
+# A refusal can itself be wrong. On 2026-08-04 a lane guard defect refused an
+# architect its own plan; the rule below then made that false refusal permanent
+# routing law, and the only role it could still be routed to was disabled by a
+# second defect — five attempts with no way out, because the guard treated a
+# refusal as necessarily correct. The escape is the human's and only the human's:
+# the marker counts when it appears in the human's own turn of the session
+# transcript, never in an assistant turn and never inside a subagent's report,
+# because an orchestrator that can clear its own refusals is not being held to
+# anything. Every use is recorded as a fail-open — a control that stopped
+# enforcing must never be quieter than one that held.
+readonly OVERRIDE_MARKER="WORKFORCE_OVERRIDE: lane-refusal"
 # shellcheck source=/dev/null
 [ -r "$(dirname "$0")/agent-team-guard-log.sh" ] && . "$(dirname "$0")/agent-team-guard-log.sh"
 command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
@@ -38,6 +49,7 @@ command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
 
 if ! command -v jq >/dev/null 2>&1; then
+  guard_log dispatch "${TYPE:-unknown}" block "jq unavailable"
   printf 'agent-team dispatch guard: jq is not available, so this guard cannot parse the dispatch payload. Blocking rather than failing open.\n' >&2
   exit 2
 fi
@@ -49,6 +61,7 @@ INPUT="$(cat)"
 # derived from a failed parse must never be read as "not Agent, so allow".
 PARSED="$(printf '%s' "$INPUT" | jq -c '.' 2>/dev/null)"
 if [ $? -ne 0 ] || [ -z "$PARSED" ]; then
+  guard_log dispatch "${TYPE:-unknown}" block "invalid payload"
   printf 'agent-team dispatch guard: stdin was not valid JSON, so this dispatch cannot be verified. Blocking rather than failing open.\n' >&2
   exit 2
 fi
@@ -61,6 +74,7 @@ TOOL="$(printf '%s' "$PARSED" | jq -r '.tool_name // empty')"
 TYPE="$(printf '%s' "$PARSED" | jq -r '.tool_input.subagent_type // empty')"
 
 if [ -z "$TYPE" ]; then
+  guard_log dispatch "$TYPE" block "no subagent_type"
   printf 'agent-team dispatch guard: this Agent dispatch has no subagent_type. Every dispatch MUST set subagent_type to exactly one of: architect, builder, debugger, verifier, reviewer, deployer, executor, researcher, ops, scribe, ticketer. Re-issue the dispatch with an explicit subagent_type.\n' >&2
   exit 2
 fi
@@ -71,6 +85,7 @@ fi
 case "$TYPE" in
   agent-workforce:*) TYPE="${TYPE#agent-workforce:}" ;;
   *:*)
+    guard_log dispatch "$TYPE" block "unrecognized plugin namespace"
     printf 'agent-team dispatch guard: subagent_type belongs to an unrecognized plugin namespace. Use an agent-workforce specialist.\n' >&2
     exit 2
     ;;
@@ -88,6 +103,7 @@ for name in $VALID_SPECIALISTS; do
 done
 
 if [ "$VALID" -ne 1 ]; then
+  guard_log dispatch "$TYPE" block "not a specialist"
   printf 'agent-team dispatch guard: subagent_type "%s" is not a team specialist. Use exactly one of: architect, builder, debugger, verifier, reviewer, deployer, executor, researcher, ops, scribe, ticketer. (The harness default "general-purpose" is not a team agent and will hard-fail.)\n' "$TYPE" >&2
   exit 2
 fi
@@ -108,6 +124,7 @@ case "$TYPE" in
     case "$PROMPT" in
       *"ACCEPTANCE CRITERIA"*) : ;;
       *)
+        guard_log dispatch "$TYPE" block "no acceptance criteria"
         printf 'agent-team dispatch guard: a %s dispatch must carry an "ACCEPTANCE CRITERIA" block. Author the criteria BEFORE the code exists — from the architect plan when one ran, from the original request otherwise — and pass the identical block to both the builder and the verifier. The builder'"'"'s own tests are scaffolding for its red/green loop, never the bar. Criterion shape:\n%s\nRe-issue this dispatch with the criteria included.\n' "$TYPE" "$CRITERIA_SHAPE" >&2
         exit 2
         ;;
@@ -120,6 +137,7 @@ case "$TYPE" in
     LINT="$GUARD_DIR/lint_acceptance_checks.py"
     [ -f "$LINT" ] || LINT="$GUARD_DIR/../tools/lint_acceptance_checks.py"
     if [ ! -f "$LINT" ]; then
+      guard_log dispatch "$TYPE" block "acceptance lint missing"
       printf 'agent-team dispatch guard: lint_acceptance_checks.py is missing beside this guard — the install is incomplete, so criteria quality cannot be verified. Blocking rather than failing open; run bash install.sh from the workforce repo.\n' >&2
       exit 2
     fi
@@ -129,11 +147,13 @@ case "$TYPE" in
     LINT_RC=$?
     rm -f "$CRITERIA_FILE"
     if [ "$LINT_RC" -eq 1 ]; then
+      guard_log dispatch "$TYPE" block "acceptance criteria failed the lint"
       printf 'agent-team dispatch guard: the ACCEPTANCE CRITERIA block in this %s dispatch failed the falsifiability lint:\n%s\nFix the flagged criteria (each finding names the repair) and re-issue the dispatch.\n' "$TYPE" "$LINT_OUT" >&2
       exit 2
     fi
     case "$LINT_OUT" in
       *"no tagged acceptance criteria found"*)
+        guard_log dispatch "$TYPE" block "no tagged acceptance criterion"
         printf 'agent-team dispatch guard: the ACCEPTANCE CRITERIA block in this %s dispatch contains no tagged criterion, so nothing in it is checkable. Write at least one criterion in the shape:\n%s\nRe-issue the dispatch with real criteria.\n' "$TYPE" "$CRITERIA_SHAPE" >&2
         exit 2
         ;;
@@ -161,10 +181,35 @@ lane_owner() { # $1 repo-relative path -> the role whose lane owns it
   printf '%s' "$owner"
 }
 
+# Paths the human has released, one per line. Only a human turn counts: an entry
+# the transcript marks as the user's whose content is plain text. A tool result is
+# also recorded as a user entry — that is how a subagent's report arrives — so
+# anything carrying a tool_result block or a tool-use result is excluded, and
+# assistant turns are never read at all.
+human_override_paths() { # -> released paths, one per line
+  jq -rs --arg m "$OVERRIDE_MARKER" '
+    [ .[]
+      | select(.type == "user" and (has("toolUseResult") | not))
+      | .message.content
+      | if type == "string" then .
+        elif type == "array" then
+          (if any(.[]; .type != "text") then empty
+           else (map(.text // "") | join("\n")) end)
+        else empty end
+      | [ splits("\n") ]
+      | map(select(startswith($m)))
+      | .[]
+      | ltrimstr($m) | ltrimstr(" ") | ltrimstr("|")
+    ] | unique | .[]
+  ' "$TRANSCRIPT" 2>/dev/null \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[`"'"'"']//g'
+}
+
 TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
   CWD="$(printf '%s' "$PARSED" | jq -r '.cwd // empty')"
+  OVERRIDDEN="$(human_override_paths)"
   ROOT=""
   [ -n "$CWD" ] && [ -d "$CWD" ] && ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || true)"
   REFUSED="$(jq -rs --arg m "$REFUSAL_MARKER" '
@@ -179,14 +224,25 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     refused_path="$(printf '%s' "$refused_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[`"'"'"']//g')"
     [ -n "$refused_path" ] || continue
     case "$PROMPT" in *"$refused_path"*) ;; *) continue ;; esac
+    released=0
+    while IFS= read -r allowed; do
+      [ -n "$allowed" ] || continue
+      [ "$allowed" = "$refused_path" ] && { released=1; break; }
+    done <<EOF
+$OVERRIDDEN
+EOF
+    if [ "$released" -eq 1 ]; then
+      guard_log dispatch "$TYPE" fail-open "human override of lane refusal for $refused_path"
+      continue
+    fi
     rel="$refused_path"
     if [ -n "$ROOT" ]; then
       case "$rel" in "$ROOT"/*) rel="${rel#"$ROOT"/}" ;; esac
     fi
     owner="$(lane_owner "$rel")"
     if [ "$TYPE" != "$owner" ]; then
-      printf 'agent-team dispatch guard: %s was already refused as out of lane by another specialist, and this dispatch routes it to the %s. A lane refusal is a routing correction, never permission to widen: %s belongs to the %s. Re-dispatch it there, or drop that path from this dispatch if the work genuinely differs.\n' \
-        "$refused_path" "$TYPE" "$rel" "$owner" >&2
+      printf 'agent-team dispatch guard: %s was already refused as out of lane by another specialist, and this dispatch routes it to the %s. A lane refusal is a routing correction, never permission to widen: %s belongs to the %s. Re-dispatch it there, or drop that path from this dispatch if the work genuinely differs.\nIf you believe the refusal itself was wrong, say so and stop — only your human can release a path, by writing this line in their own message:\n  %s | <path>\nDo not write that line yourself; a line authored by you is not read as an override.\n' \
+        "$refused_path" "$TYPE" "$rel" "$owner" "$OVERRIDE_MARKER" >&2
       guard_log dispatch "$TYPE" block "reroute of refused $rel"
       exit 2
     fi
@@ -234,6 +290,7 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
   done
 
   if [ "$WORKTREE_REQUIRED" -eq 1 ] && [ -z "$DECLARED_WORKTREE" ]; then
+    guard_log dispatch "$TYPE" block "no worktree declared"
     printf 'agent-team dispatch guard: a %s dispatch must declare its own unique worktree. policy:workspace-isolation gives every builder a private git worktree created before any code is touched, and this guard cannot prove two builders are disjoint without the declaration. Add one line to the dispatch:\n  %s <project>/.claude/worktrees/<task-slug>-<builder-instance>\nUse a path no other live dispatch is using, and never the parent checkout.\n' \
       "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
     exit 2
@@ -246,6 +303,7 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
     if [ -n "$CWD" ] && [ -d "$CWD" ]; then
       CHECKOUT_ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$CWD")"
       if [ "$(normalize_worktree "$CHECKOUT_ROOT")" = "$DECLARED_WORKTREE" ]; then
+        guard_log dispatch "$TYPE" block "declared the parent checkout: $DECLARED_WORKTREE"
         printf 'agent-team dispatch guard: this %s dispatch declares the parent checkout (%s) as its worktree. policy:workspace-isolation forbids a builder editing the shared checkout — create a separate worktree under %s/.claude/worktrees/ and declare that path instead.\n' \
           "$TYPE" "$DECLARED_WORKTREE" "$CHECKOUT_ROOT" >&2
         exit 2
@@ -305,6 +363,7 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
           [ -n "$other_role" ] || continue
           [ -n "$other_wt" ] || continue
           if [ "$(normalize_worktree "$other_wt")" = "$DECLARED_WORKTREE" ]; then
+            guard_log dispatch "$TYPE" block "worktree collision: $DECLARED_WORKTREE"
             printf 'agent-team dispatch guard: worktree collision: a %s dispatch is still in flight in %s, and no two dispatches may share a worktree (policy:workspace-isolation). Give this %s its own path — %s <project>/.claude/worktrees/<task-slug>-<builder-instance> — or wait for the other dispatch to resolve if this work must follow it.\n' \
               "$other_role" "$DECLARED_WORKTREE" "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
             exit 2
@@ -316,6 +375,7 @@ EOF
         # Undeclared target: cannot be proven disjoint from the shared
         # checkout, so the old serialization still applies.
         FIRST_ROLE="$(printf '%s\n' "$UNRESOLVED_TARGETS" | head -n1 | cut -f1)"
+        guard_log dispatch "$TYPE" block "undeclared target serialized behind $FIRST_ROLE"
         printf 'agent-team dispatch guard: this %s dispatch declares no worktree, so it is treated as mutating the shared checkout, and a %s dispatch is still in flight. Wait for it to resolve, declare a %s path this dispatch owns, or include the exact prompt line "%s" if this dispatch makes no git mutation.\n' \
           "$TYPE" "$FIRST_ROLE" "$WORKTREE_MARKER_PREFIX" "$PARALLEL_SAFE_MARKER" >&2
         exit 2
@@ -356,6 +416,7 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ "$DISPATCH_CHECKPOINT" -gt 
     case "$PROMPT" in
       *"WORKFORCE_BUDGET_ACK: $THIS_DISPATCH_NUMBER dispatches"*) ;;
       *)
+        guard_log dispatch "$TYPE" block "dispatch checkpoint $THIS_DISPATCH_NUMBER"
         printf 'agent-team dispatch guard: this is dispatch #%s — a checkpoint (every %s). Re-triage before continuing: include the exact prompt line "WORKFORCE_BUDGET_ACK: %s dispatches — continuing because <tier and why proportionate>" to proceed.\n' "$THIS_DISPATCH_NUMBER" "$DISPATCH_CHECKPOINT" "$THIS_DISPATCH_NUMBER" >&2
         exit 2
         ;;

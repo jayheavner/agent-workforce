@@ -64,6 +64,7 @@ done
 [ "$POLICED" -eq 1 ] || exit 0
 
 if ! command -v jq >/dev/null 2>&1; then
+  guard_log worktree "$ROLE" block "jq unavailable"
   printf 'agent-team worktree guard: jq is not available, so this guard cannot parse the payload. Blocking rather than failing open.\n' >&2
   exit 2
 fi
@@ -71,6 +72,7 @@ fi
 INPUT="$(cat)"
 PARSED="$(printf '%s' "$INPUT" | jq -c '.' 2>/dev/null)"
 if [ -z "$PARSED" ]; then
+  guard_log worktree "$ROLE" block "invalid payload"
   printf 'agent-team worktree guard: stdin was not valid JSON, so this action cannot be verified against policy:workspace-isolation. Blocking rather than failing open.\n' >&2
   exit 2
 fi
@@ -216,14 +218,21 @@ declared_worktree() {
 
 DECLARED_RAW="$(declared_worktree)"
 if [ -z "$DECLARED_RAW" ]; then
+  guard_log worktree "$ROLE" block "no worktree declared"
   printf 'agent-team worktree guard: this builder has no "%s <path>" line in its dispatch, so policy:workspace-isolation cannot be enforced and no write can be confirmed safe. The orchestrator must dispatch every builder with its own unique worktree path.\n' \
     "$WORKTREE_MARKER_PREFIX" >&2
   exit 2
 fi
 DECLARED="$(canonical_path "$DECLARED_RAW")"
 
+# Remediation belongs to whoever can actually perform it. This guard confines the
+# builder to its own worktree and refuses `git -C <parent>`, so a builder cannot
+# create the worktree it was handed — telling it to run `git worktree add` sends
+# it into an instruction this same guard blocks, which is how one wrong path can
+# read as five unrelated failures. The orchestrator owns creation.
 if ! is_linked_worktree "$DECLARED"; then
-  printf 'agent-team worktree guard: the declared worktree %s is not a registered linked git worktree, so this builder is not isolated from the shared checkout or from other builders. Create it first:\n  git -C <project> worktree add %s -b <task-branch>\n' \
+  guard_log worktree "$ROLE" block "not a linked worktree: $DECLARED"
+  printf 'agent-team worktree guard: the declared worktree %s is not a registered linked git worktree, so this builder is not isolated from the shared checkout or from other builders. You cannot create it yourself — this guard confines you to that path and refuses Git aimed outside it. Stop and report to the orchestrator that %s does not exist yet; creating the worktree before dispatch is its job, not yours.\n' \
     "$DECLARED" "$DECLARED" >&2
   exit 2
 fi
@@ -248,6 +257,7 @@ case "$TOOL" in
   Write|Edit|NotebookEdit)
     TARGET_RAW="$(printf '%s' "$PARSED" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
     if [ -z "$TARGET_RAW" ]; then
+      guard_log worktree "$ROLE" block "no file path in $TOOL"
       printf 'agent-team worktree guard: a %s call carried no file path, so its target cannot be confined to %s. Blocking rather than failing open.\n' "$TOOL" "$DECLARED" >&2
       exit 2
     fi
@@ -271,6 +281,7 @@ EOF
   Bash)
     COMMAND="$(printf '%s' "$PARSED" | jq -r '.tool_input.command // empty')"
     if [ -z "$CWD" ]; then
+      guard_log worktree "$ROLE" block "no working directory in Bash"
       printf 'agent-team worktree guard: this Bash call carried no working directory, so it cannot be confined to %s. Blocking rather than failing open.\n' "$DECLARED" >&2
       exit 2
     fi
@@ -296,6 +307,7 @@ EOF
           [ -n "$gitdir" ] || continue
           resolved="$(canonical_path "$gitdir")"
           path_within "$resolved" "$DECLARED" || {
+            guard_log worktree "$ROLE" block "git -C $resolved"
             printf 'agent-team worktree guard: this command runs `git -C %s`, outside this builder'"'"'s worktree (%s). policy:workspace-isolation forbids operating on the parent checkout or another builder'"'"'s tree. Drop the -C and run Git inside your own worktree.\n' \
               "$resolved" "$DECLARED" >&2
             exit 2

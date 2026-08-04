@@ -184,6 +184,44 @@ allow executor "$(bash_payload 'git commit -am x' "$MAIN" "$TR_MINE")" "executor
 block builder "not json" "malformed stdin blocks"
 block builder "" "empty stdin blocks"
 
+# --- EVERY REFUSAL IS RECORDED, not just the confinement ones. A refusal that
+# reaches only the agent's stderr cannot be counted, and on 2026-08-04 the block
+# telemetry showed a builder's shell refusals while its declaration and payload
+# refusals left no trace at all — so the record answered "was it confined?" and
+# could not answer "why was it stopped?". Each reason carries its own detail.
+export AGENT_TEAM_TELEMETRY_DIR="$WORK/telemetry"
+LOG="$AGENT_TEAM_TELEMETRY_DIR/guard-blocks.jsonl"
+records() { # $1 role $2 json $3 expected detail substring $4 label
+  rm -f "$LOG"
+  printf '%s' "$2" | bash "$GUARD" "$1" >/dev/null 2>&1
+  local detail=""
+  [ -f "$LOG" ] && detail="$(jq -r '.detail' "$LOG" | tail -n1)"
+  case "$detail" in
+    *"$3"*) PASS=$((PASS+1)) ;;
+    *) FAIL=$((FAIL+1)); echo "FAIL [$4]: detail='$detail' did not contain '$3'" ;;
+  esac
+}
+records builder "$(write_payload "$WT_MINE/new.py" "$UNDECLARED_TRANSCRIPT")" \
+  "no worktree declared" "an undeclared worktree is recorded"
+records builder "$(write_payload "$MAIN/.claude/worktrees/never-created/x.py" "$TR_FAKE")" \
+  "not a linked worktree" "a declared path that is not a worktree is recorded"
+records builder "not json" "invalid payload" "a malformed payload is recorded"
+records builder "$(jq -cn --arg tr "$TR_MINE" --arg cwd "$MAIN" \
+  '{hook_event_name:"PreToolUse",tool_name:"Write",cwd:$cwd,transcript_path:$tr,tool_input:{content:"x"}}')" \
+  "no file path" "a Write with no file path is recorded"
+records builder "$(jq -cn --arg tr "$TR_MINE" \
+  '{hook_event_name:"PreToolUse",tool_name:"Bash",transcript_path:$tr,tool_input:{command:"ls"}}')" \
+  "no working directory" "a Bash call with no working directory is recorded"
+records builder "$(bash_payload "cd $WT_MINE; git -C $MAIN commit -am x" "$MAIN" "$TR_MINE")" \
+  "git -C" "a git -C escape is recorded"
+# A verdict must never depend on logging succeeding.
+export AGENT_TEAM_TELEMETRY_DIR="/dev/null/nope"
+block builder "$(write_payload "$MAIN/file.txt" "$TR_MINE")" \
+  "a block still blocks when telemetry cannot be written"
+allow builder "$(write_payload "$WT_MINE/ok.py" "$TR_MINE")" \
+  "an allow still allows when telemetry cannot be written"
+unset AGENT_TEAM_TELEMETRY_DIR
+
 rm -rf "$WORK"
 rm -f "$TR_MINE" "$TR_FAKE" "$TR_PARENT" "$UNDECLARED_TRANSCRIPT"
 
