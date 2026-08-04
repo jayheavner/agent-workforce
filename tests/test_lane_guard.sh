@@ -74,6 +74,38 @@ allow test-author "$(write_payload "$REPO/tests/unit/test_x.py")" "test-author w
 block test-author "$(write_payload "$REPO/src/app.py")" "test-author writing source blocks"
 block test-author "$(write_payload "$REPO/docs/README.md")" "test-author writing docs blocks"
 
+# --- A LANE IS MEASURED FROM THE TREE BEING WRITTEN, NOT FROM THE SESSION'S
+# DIRECTORY. Every role above writes with cwd = the parent checkout, because a
+# subagent's directory is its session's and is fixed for the session's life. When
+# the work happens in a linked worktree the write is absolute and lands there,
+# while the directory still says parent checkout — and a root derived from the
+# directory measured <worktree>/docs/x.md as ".claude/worktrees/..." from the
+# parent root, which is inside no lane at all. That refused the architect its own
+# plan on 2026-08-04 and cost a session five blocked attempts.
+WT_LANE="$REPO/.claude/worktrees/task-a"
+# Worktrees live under .claude/ and are ignored there, exactly as in this
+# repository — so the fixture's own isolation cannot register as repository dirt
+# in the telemetry-hygiene check below.
+printf '.claude/\n' >> "$REPO/.git/info/exclude"
+git -C "$REPO" worktree add -q --detach "$WT_LANE" HEAD
+allow architect "$(write_payload "$WT_LANE/docs/product/plan.md")" \
+  "architect writes docs inside a linked worktree"
+allow architect "$(write_payload "$WT_LANE/plans/spec.md")" \
+  "architect writes plans inside a linked worktree"
+allow scribe "$(write_payload "$WT_LANE/docs/STATUS-task.md")" \
+  "scribe writes a status note inside a linked worktree"
+allow test-author "$(write_payload "$WT_LANE/tests/unit/test_x.py")" \
+  "test-author writes a test inside a linked worktree"
+# Rooting on the target must not widen anything: the lane still binds inside the
+# worktree, so source there is refused exactly as it is in the parent checkout.
+block test-author "$(write_payload "$WT_LANE/src/app.py")" \
+  "test-author writing source inside a worktree still blocks"
+block scribe "$(write_payload "$WT_LANE/src/app.py")" \
+  "scribe writing source inside a worktree still blocks"
+# The worktree's own directory is not a lane: .claude/ is neither docs nor plans.
+block scribe "$(write_payload "$REPO/.claude/worktrees/task-a-note.md")" \
+  "a path under .claude in the parent checkout is in no lane"
+
 # --- reads are never restricted: every role must read its inputs.
 allow scribe "$(read_payload "$REPO/src/app.py")" "scribe reading source allows"
 allow test-author "$(read_payload "$REPO/src/app.py")" "test-author reading source allows"

@@ -29,9 +29,14 @@
 # not the same directory in every repository.
 #
 # Known limit, stated rather than hidden: for Bash the confinement is the
-# working directory plus any explicit `git -C <path>`. A command that changes
-# directory internally and then writes is not caught here — the Stop backstop
-# and the reviewer's diff are the nets behind that case.
+# effective working directory plus any explicit `git -C <path>`. The effective
+# directory is the payload's working directory, unless the command opens by
+# stepping into the declared worktree (`cd` or `pushd`), which is honored: a
+# subagent's payload directory is its session's, fixed for the session's life and
+# always the parent checkout, so without honoring that first step a builder could
+# never enter its own worktree at all. A command that changes directory later,
+# mid-command, and then writes is still not caught here — the Stop backstop and
+# the reviewer's diff are the nets behind that case.
 #
 # Hook JSON on stdin. Exit 0 = allow. Exit 2 = block (stderr goes to the agent).
 # Fail-closed: anything that leaves this guard unable to positively confirm the
@@ -128,6 +133,27 @@ path_within() { # $1 candidate $2 container
     "$2"/*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# The directory a command opens by stepping into it: the argument of a leading
+# `cd` or `pushd`, unquoted, or empty when the command does not begin that way.
+# Only the FIRST statement counts — this guard does not simulate a shell, and a
+# directory change buried later in a command is the known limit stated above.
+leading_cd_target() { # $1 command -> path or empty
+  local first rest target
+  first="$(printf '%s\n' "$1" | sed -e 's/^[[:space:]]*//' -e '/^$/d' | head -n1)"
+  case "$first" in
+    cd[[:space:]]*) rest="${first#cd}" ;;
+    pushd[[:space:]]*) rest="${first#pushd}" ;;
+    *) return 0 ;;
+  esac
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  case "$rest" in
+    '"'*) rest="${rest#\"}"; target="${rest%%\"*}" ;;
+    "'"*) rest="${rest#\'}"; target="${rest%%\'*}" ;;
+    *) target="${rest%%[[:space:];&|]*}" ;;
+  esac
+  printf '%s' "$target"
 }
 
 # A linked worktree's .git is a FILE pointing at <main>/.git/worktrees/<name>;
@@ -249,6 +275,17 @@ EOF
       exit 2
     fi
     RUN_DIR="$(canonical_path "$CWD")"
+    # A subagent's payload directory is its session's — fixed for the session's
+    # life and always the parent checkout — so judged by that alone every builder
+    # command was refused, including the `cd` into its own worktree. When the
+    # command's first statement steps into the declared worktree, that is where
+    # the command actually runs, so that becomes the effective directory.
+    # Anything else is judged exactly as before.
+    CD_RAW="$(leading_cd_target "$COMMAND")"
+    if [ -n "$CD_RAW" ]; then
+      CD_TARGET="$(canonical_path "$CD_RAW")"
+      path_within "$CD_TARGET" "$DECLARED" && RUN_DIR="$CD_TARGET"
+    fi
     path_within "$RUN_DIR" "$DECLARED" || refuse "$RUN_DIR" "this shell command's working directory"
 
     # `git -C <path>` retargets Git itself; it must not leave the worktree.

@@ -91,12 +91,10 @@ esac
 
 CWD="$(printf '%s' "$PARSED" | jq -r '.cwd // empty')"
 [ -n "$CWD" ] || CWD="$PWD"
-REPO_ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$CWD")"
 
-LANES="$(lane_spec)"
-# A role with no declared lane is not this guard's business.
-[ -n "$LANES" ] || exit 0
-
+# The target is read, and the root and the lanes settled, in that order: the root
+# is derived from the target below, and lane_spec reads the root when it looks for
+# a project override.
 TARGET_RAW="$(printf '%s' "$PARSED" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
 if [ -z "$TARGET_RAW" ]; then
   guard_log lane "$ROLE" block "no file path in $TOOL"
@@ -149,6 +147,35 @@ canonical_path() { # $1 raw
 }
 
 TARGET="$(canonical_path "$TARGET_RAW")"
+
+# The repository root is resolved from the write TARGET, not from the session's
+# working directory. A subagent's directory is fixed for its session's life and is
+# always the parent checkout, so a directory-derived root measured a legitimate
+# write inside a linked worktree — <worktree>/docs/... — as ".claude/..." from the
+# parent root, outside every lane. Rooting on the target lands in the working tree
+# actually being written, so <worktree>/docs satisfies the docs lane while
+# <worktree>/src still does not. A target in no git working tree falls back to the
+# directory-derived root, exactly as before.
+target_repo_root() { # -> git top-level containing $TARGET, else the CWD-derived root
+  local dir parent root
+  dir="$TARGET"
+  while [ -n "$dir" ] && [ ! -d "$dir" ]; do
+    parent="$(dirname "$dir")"
+    [ "$parent" = "$dir" ] && break
+    dir="$parent"
+  done
+  if [ -d "$dir" ]; then
+    root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"
+    [ -n "$root" ] && { printf '%s' "$root"; return 0; }
+  fi
+  git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$CWD"
+}
+REPO_ROOT="$(target_repo_root)"
+
+LANES="$(lane_spec)"
+# A role with no declared lane is not this guard's business.
+[ -n "$LANES" ] || exit 0
+
 ROOT="$(canonical_path "$REPO_ROOT")"
 
 old_ifs="$IFS"; IFS=':'

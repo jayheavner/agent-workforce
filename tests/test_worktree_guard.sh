@@ -114,6 +114,43 @@ block builder "$(bash_payload 'pytest -q' "$WT_OTHER" "$TR_MINE")" "bash run in 
 block builder "$(bash_payload "git -C $MAIN commit -am x" "$WT_MINE" "$TR_MINE")" "git -C into the parent checkout blocks"
 block builder "$(bash_payload "git -C $WT_OTHER add ." "$WT_MINE" "$TR_MINE")" "git -C into another worktree blocks"
 
+# --- THE REAL-WORLD DIRECTORY. Every case above hands the guard a working
+# directory the builder never actually has: a subagent's directory is its
+# session's, fixed for the session's life, and always the parent checkout. Judged
+# by that alone the guard refused a builder EVERY shell command it ran, including
+# the `cd` into its own worktree — eight recorded refusals on 2026-08-04, each
+# naming the parent checkout, from a builder whose worktree was correct. The
+# effective directory is therefore the declared worktree when the command opens by
+# stepping into it, and the payload's directory otherwise.
+allow builder "$(bash_payload "cd $WT_MINE; pytest -q" "$MAIN" "$TR_MINE")" \
+  "a command that steps into its own worktree first allows"
+allow builder "$(bash_payload "pushd $WT_MINE; pytest -q" "$MAIN" "$TR_MINE")" \
+  "pushd into its own worktree allows"
+allow builder "$(bash_payload "cd \"$WT_MINE\"
+pytest -q" "$MAIN" "$TR_MINE")" \
+  "a quoted cd on its own line allows"
+allow builder "$(bash_payload "cd $WT_MINE/pkg/deep; pytest -q" "$MAIN" "$TR_MINE")" \
+  "stepping into a subdirectory of its own worktree allows"
+# Honoring that first step must widen nothing else.
+block builder "$(bash_payload "cd $MAIN; pytest -q" "$MAIN" "$TR_MINE")" \
+  "stepping into the parent checkout still blocks"
+block builder "$(bash_payload "cd $WT_OTHER; pytest -q" "$MAIN" "$TR_MINE")" \
+  "stepping into another builder's worktree still blocks"
+block builder "$(bash_payload "cd $WT_MINE/../..; rm -rf x" "$MAIN" "$TR_MINE")" \
+  "stepping out of its own worktree by traversal still blocks"
+block builder "$(bash_payload "cd $WT_MINE; git -C $MAIN commit -am x" "$MAIN" "$TR_MINE")" \
+  "stepping in and then retargeting git at the parent checkout still blocks"
+block builder "$(bash_payload "echo hi; cd $WT_MINE; pytest -q" "$MAIN" "$TR_MINE")" \
+  "a cd that is not the first statement is not honored"
+# Writes are judged by the file path, so the same real-world directory changes
+# nothing about them — stated as a test so it cannot regress silently.
+allow builder "$(jq -cn --arg f "$WT_MINE/new.py" --arg tr "$TR_MINE" --arg cwd "$MAIN" \
+  '{hook_event_name:"PreToolUse",tool_name:"Write",cwd:$cwd,transcript_path:$tr,tool_input:{file_path:$f,content:"x"}}')" \
+  "write into own worktree from the parent directory allows"
+block builder "$(jq -cn --arg f "$MAIN/file.txt" --arg tr "$TR_MINE" --arg cwd "$MAIN" \
+  '{hook_event_name:"PreToolUse",tool_name:"Write",cwd:$cwd,transcript_path:$tr,tool_input:{file_path:$f,content:"x"}}')" \
+  "write into the parent checkout from the parent directory blocks"
+
 # Reading the plan in the parent checkout stays legal — the builder needs it.
 allow builder "$(jq -cn --arg tr "$TR_MINE" --arg cwd "$WT_MINE" --arg f "$MAIN/plan.md" \
   '{hook_event_name:"PreToolUse",tool_name:"Read",cwd:$cwd,transcript_path:$tr,tool_input:{file_path:$f}}')" \
