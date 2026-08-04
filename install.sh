@@ -124,7 +124,37 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
+# --- version-pinned hook builds (2026-08-04) ------------------------------------
+# Every hook is wired to one fixed path, and the harness re-reads that file on
+# every tool call — so installing a repair used to rewrite the rules under every
+# session already working, mid-task. Wheels changed on a moving bus, and a session
+# failing against a defect could not tell that apart from the guard being edited
+# beneath it.
+#
+# So the wired paths become generated shims, the real hooks live in an immutable
+# per-build directory, and a session records its build on its first hook call and
+# keeps it for the session's life. This install writes a NEW build and flips
+# `current`; sessions already pinned are untouched, sessions started afterwards
+# get this one. Nothing is ever edited in place. agent-team-pin.sh carries the
+# resolution rule; these lists say which paths are entry points.
+#
+# The flat copies of everything else stay exactly as they were: absolute
+# references to them exist in agent frontmatter and settings.json, and a pinned
+# hook finds its own siblings (lanes.json, the guard-block log, the acceptance
+# lint) inside its own build directory, so the enforcement path is fully pinned
+# whether or not a flat copy is also present.
+WIRED_BASH_HOOKS="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-plugin-router.sh"
+WIRED_PY_HOOKS="session_start.py agent_team_closeout.py debug_run_archiver.py auto-approve-safe-deletes.py"
+# The payload every build carries: the hooks themselves plus the two tools the
+# hooks resolve beside themselves.
+BUILD_PAYLOAD="$HOOK_FILES auto-approve-safe-deletes.py lint_acceptance_checks.py"
+VERSIONS_DIR="$HOOKS_DIR/agent-team-versions"
+# Older builds are kept so a pinned session keeps working, and so a bad repair can
+# be rolled back by flipping the symlink instead of reinstalling. One still named
+# by a live pin is never removed regardless of age.
+HOOK_BUILDS_KEPT=5
+SHIM_MARKER="agent-team hook shim"
 # Approve-intent trust model (2026-07-12 spec): the command-gating policy hooks
 # are retired. On install they are backed up, then PURGED from the hooks dir;
 # --check fails with a RETIRED finding if any reappears.
@@ -153,6 +183,11 @@ bash -n "$REPO/hooks/agent-team-worktree-guard.sh" || fail "worktree guard faile
 bash -n "$REPO/hooks/agent-team-lane-guard.sh" || fail "lane guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-guard-log.sh" ] || fail "hooks/agent-team-guard-log.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-guard-log.sh" || fail "guard block log failed bash -n"
+# The pin resolver is what every wired hook goes through. A broken one would take
+# every guard on the machine down with it, so it is validated before anything is
+# touched, exactly like the guards it fronts.
+[ -f "$REPO/hooks/agent-team-pin.sh" ] || fail "hooks/agent-team-pin.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-pin.sh" || fail "hook pin resolver failed bash -n"
 [ -f "$REPO/tools/lint_acceptance_checks.py" ] || fail "tools/lint_acceptance_checks.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/tools/lint_acceptance_checks.py" || fail "acceptance-check lint failed Python syntax validation"
@@ -363,6 +398,13 @@ if [ "$MODE" = "check" ]; then
   [ -f "$MANIFEST" ] || fail "no manifest at $MANIFEST — run 'bash install.sh' once first"
   jq empty "$MANIFEST" 2>/dev/null || fail "manifest at $MANIFEST is not valid JSON — re-run 'bash install.sh'"
   drift=0
+  # Wired hooks are shims; the real file lives in the build this install recorded.
+  recorded_build="$(jq -r '.hook_build // empty' "$MANIFEST")"
+  is_wired_hook() { # $1 basename
+    local w
+    for w in $WIRED_BASH_HOOKS $WIRED_PY_HOOKS; do [ "$1" = "$w" ] && return 0; done
+    return 1
+  }
   recorded_framework="$(jq -r '.skills_framework_revision // empty' "$MANIFEST")"
   if [ "$recorded_framework" != "$FRAMEWORK_REVISION" ]; then
     echo "check: STALE — skills framework pin changed since the last install; re-run install"
@@ -372,7 +414,14 @@ if [ "$MODE" = "check" ]; then
     [ -n "$rel" ] || continue
     case "$rel" in
       agents/*) inst="$CLAUDE_DIR/agents/$(basename "$rel")" ;;
-      hooks/*)  inst="$HOOKS_DIR/$(basename "$rel")" ;;
+      hooks/*)
+        hook_name="$(basename "$rel")"
+        if is_wired_hook "$hook_name" && [ -n "$recorded_build" ] && [ -d "$VERSIONS_DIR/$recorded_build" ]; then
+          inst="$VERSIONS_DIR/$recorded_build/$hook_name"
+        else
+          inst="$HOOKS_DIR/$hook_name"
+        fi
+        ;;
       skills/*) inst="$CLAUDE_DIR/skills/${rel#skills/}" ;;
       *) continue ;;
     esac
@@ -401,6 +450,34 @@ EOF
   done <<EOF
 $(cd "$REPO/skills" && find . -type f)
 EOF
+  if [ -z "$recorded_build" ]; then
+    echo "check: STALE — this profile was installed before hook builds were version-pinned; re-run install"; drift=1
+  elif [ ! -d "$VERSIONS_DIR/$recorded_build" ]; then
+    echo "check: MISSING — the recorded hook build $VERSIONS_DIR/$recorded_build is gone"; drift=1
+  else
+    live_build="$(cd "$VERSIONS_DIR/current" 2>/dev/null && pwd -P || true)"
+    if [ "$live_build" != "$(cd "$VERSIONS_DIR/$recorded_build" && pwd -P)" ]; then
+      echo "check: DRIFT — $VERSIONS_DIR/current points at $live_build, not the recorded build $recorded_build"; drift=1
+    fi
+    for payload_file in $BUILD_PAYLOAD; do
+      payload_src="$REPO/hooks/$payload_file"
+      [ -f "$payload_src" ] || payload_src="$REPO/tools/$payload_file"
+      if [ ! -f "$VERSIONS_DIR/$recorded_build/$payload_file" ]; then
+        echo "check: MISSING — hook build $recorded_build has no $payload_file"; drift=1
+      elif [ -f "$payload_src" ] && [ "$(sha "$VERSIONS_DIR/$recorded_build/$payload_file")" != "$(sha "$payload_src")" ]; then
+        echo "check: STALE — repo $payload_file differs from the current hook build; re-run install"; drift=1
+      fi
+    done
+  fi
+  # A wired path that is not the generated shim is a hand edit that would silently
+  # un-pin every session on this machine — exactly the failure being closed here.
+  for wired in $WIRED_BASH_HOOKS $WIRED_PY_HOOKS; do
+    if [ ! -f "$HOOKS_DIR/$wired" ]; then
+      echo "check: MISSING — $HOOKS_DIR/$wired was installed but is gone"; drift=1
+    elif ! grep -q "$SHIM_MARKER" "$HOOKS_DIR/$wired"; then
+      echo "check: DRIFT — $HOOKS_DIR/$wired is not the generated shim (hand-edited under ~/.claude/?)"; drift=1
+    fi
+  done
   for h in $RETIRED_HOOK_FILES; do
     [ -f "$HOOKS_DIR/$h" ] && { echo "check: RETIRED — $HOOKS_DIR/$h is a retired policy hook and must be purged; re-run install"; drift=1; }
   done
@@ -451,6 +528,7 @@ PREEXISTING_BUDGETS=0
 PREEXISTING_LANES=0
 PREEXISTING_LANEGUARD=0
 PREEXISTING_GUARDLOG=0
+PREEXISTING_PIN=0
 [ -f "$HOOKS_DIR/agent-team-secrets.sh" ] && { cp "$HOOKS_DIR/agent-team-secrets.sh" "$BACKUP/"; PREEXISTING_SECRETS=1; }
 [ -f "$HOOKS_DIR/agent-team-audit.sh" ] && { cp "$HOOKS_DIR/agent-team-audit.sh" "$BACKUP/"; PREEXISTING_AUDIT=1; }
 [ -f "$HOOKS_DIR/agent-team-plugin-router.sh" ] && { cp "$HOOKS_DIR/agent-team-plugin-router.sh" "$BACKUP/"; PREEXISTING_ROUTER=1; }
@@ -470,6 +548,7 @@ PREEXISTING_GUARDLOG=0
 [ -f "$HOOKS_DIR/agent-team-lanes.json" ] && { cp "$HOOKS_DIR/agent-team-lanes.json" "$BACKUP/"; PREEXISTING_LANES=1; }
 [ -f "$HOOKS_DIR/agent-team-lane-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-lane-guard.sh" "$BACKUP/"; PREEXISTING_LANEGUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-guard-log.sh" ] && { cp "$HOOKS_DIR/agent-team-guard-log.sh" "$BACKUP/"; PREEXISTING_GUARDLOG=1; }
+[ -f "$HOOKS_DIR/agent-team-pin.sh" ] && { cp "$HOOKS_DIR/agent-team-pin.sh" "$BACKUP/"; PREEXISTING_PIN=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -540,6 +619,7 @@ restore() {
       agent-team-lanes.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-lane-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-guard-log.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-pin.sh) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -592,6 +672,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_SESSIONSTART" -eq 0 ] && rm -f "$HOOKS_DIR/session_start.py"
   [ "$PREEXISTING_ARCHIVER" -eq 0 ] && rm -f "$HOOKS_DIR/debug_run_archiver.py"
   [ "$PREEXISTING_GUARDLOG" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-guard-log.sh"
+  [ "$PREEXISTING_PIN" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-pin.sh"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -625,6 +706,9 @@ if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; clean
 if ! cp "$REPO/hooks/agent-team-lanes.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "write lanes copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-lane-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "lane guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-guard-log.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "guard block log copy failed; rolled back"; fi
+# The pin resolver is the one file that is NOT version-pinned: it is what resolves
+# the pin, so every shim sources it from the flat hooks dir by a stable path.
+if ! cp "$REPO/hooks/agent-team-pin.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook pin resolver copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done
@@ -648,6 +732,130 @@ chmod +x "$HOOKS_DIR/agent-team-report-guard.sh" || { restore; cleanup_fresh; fa
 chmod +x "$HOOKS_DIR/agent_team_closeout.py" || { restore; cleanup_fresh; fail "chmod of closeout hook failed; rolled back"; }
 chmod +x "$HOOKS_DIR/cost_report.py" || { restore; cleanup_fresh; fail "chmod of cost report tool failed; rolled back"; }
 chmod +x "$HOOKS_DIR/auto-approve-safe-deletes.py" || { restore; cleanup_fresh; fail "chmod of delete guard failed; rolled back"; }
+chmod +x "$HOOKS_DIR/agent-team-pin.sh" || { restore; cleanup_fresh; fail "chmod of hook pin resolver failed; rolled back"; }
+
+# --- version-pinned hook build --------------------------------------------------
+# This is the step that makes a repair safe to install while sessions are running:
+# write a NEW immutable build, point the wired paths at "whichever build my session
+# is pinned to", and only then flip `current`. A session already working keeps the
+# build it started on; nothing it depends on is rewritten underneath it.
+COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+HOOK_BUILD="$STAMP-$COMMIT"
+BUILD_DIR="$VERSIONS_DIR/$HOOK_BUILD"
+mkdir -p "$BUILD_DIR" || { restore; cleanup_fresh; fail "cannot create hook build directory $BUILD_DIR; rolled back"; }
+for payload_file in $BUILD_PAYLOAD; do
+  payload_src="$REPO/hooks/$payload_file"
+  [ -f "$payload_src" ] || payload_src="$REPO/tools/$payload_file"
+  [ -f "$payload_src" ] || { restore; cleanup_fresh; fail "hook build payload $payload_file is missing from the repo; rolled back"; }
+  cp "$payload_src" "$BUILD_DIR/$payload_file" \
+    || { restore; cleanup_fresh; fail "hook build copy failed for $payload_file; rolled back"; }
+done
+chmod +x "$BUILD_DIR"/*.sh 2>/dev/null || true
+chmod +x "$BUILD_DIR"/*.py 2>/dev/null || true
+# What this build is, readable without the manifest — a pinned session names a
+# directory, and whoever is debugging it should not have to guess what is in there.
+printf 'build: %s\ncommit: %s\nrepo: %s\ninstalled_at: %s\n' \
+  "$HOOK_BUILD" "$COMMIT" "$REPO" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BUILD_DIR/BUILD" 2>/dev/null
+
+# Generated shims replace the wired flat paths. Content depends only on the hook's
+# name, so it is byte-identical across builds: the file the harness re-reads on
+# every tool call stops changing, which is the whole point.
+write_bash_shim() { # $1 hook name
+  printf '#!/usr/bin/env bash\n# GENERATED by agent-workforce install.sh — %s. Do not edit; every install\n# rewrites it. It runs whichever installed build of this hook the calling session\n# is pinned to, so installing a repair never changes the rules under a session\n# that is already working. The rule, and why it exists, are in agent-team-pin.sh.\nHOOK_NAME="%s"\n# shellcheck source=/dev/null\n. "$(dirname "$0")/agent-team-pin.sh"\n' \
+    "$SHIM_MARKER" "$1" > "$HOOKS_DIR/$1"
+}
+write_py_shim() { # $1 hook name
+  sed -e "s/__HOOK_NAME__/$1/" -e "s/__SHIM_MARKER__/$SHIM_MARKER/" > "$HOOKS_DIR/$1" <<'PYSHIM'
+#!/usr/bin/env python3
+"""GENERATED by agent-workforce install.sh — __SHIM_MARKER__. Do not edit.
+
+Runs whichever installed build of __HOOK_NAME__ the calling session is pinned to,
+so installing a repair never changes the rules under a session already working.
+The resolution rule lives in agent-team-pin.sh — one authority, not two.
+"""
+import json
+import os
+import subprocess
+import sys
+
+HOOK_NAME = "__HOOK_NAME__"
+HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+payload = sys.stdin.read()
+session = ""
+try:
+    parsed = json.loads(payload)
+    if isinstance(parsed, dict):
+        session = str(parsed.get("session_id") or "")
+except ValueError:
+    session = ""
+
+resolved = subprocess.run(
+    ["bash", os.path.join(HOOKS_DIR, "agent-team-pin.sh"), "--resolve", session],
+    capture_output=True, text=True)
+build = resolved.stdout.strip()
+real = os.path.join(build, HOOK_NAME) if build else ""
+if resolved.returncode != 0 or not build or not os.path.isfile(real):
+    # Fail closed: an action nobody could check is the outcome this indirection
+    # exists to prevent.
+    sys.stderr.write(
+        "agent-team hook pin: no installed build of %s could be resolved, so this "
+        "action cannot be checked against any version of the rules. Blocking rather "
+        "than failing open. Re-run: bash install.sh\n" % HOOK_NAME)
+    sys.exit(2)
+
+sys.exit(subprocess.run([sys.executable, real, *sys.argv[1:]],
+                        input=payload, text=True).returncode)
+PYSHIM
+}
+for wired in $WIRED_BASH_HOOKS; do
+  write_bash_shim "$wired" || { restore; cleanup_fresh; fail "could not write the $wired shim; rolled back"; }
+  chmod +x "$HOOKS_DIR/$wired" || { restore; cleanup_fresh; fail "chmod of the $wired shim failed; rolled back"; }
+done
+for wired in $WIRED_PY_HOOKS; do
+  write_py_shim "$wired" || { restore; cleanup_fresh; fail "could not write the $wired shim; rolled back"; }
+  chmod +x "$HOOKS_DIR/$wired" || { restore; cleanup_fresh; fail "chmod of the $wired shim failed; rolled back"; }
+  python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+    "$HOOKS_DIR/$wired" || { restore; cleanup_fresh; fail "the generated $wired shim is not valid Python; rolled back"; }
+done
+
+# Flip last, atomically, and only once every copy above has succeeded: until this
+# rename lands, a new session still resolves the previous build, so a half-written
+# install is never a half-enforced machine.
+#
+# The rename is done with rename(2) via python3, NOT `mv`. When the destination is
+# a symlink pointing at a directory — which `current` is on every install after the
+# first — `mv` follows it and moves the new link INSIDE the old build, leaving
+# `current` still aimed at the previous version. The second install then silently
+# changes nothing, which is the most dangerous possible outcome for this mechanism:
+# it looks installed and enforces the old rules. rename(2) replaces the link itself
+# and never follows it.
+if ln -s "$HOOK_BUILD" "$VERSIONS_DIR/.current.$$" 2>/dev/null \
+   && python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' \
+        "$VERSIONS_DIR/.current.$$" "$VERSIONS_DIR/current"; then
+  :
+else
+  rm -f "$VERSIONS_DIR/.current.$$"
+  restore; cleanup_fresh
+  fail "could not point $VERSIONS_DIR/current at $HOOK_BUILD; rolled back"
+fi
+
+# Old builds are kept deliberately — a pinned session still runs one, and rolling
+# a bad repair back is a symlink flip rather than a reinstall. Prune by age, and
+# never remove the live build or one a pin still names, however old it is.
+PINS_DIR="${AGENT_TEAM_PIN_DIR:-$HOME/.claude/state/agent-team-hookver}"
+LIVE_BUILD="$(cd "$VERSIONS_DIR/current" 2>/dev/null && pwd -P)"
+PINNED_BUILDS="$(cat "$PINS_DIR"/* 2>/dev/null || true)"
+PRUNED=0
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  [ "$candidate" = "$LIVE_BUILD" ] && continue
+  case "$PINNED_BUILDS" in *"$candidate"*) continue ;; esac
+  rm -rf "$candidate" && PRUNED=$((PRUNED + 1))
+done <<EOF
+$(find "$VERSIONS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | tail -n +$((HOOK_BUILDS_KEPT + 1)))
+EOF
+echo "install: hook build $HOOK_BUILD is current ($(find "$VERSIONS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ') kept, $PRUNED pruned); wired paths are shims that resolve each session's pinned build"
 
 # --- settings: workforce-managed permission rules (idempotent, additive) ---
 # Memory-directory writes were blocked live 2026-07-22 (a stale, factually
@@ -762,7 +970,6 @@ fi
 # --- manifest: record what this install shipped, so --check can detect drift
 # and the orchestrator can announce its build at session start. Metadata only;
 # a manifest failure does not undo an already-successful install.
-COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 TMP_MANIFEST="$(mktemp)"
 {
   for f in "$REPO"/agents/*.md; do printf 'agents/%s\t%s\n' "$(basename "$f")" "$(sha "$f")"; done
@@ -774,8 +981,10 @@ EOF
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg repo "$REPO" \
     --arg commit "$COMMIT" \
+    --arg hook_build "$HOOK_BUILD" \
     --arg skills_framework_revision "$FRAMEWORK_REVISION" \
     '{installed_at: $at, repo: $repo, commit: $commit,
+      hook_build: $hook_build,
       skills_framework_revision: $skills_framework_revision,
       files: ([inputs | select(length > 0) | split("\t") | {(.[0]): .[1]}] | add)}' \
   > "$TMP_MANIFEST"

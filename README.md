@@ -103,9 +103,11 @@ is decided and disclosed at closeout.
 | Secrets guard | `hooks/agent-team-secrets.sh` | Blocks credential values being written to files (the one blocking safety rule) |
 | Audit log | `hooks/agent-team-audit.sh` | One line per shell command per role → `~/.claude/logs/agent-team-audit.log` |
 | Dispatch guard | `hooks/agent-team-dispatch-guard.sh` | Valid `subagent_type` only; builder/verifier/test-author dispatches must carry an ACCEPTANCE CRITERIA block that survives the falsifiability lint (`lint_acceptance_checks.py` — a vacuous line blocks); enforces workspace isolation — a builder dispatch must declare `WORKTREE: <path>`, may not name the parent checkout, and two live dispatches may not share a path, so **builders in distinct worktrees run concurrently** while a dispatch that declares no worktree still serializes against the shared checkout; every 10th dispatch requires a budget acknowledgment (the $51 stop-loss) |
-| Worktree guard | `hooks/agent-team-worktree-guard.sh` | Enforces `policy:workspace-isolation` on the builder in both directions. PreToolUse(Write\|Edit\|NotebookEdit\|Bash): every write must land inside the builder's own declared linked worktree — the parent checkout, another builder's tree, and any path that is not a registered worktree are refused before the write happens; reads stay unrestricted so the plan and repo guidance remain available. Stop/SubagentStop: the builder cannot finish unless its declared worktree exists and is a real linked worktree. Fail-closed — a builder with no `WORKTREE:` declaration cannot write at all. Known limit: for Bash the confinement is the working directory plus any explicit `git -C`, so a command that `cd`s internally is caught by the Stop backstop and the reviewer's diff, not here |
+| Worktree guard | `hooks/agent-team-worktree-guard.sh` | Enforces `policy:workspace-isolation` on the builder in both directions. PreToolUse(Write\|Edit\|NotebookEdit\|Bash): every write must land inside the builder's own declared linked worktree — the parent checkout, another builder's tree, and any path that is not a registered worktree are refused before the write happens; reads stay unrestricted so the plan and repo guidance remain available. Stop/SubagentStop: the builder cannot finish unless its declared worktree exists and is a real linked worktree. Fail-closed — a builder with no `WORKTREE:` declaration cannot write at all. Every write is judged by its own path and every command by its **effective** directory: a subagent's directory is always the parent checkout, so a leading `cd`/`pushd` into the declared worktree is where the command actually runs. Known limit: a directory change buried later in a command is caught by the Stop backstop and the reviewer's diff, not here |
+| Lane guard | `hooks/agent-team-lane-guard.sh` | PreToolUse(Write\|Edit\|NotebookEdit) on the scribe, architect, and test-author: each writes only the directories its role is for (`hooks/agent-team-lanes.json`, overridable per project in `.workforce/project.json`), and a refusal is typed — `WORKFORCE_REFUSAL: out-of-lane | <path>` — so the dispatch guard can block a re-route of the same path to a role whose lane does not cover it. The lane is measured from the **write target's** working tree, not the session's directory, so a legitimate write inside a linked worktree is inside its lane. Reads are never restricted. A refusal that was itself wrong is released only by the human, in the human's own message: `WORKFORCE_OVERRIDE: lane-refusal | <path>`, recorded as a fail-open |
 | Report guard | `hooks/agent-team-report-guard.sh` | Stop/SubagentStop on every specialist: blocks the specialist from finishing until its report ends with `WORKFORCE_REPORT: <role> \| complete\|partial\|blocked` — covers sync and background dispatches at the source; never blocks twice |
 | Interrupt guard | `hooks/agent-team-interrupt-guard.sh` | PostToolUse(Agent) on the orchestrator: a sync result with no report marker = a killed agent → reconcile-and-RESUME protocol, never a completed phase (Codex path: dispatcher exits 3 on the same signal) |
+| Guard block log | `hooks/agent-team-guard-log.sh` | Every refusal from every guard above appends one JSON line to `~/.claude/logs/agent-team-telemetry/guard-blocks.jsonl` — guard, role, verdict, reason. A refusal that reaches only the agent's stderr cannot be counted, and "the scribe was refused a source write four times this week" is the leading indicator that routing is probing for a way around a control. Fail-opens are recorded too: a control that stopped enforcing must not be quieter than one that held |
 | Cost collection | `hooks/agent-team-cost.sh` | Exact per-dispatch token/cost file per session (PostToolUse) |
 | Priced closeout | `hooks/agent_team_closeout.py` | Stop hook: computes the whole-session cost report and blocks the final message until it is included; requires dirty-tree honesty; enforces the delivery ledger (plan critique between architect and builder, test-author before the first builder on design routes, verifier AND reviewer after the last builder, claimed commits exist, claimed status notes exist, "deployed" needs a deployer) — every check verified against transcript/git/filesystem, never self-reported; bounded at 3 blocks (never wedges); writes telemetry mechanically |
 | Cost report | `bin/agent-workforce-cost-report` | Prints the exact session table on demand — **including the orchestrator's own usage** |
@@ -145,6 +147,29 @@ bash install.sh --list-profiles                     # discover profiles on this 
 focused hook test suites), backs up what it replaces, rolls back on partial failure, and writes
 a checksum manifest per profile. The launcher's auto-install skips the test battery for speed
 (`AGENT_TEAM_SKIP_INSTALL_TEST=1`); run a bare `bash install.sh` for the full validation.
+
+### Installing while sessions are running
+
+Every hook is wired to one fixed path under `~/.claude/hooks`, and the harness re-reads that file
+on every tool call. Until 2026-08-04 an install therefore rewrote the enforcement of every session
+already working, mid-task — and a session failing against a guard defect could not tell that apart
+from the guard being edited underneath it. So the wired paths are now generated shims and the real
+hooks live in immutable per-build directories:
+
+```
+~/.claude/hooks/agent-team-worktree-guard.sh          generated shim, byte-identical across builds
+~/.claude/hooks/agent-team-pin.sh                     the resolution rule (not itself pinned)
+~/.claude/hooks/agent-team-versions/<stamp>-<commit>/  one immutable build, never edited in place
+~/.claude/hooks/agent-team-versions/current            symlink, flipped atomically at end of install
+~/.claude/state/agent-team-hookver/<session-id>        the build THIS session runs
+```
+
+A session records its build on its first hook call — at session start in practice — and keeps it
+for its life. An install writes a new build and flips `current`, which cannot reach a session that
+is already pinned; sessions started afterwards get the new build. Rolling a bad repair back is a
+symlink flip, not a reinstall. Builds are pruned by age, never while a live pin names one. An
+unresolvable build blocks rather than allowing an unchecked action, and `--check` reports a
+hand-edited wired path as DRIFT because editing one silently un-pins every session on the machine.
 
 ## Cost accounting
 
