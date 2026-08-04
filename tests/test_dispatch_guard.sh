@@ -16,6 +16,25 @@ run() { # $1 json
 
 agent_json() { jq -cn --arg t "$1" '{tool_name:"Agent",tool_input:{subagent_type:$t}}'; }
 
+# --- real worktrees for the declarations under test. Until 2026-08-04 these were
+# invented paths, and the guard accepted them because it never looked: a builder
+# dispatched at a directory that does not exist is refused every action it takes,
+# which is knowable here and was not being checked. Fixtures now declare worktrees
+# that exist, because that is the only kind a builder can be given.
+WT_WORK="$(mktemp -d "${TMPDIR:-/tmp}/dispatch-guard-worktrees.XXXXXX")"
+WT_WORK="$(cd "$WT_WORK" && pwd -P)"
+trap 'rm -rf "$WT_WORK"' EXIT
+WT_REPO="$WT_WORK/proj"
+mkdir -p "$WT_REPO"
+git -C "$WT_REPO" init -q
+git -C "$WT_REPO" -c user.email=t@example.com -c user.name=Test commit -q --allow-empty -m init
+mkdir -p "$WT_REPO/.claude/worktrees"
+WT_A="$WT_REPO/.claude/worktrees/task-a-b1"
+WT_B="$WT_REPO/.claude/worktrees/task-b-b2"
+git -C "$WT_REPO" worktree add -q --detach "$WT_A" HEAD
+git -C "$WT_REPO" worktree add -q --detach "$WT_B" HEAD
+
+
 # Build a fixture transcript with one unresolved Agent tool_use for the named
 # subagent_type (T6: serialize-mutating-dispatches ground truth).
 write_unresolved_transcript() { # $1 subagent_type -> prints path
@@ -78,16 +97,22 @@ for a in architect debugger reviewer deployer executor researcher ops scribe tic
   expect_allow "$(agent_json "agent-workforce:$a")" "valid plugin namespace: $a allows"
 done
 
+# The criteria prompts below are single-quoted literals on purpose — they carry
+# backticks and double quotes that the falsifiability lint is meant to see — so the
+# worktree path goes in through a placeholder rather than by changing the quoting.
+with_wt() { printf '%s' "$1" | sed "s|__WT__|$WT_A|g"; }
+
 # Criteria-before-code: a builder or verifier dispatch must carry an
 # ACCEPTANCE CRITERIA block authored upstream of the code, and the block must
 # survive the same falsifiability lint plans are held to
 # (tools/lint_acceptance_checks.py): at least one tagged criterion, no BLOCK
 # findings. A string match alone is a checkbox; the lint is the floor.
-GOOD_CRITERIA='Implement the widget.
-WORKTREE: /Users/jay/claude/proj/.claude/worktrees/widget-b1
+GOOD_CRITERIA_TEMPLATE='Implement the widget.
+WORKTREE: __WT__
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): slugify("A  B") returns "a-b". Check: `python3 -c "from slug import slugify; import sys; sys.exit(0 if slugify(chr(65)+chr(32)+chr(66))==chr(97)+chr(45)+chr(98) else 1)" || echo "why: wrong slug"` -> expects exit 0.
 - [ ] AC-2 (judgment): error messages are actionable. Judge: reviewer. Bar: a bare stack trace with no next step is a fail.'
+GOOD_CRITERIA="$(with_wt "$GOOD_CRITERIA_TEMPLATE")"
 
 expect_block "$(agent_json builder)" "builder without prompt blocks (no criteria)"
 expect_block "$(agent_json_p builder 'implement the widget, TDD')" "builder prompt without criteria blocks"
@@ -109,10 +134,10 @@ ACCEPTANCE CRITERIA
 expect_block "$(agent_json_p builder 'Build it.
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): file present. Check: `test -f slug.py` -> expects exit 0.')" "silent existence probe blocks"
-expect_allow "$(agent_json_p builder 'Build it.
-WORKTREE: /Users/jay/claude/proj/.claude/worktrees/probe-b1
+expect_allow "$(agent_json_p builder "$(with_wt 'Build it.
+WORKTREE: __WT__
 ACCEPTANCE CRITERIA
-- [ ] AC-1 (mechanical): file present. Check: `test -f slug.py || echo "why: slug.py missing"` -> expects exit 0.')" "same probe with failure output allows"
+- [ ] AC-1 (mechanical): file present. Check: `test -f slug.py || echo "why: slug.py missing"` -> expects exit 0.')")" "same probe with failure output allows"
 
 # Missing / empty / harness-default / unknown all block.
 expect_block "$(jq -cn '{tool_name:"Agent",tool_input:{description:"do a thing"}}')" "missing subagent_type blocks"
@@ -199,8 +224,6 @@ rm -f "$BUILDER_TRANSCRIPT" "$NO_MUTATING_TRANSCRIPT"
 # dispatches, by collision detection on the declared worktree path. A builder
 # must declare `WORKTREE: <path>`; two builders in different worktrees run at
 # the same time; two pointed at one path is the only collision that blocks.
-WT_A='/Users/jay/claude/proj/.claude/worktrees/task-a-b1'
-WT_B='/Users/jay/claude/proj/.claude/worktrees/task-b-b2'
 CRITERIA_BODY='ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): slugify("A  B") returns "a-b". Check: `python3 -c "from slug import slugify; import sys; sys.exit(0 if slugify(chr(65)+chr(32)+chr(66))==chr(97)+chr(45)+chr(98) else 1)" || echo "why: wrong slug"` -> expects exit 0.'
 
@@ -318,7 +341,7 @@ expect_block \
 Write it into src/screening/prompts/guidance.json")" \
   "refused source path re-routed to the test-author blocks"
 expect_allow \
-  "$(agent_json_with_transcript builder "$REFUSAL_TR" "WORKTREE: /tmp/wt-a
+  "$(agent_json_with_transcript builder "$REFUSAL_TR" "WORKTREE: $WT_A
 ACCEPTANCE CRITERIA
   - [ ] AC-1 (mechanical): the gate is category-blind. Check: \`pytest -q tests/unit\` -> expects 0 failures.
 Change src/screening/prompts/guidance.json")" \
@@ -331,11 +354,59 @@ Install the dependencies")" \
 # A refused DOC path belongs to the scribe, so the same rule points the other way.
 DOC_REFUSAL_TR="$(write_refusal_transcript "docs/STATUS-task.md")"
 expect_block \
-  "$(agent_json_with_transcript builder "$DOC_REFUSAL_TR" "WORKTREE: /tmp/wt-b
+  "$(agent_json_with_transcript builder "$DOC_REFUSAL_TR" "WORKTREE: $WT_B
 ACCEPTANCE CRITERIA
   - [ ] AC-1 (mechanical): the note exists. Check: \`test -f docs/STATUS-task.md\` -> expects exit 0.
 Write docs/STATUS-task.md")" \
   "refused doc path re-routed to the builder blocks"
+
+# --- THE DECLARATION IS CHECKED BEFORE A BUILDER IS LAUNCHED.
+# 2026-08-04: one dispatch put a parenthetical after the path, so the directory the
+# runtime looked for was a whole paragraph; three others named a worktree that had
+# been removed an hour earlier. Each cost a full launch and produced a refusal that
+# reads as a guard defect rather than as "your line is wrong" — seven dispatches
+# spent on two facts knowable here, before anything was launched.
+wt_prompt() { printf 'Implement it.\n%s\n%s\n' "$1" "$CRITERIA_BODY"; }
+
+expect_block \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: $WT_A (already created by an earlier dispatch for exactly this task; branch fix/x)")")" \
+  "a declaration with a parenthetical after the path blocks"
+expect_block \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: $WT_A extra words")")" \
+  "a declaration with anything after the path blocks"
+expect_block \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: .claude/worktrees/task-a-b1")")" \
+  "a relative declaration blocks"
+expect_block \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: $WT_REPO/.claude/worktrees/removed-an-hour-ago")")" \
+  "a declaration naming a worktree that does not exist blocks"
+expect_block \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: $WT_REPO")")" \
+  "a declaration naming a directory that is not a linked worktree blocks"
+expect_allow \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: $WT_A")")" \
+  "the path alone, naming a real worktree, allows"
+expect_allow \
+  "$(agent_json_p builder "$(wt_prompt "WORKTREE: $WT_A/")")" \
+  "a trailing slash is still the same worktree"
+
+# The runtime reads the marker at the start of a line, so this guard must too — a
+# rule that accepts an indented declaration the runtime will not find is how a
+# dispatch passes and then every action after it fails.
+expect_block \
+  "$(agent_json_p builder "$(printf 'Implement it.\n  WORKTREE: %s\n%s\n' "$WT_A" "$CRITERIA_BODY")")" \
+  "an indented declaration is not a declaration"
+
+# Roles that may be dispatched TO CREATE a worktree are held to shape only: the
+# builder is the role that cannot create its own.
+expect_allow \
+  "$(agent_json_p executor "WORKTREE: $WT_REPO/.claude/worktrees/not-created-yet
+Create the worktree")" \
+  "another role may declare a worktree it is about to create"
+expect_block \
+  "$(agent_json_p executor "WORKTREE: $WT_A (the one from before)
+Do the thing")" \
+  "but a malformed declaration blocks for any role"
 
 # --- A WRONG REFUSAL MUST BE ESCAPABLE, AND ONLY BY THE HUMAN.
 # On 2026-08-04 the lane guard refused an architect its own plan for a reason that

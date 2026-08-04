@@ -110,9 +110,15 @@ claim you make traces to it. Frame builder dispatch envelopes per
 vendor, stance from its tier; on an unrecognized vendor family dispatch `unframed-fallback` and
 note it. Run independent dispatches in parallel, builders included: every builder creates and
 works in its own unique worktree per `policy:workspace-isolation`, so two builders on disjoint
-files are isolated by construction and need no serialization. Every builder dispatch must carry the
-line `WORKTREE: <project>/.claude/worktrees/<task-slug>-<builder-instance>` — the guard rejects a
-builder without one, and rejects two live dispatches sharing a path. Never point two builders at one
+files are isolated by construction and need no serialization. **You create each builder's worktree
+before you dispatch it** — a builder cannot create its own, because the guard confines it to that
+path and refuses Git aimed anywhere else. Every builder dispatch must carry the line
+`WORKTREE: <project>/.claude/worktrees/<task-slug>-<builder-instance>` — the path alone, at the
+start of the line, with nothing after it. Everything after the marker is read as the directory
+name, so a parenthetical or a note on that line becomes part of the path and the worktree is not
+found; put context on its own line. The guard rejects a builder without a declaration, one whose
+declaration is not a single absolute path, one naming a directory that does not exist or is not a
+registered worktree, and two live dispatches sharing a path. Never point two builders at one
 path, never name the parent checkout, and only
 run builders concurrently when their tasks touch disjoint files and neither needs the other's
 uncommitted work. Carry each builder's reported worktree path into the verifier, reviewer, and

@@ -278,7 +278,11 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
 
   # The worktree this dispatch declares for itself, if any.
   DECLARED_WORKTREE="$(normalize_worktree "$(
-    printf '%s\n' "$PROMPT" | sed -n "s/^[[:space:]]*${WORKTREE_MARKER_PREFIX}[[:space:]]*//p" | head -n1
+    # Read exactly as the runtime reads it: at the START of a line. Tolerating
+    # leading whitespace here while the worktree guard requires column zero let an
+    # indented declaration pass the dispatch and then fail every action afterwards
+    # — two rules for one line is how a dispatch looks fine and the builder dies.
+    printf '%s\n' "$PROMPT" | sed -n "s/^${WORKTREE_MARKER_PREFIX}[[:space:]]*//p" | head -n1
   )")"
 
   WORKTREE_REQUIRED=0
@@ -294,6 +298,55 @@ if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
     printf 'agent-team dispatch guard: a %s dispatch must declare its own unique worktree. policy:workspace-isolation gives every builder a private git worktree created before any code is touched, and this guard cannot prove two builders are disjoint without the declaration. Add one line to the dispatch:\n  %s <project>/.claude/worktrees/<task-slug>-<builder-instance>\nUse a path no other live dispatch is using, and never the parent checkout.\n' \
       "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
     exit 2
+  fi
+
+  # The declaration must be a path, and for a builder it must be a worktree that
+  # already exists. Both refusals used to arrive after launch, from the worktree
+  # guard, phrased as "the declared worktree <...> is not a registered linked git
+  # worktree" — which reads as a guard defect, not as "your line is malformed."
+  # On 2026-08-04 that cost seven dispatches: one declaration carried a
+  # parenthetical after the path, so the directory being looked for was a
+  # paragraph, and three others named a worktree that had been removed an hour
+  # earlier. Every one of those was knowable here, before a builder was launched.
+  if [ -n "$DECLARED_WORKTREE" ]; then
+    case "$DECLARED_WORKTREE" in
+      /*) ;;
+      *)
+        guard_log dispatch "$TYPE" block "worktree declaration is not absolute"
+        printf 'agent-team dispatch guard: the %s line in this dispatch is "%s", which is not an absolute path. Declare one absolute path and nothing else:\n  %s /absolute/path/to/the/worktree\n' \
+          "$WORKTREE_MARKER_PREFIX" "$DECLARED_WORKTREE" "$WORKTREE_MARKER_PREFIX" >&2
+        exit 2
+        ;;
+    esac
+    case "$DECLARED_WORKTREE" in
+      *[[:space:]]*|*'('*|*')'*|*';'*|*','*)
+        guard_log dispatch "$TYPE" block "worktree declaration carries more than a path"
+        printf 'agent-team dispatch guard: the %s line in this dispatch carries more than a path:\n  %s\nEverything after "%s" to the end of that line is read as the directory name, so the worktree being looked for is that whole string and no such directory exists. Put the path alone on the line and move the explanation to its own line:\n  %s /absolute/path/to/the/worktree\n' \
+          "$WORKTREE_MARKER_PREFIX" "$DECLARED_WORKTREE" "$WORKTREE_MARKER_PREFIX" "$WORKTREE_MARKER_PREFIX" >&2
+        exit 2
+        ;;
+    esac
+  fi
+  # A builder cannot create the worktree it is given — this guard confines it there
+  # and the worktree guard refuses Git aimed outside it — so for a builder the
+  # directory has to exist before the dispatch, and a missing one is fatal on
+  # arrival. Other git-mutating roles may legitimately be dispatched to create one,
+  # so their declaration is checked for shape only.
+  if [ "$WORKTREE_REQUIRED" -eq 1 ] && [ -n "$DECLARED_WORKTREE" ]; then
+    if [ ! -d "$DECLARED_WORKTREE" ]; then
+      guard_log dispatch "$TYPE" block "declared worktree does not exist: $DECLARED_WORKTREE"
+      printf 'agent-team dispatch guard: this %s dispatch declares the worktree %s, which does not exist. A builder cannot create it — it is confined to that path and refused Git aimed anywhere else — so it would be refused every action it took. Create the worktree first:\n  git -C <project> worktree add %s\nthen re-issue this dispatch. If an earlier dispatch used a worktree that has since been removed, name the one that exists now.\n' \
+        "$TYPE" "$DECLARED_WORKTREE" "$DECLARED_WORKTREE" >&2
+      exit 2
+    fi
+    if ! { [ -f "$DECLARED_WORKTREE/.git" ] \
+           && head -n1 "$DECLARED_WORKTREE/.git" 2>/dev/null \
+              | grep -Eq '^gitdir: .*/\.git/worktrees/[^/]+[[:space:]]*$'; }; then
+      guard_log dispatch "$TYPE" block "declared path is not a linked worktree: $DECLARED_WORKTREE"
+      printf 'agent-team dispatch guard: this %s dispatch declares %s, which exists but is not a registered linked git worktree — so it gives no isolation from the shared checkout or from another builder, and the worktree guard would refuse every write into it. Create a real worktree and declare that path instead:\n  git -C <project> worktree add <project>/.claude/worktrees/<task-slug>-<builder-instance>\n' \
+        "$TYPE" "$DECLARED_WORKTREE" >&2
+      exit 2
+    fi
   fi
 
   # A builder never works in the parent checkout. Enforced only when the

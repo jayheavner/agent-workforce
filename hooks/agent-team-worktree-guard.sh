@@ -200,20 +200,97 @@ acceptance_paths() {
   printf '%s\n' "$DEFAULT_ACCEPTANCE_PATHS"
 }
 
-# The worktree the dispatch assigned to this builder, read from its transcript.
+# The worktree THIS builder's dispatch assigned it.
+#
+# Read from the transcript, and which line is read is the whole difficulty. Until
+# 2026-08-04 this took the FIRST marker line anywhere in the file. That is right
+# for a subagent's own transcript, where the only declaration is its dispatch
+# prompt — and catastrophic for a main-session transcript, which accumulates every
+# dispatch of the session and is append-only. There, "first" means the OLDEST
+# declaration ever made in that session: one session's first builder was dispatched
+# with a malformed path, and from then on every later builder inherited it, however
+# clean its own dispatch was. Six correct dispatches were refused by a line written
+# ninety minutes earlier, and no dispatch could ever have fixed it.
+#
+# So the declaration is resolved structurally, from the dispatch that launched this
+# agent, and only falls back to scanning text when there are no dispatches to read:
+#   1. builder dispatches, as Agent tool_use blocks, in order, each with its id
+#   2. of those, the ones with no result yet — an agent that is still running, which
+#      is what this one is; a launch stub is not a result (background dispatches)
+#   3. the most recent of those, else the most recent dispatch at all
+#   4. no dispatch blocks in this transcript at all: it is a subagent's own, so the
+#      first marker line is its dispatch prompt
+#
+# Known limit, stated rather than hidden: with several builders live at once in one
+# session, "most recent unresolved" can name a sibling's worktree rather than this
+# agent's. That refuses honest work or points it at a peer's tree, so a transcript
+# carrying more than one live declaration is recorded — the ambiguity is visible
+# instead of silent. The structural fix is a dispatch identifier in the payload,
+# which the harness does not currently give a hook.
 declared_worktree() {
   [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] || return 0
   jq -rs --arg marker "$WORKTREE_MARKER_PREFIX" '
-    [ .[] | .. | strings
-      | select(contains($marker))
+    def declaration:
+      (.input.prompt // "")
       | [ splits("\n") ]
       | map(select(startswith($marker)))
-      | .[]
-      | ltrimstr($marker)
-    ] | if length == 0 then empty else .[0] end
+      | if length == 0 then "" else (.[0] | ltrimstr($marker)) end;
+    [ .[] ] as $entries
+    | ( [ $entries[] | .. | objects
+          | select(.type? == "tool_result" and .tool_use_id != null)
+          | select( ([.content] | flatten
+                     | map(if type == "object" then (.text // "") else tostring end)
+                     | join(" "))
+                    | contains("Async agent launched successfully") | not )
+          | .tool_use_id ] ) as $resolved
+    | ( [ $entries[] | .. | objects
+          | select(.type? == "tool_use" and .name? == "Agent")
+          | select( (.input.subagent_type // "") | endswith("builder") )
+          | { id: .id, wt: declaration }
+          | select(.wt != "") ] ) as $dispatches
+    | ( [ $dispatches[] | select( .id as $i | ($resolved | index($i)) | not ) ] ) as $live
+    | if   ($live       | length) > 0 then ($live       | last | .wt)
+      elif ($dispatches | length) > 0 then ($dispatches | last | .wt)
+      else ( [ $entries[] | .. | strings
+               | select(contains($marker))
+               | [ splits("\n") ]
+               | map(select(startswith($marker)))
+               | .[] | ltrimstr($marker) ]
+             | if length == 0 then empty else .[0] end )
+      end
   ' "$TRANSCRIPT" 2>/dev/null \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's:/*$::' \
     | head -n1
+}
+
+# How many distinct worktrees are declared by dispatches that have not resolved.
+# More than one means this guard is choosing between live builders on recency
+# alone; see the known limit above.
+live_declaration_count() {
+  [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] || { printf '0'; return 0; }
+  jq -rs --arg marker "$WORKTREE_MARKER_PREFIX" '
+    def declaration:
+      (.input.prompt // "")
+      | [ splits("\n") ]
+      | map(select(startswith($marker)))
+      | if length == 0 then "" else (.[0] | ltrimstr($marker)) end;
+    [ .[] ] as $entries
+    | ( [ $entries[] | .. | objects
+          | select(.type? == "tool_result" and .tool_use_id != null)
+          | select( ([.content] | flatten
+                     | map(if type == "object" then (.text // "") else tostring end)
+                     | join(" "))
+                    | contains("Async agent launched successfully") | not )
+          | .tool_use_id ] ) as $resolved
+    | [ $entries[] | .. | objects
+        | select(.type? == "tool_use" and .name? == "Agent")
+        | select( (.input.subagent_type // "") | endswith("builder") )
+        | { id: .id, wt: declaration }
+        | select(.wt != "")
+        | select( .id as $i | ($resolved | index($i)) | not )
+        | .wt ]
+    | unique | length
+  ' "$TRANSCRIPT" 2>/dev/null || printf '0'
 }
 
 DECLARED_RAW="$(declared_worktree)"
@@ -224,6 +301,16 @@ if [ -z "$DECLARED_RAW" ]; then
   exit 2
 fi
 DECLARED="$(canonical_path "$DECLARED_RAW")"
+
+# Recorded, not resolved: when two builders are live in one session this guard
+# picks by recency, and a wrong pick refuses honest work or aims it at a peer's
+# tree. Counting it is what makes that visible before it is believed.
+LIVE_DECLARATIONS="$(live_declaration_count)"
+case "$LIVE_DECLARATIONS" in
+  ''|*[!0-9]*) ;;
+  *) [ "$LIVE_DECLARATIONS" -gt 1 ] && guard_log worktree "$ROLE" ambiguous \
+       "$LIVE_DECLARATIONS live worktree declarations in this transcript; resolved by recency to $DECLARED" ;;
+esac
 
 # Remediation belongs to whoever can actually perform it. This guard confines the
 # builder to its own worktree and refuses `git -C <parent>`, so a builder cannot

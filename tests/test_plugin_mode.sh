@@ -8,6 +8,15 @@ ROUTER="$REPO/hooks/agent-team-plugin-router.sh"
 TMPDIR_T="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_T"' EXIT
 
+# A real linked worktree: the dispatch guard now refuses a builder aimed at a
+# directory that does not exist, because a builder cannot create one.
+PLUGIN_REPO="$TMPDIR_T/proj"
+mkdir -p "$PLUGIN_REPO/.claude/worktrees"
+git -C "$PLUGIN_REPO" init -q
+git -C "$PLUGIN_REPO" -c user.email=t@example.com -c user.name=Test commit -q --allow-empty -m init
+PLUGIN_WT="$PLUGIN_REPO/.claude/worktrees/widget-b1"
+git -C "$PLUGIN_REPO" worktree add -q --detach "$PLUGIN_WT" HEAD
+
 PASS=0
 FAIL=0
 RC=0
@@ -100,7 +109,7 @@ grep -q "role=executor ran=npm install left-pad" "$TMPDIR_T/audit.log" \
 expect_rc 2 dispatch "$(agent_payload orchestrator general-purpose)" \
   "orchestrator dispatch guard was not enforced"
 expect_rc 0 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it.
-WORKTREE: /Users/jay/claude/proj/.claude/worktrees/widget-b1
+WORKTREE: '"$PLUGIN_WT"'
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): widget renders. Check: `python3 -m pytest tests/test_widget.py || echo "why: widget test failed"` -> expects exit 0.')" \
   "namespaced orchestrator could not dispatch a namespaced specialist"

@@ -184,6 +184,95 @@ allow executor "$(bash_payload 'git commit -am x' "$MAIN" "$TR_MINE")" "executor
 block builder "not json" "malformed stdin blocks"
 block builder "" "empty stdin blocks"
 
+# --- WHICH DECLARATION IS THIS BUILDER'S. The transcript a hook is handed is not
+# always the subagent's own; a main-session transcript accumulates every dispatch of
+# the session and is append-only. Reading the FIRST marker line there means reading
+# the OLDEST declaration in the session, forever. On 2026-08-04 one session's first
+# builder was dispatched with a malformed path, and every later builder inherited it
+# — six correct dispatches refused by a line written ninety minutes earlier, and no
+# possible dispatch could have fixed it. The declaration is this builder's dispatch,
+# not the first text in a shared file that happens to match.
+dispatch_entry() { # $1 id $2 role $3 worktree (empty = no declaration) -> jsonl line
+  local prompt="Implement it."
+  [ -n "$3" ] && prompt="Implement it.
+WORKTREE: $3"
+  jq -cn --arg id "$1" --arg role "$2" --arg p "$prompt" \
+    '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:$id,name:"Agent",input:{subagent_type:$role,prompt:$p}}]}}'
+}
+result_entry() { # $1 id $2 text
+  jq -cn --arg id "$1" --arg t "$2" \
+    '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:$id,content:[{type:"text",text:$t}]}]}}'
+}
+session_transcript() { # $@ jsonl lines -> path
+  local path; path="$(mktemp "${TMPDIR:-/tmp}/worktree-guard-session.XXXXXX")"
+  printf '%s\n' "$@" > "$path"
+  printf '%s' "$path"
+}
+
+# THE REGRESSION, in the shape that produced it: an old resolved dispatch naming a
+# path that is malformed and gone, then the live dispatch naming this worktree.
+TR_POISONED="$(session_transcript \
+  "$(dispatch_entry toolu_old builder "$MAIN/deleted-tree (already created by an earlier dispatch; branch fix/x)")" \
+  "$(result_entry toolu_old 'blocked')" \
+  "$(dispatch_entry toolu_live builder "$WT_MINE")")"
+allow builder "$(write_payload "$WT_MINE/new.py" "$TR_POISONED")" \
+  "the live dispatch's declaration wins over an older resolved one"
+allow builder "$(bash_payload "cd $WT_MINE; pytest -q" "$MAIN" "$TR_POISONED")" \
+  "the same, for a shell command"
+block builder "$(write_payload "$MAIN/file.txt" "$TR_POISONED")" \
+  "and the live declaration still confines the write"
+
+# A dispatch that has resolved is not this builder; a later live one is.
+TR_TWO_LIVE="$(session_transcript \
+  "$(dispatch_entry toolu_a builder "$WT_OTHER")" \
+  "$(result_entry toolu_a 'done')" \
+  "$(dispatch_entry toolu_b builder "$WT_MINE")")"
+allow builder "$(write_payload "$WT_MINE/new.py" "$TR_TWO_LIVE")" \
+  "a resolved dispatch does not govern the builder that is still running"
+
+# A launch stub is not a result: a background dispatch is still live.
+TR_BACKGROUND="$(session_transcript \
+  "$(dispatch_entry toolu_bg builder "$WT_MINE")" \
+  "$(result_entry toolu_bg 'Async agent launched successfully')" \
+  "$(dispatch_entry toolu_later builder "$WT_OTHER")" \
+  "$(result_entry toolu_later 'done')")"
+allow builder "$(write_payload "$WT_MINE/new.py" "$TR_BACKGROUND")" \
+  "a background launch stub does not resolve its dispatch"
+
+# Only builder dispatches declare a builder's worktree.
+TR_OTHER_ROLE="$(session_transcript \
+  "$(dispatch_entry toolu_x executor "$WT_OTHER")" \
+  "$(dispatch_entry toolu_y builder "$WT_MINE")")"
+allow builder "$(write_payload "$WT_MINE/new.py" "$TR_OTHER_ROLE")" \
+  "another role's declaration is not the builder's"
+
+# When every dispatch has resolved, the most recent one is still the best answer.
+TR_ALL_DONE="$(session_transcript \
+  "$(dispatch_entry toolu_1 builder "$WT_OTHER")" \
+  "$(result_entry toolu_1 'done')" \
+  "$(dispatch_entry toolu_2 builder "$WT_MINE")" \
+  "$(result_entry toolu_2 'done')")"
+allow builder "$(write_payload "$WT_MINE/new.py" "$TR_ALL_DONE")" \
+  "with nothing live, the most recent declaration governs"
+
+# A subagent's own transcript has no dispatch blocks at all — the text scan is the
+# fallback, and it must keep working.
+allow builder "$(write_payload "$WT_MINE/new.py" "$TR_MINE")" \
+  "a subagent's own transcript still resolves its dispatch prompt"
+
+# Two builders live at once is a genuine ambiguity this guard resolves by recency.
+# It must be recorded, because a wrong pick aims a builder at a peer's tree.
+export AGENT_TEAM_TELEMETRY_DIR="$WORK/telemetry-ambiguous"
+TR_AMBIGUOUS="$(session_transcript \
+  "$(dispatch_entry toolu_p builder "$WT_OTHER")" \
+  "$(dispatch_entry toolu_q builder "$WT_MINE")")"
+printf '%s' "$(write_payload "$WT_MINE/new.py" "$TR_AMBIGUOUS")" | bash "$GUARD" builder >/dev/null 2>&1
+AMB_LOG="$AGENT_TEAM_TELEMETRY_DIR/guard-blocks.jsonl"
+if [ -f "$AMB_LOG" ] && [ "$(jq -r 'select(.verdict == "ambiguous") | .detail' "$AMB_LOG" | wc -l | tr -d ' ')" -gt 0 ]; then
+  PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL [two live declarations are recorded as ambiguous]"; fi
+unset AGENT_TEAM_TELEMETRY_DIR
+rm -f "$TR_POISONED" "$TR_TWO_LIVE" "$TR_BACKGROUND" "$TR_OTHER_ROLE" "$TR_ALL_DONE" "$TR_AMBIGUOUS"
+
 # --- EVERY REFUSAL IS RECORDED, not just the confinement ones. A refusal that
 # reaches only the agent's stderr cannot be counted, and on 2026-08-04 the block
 # telemetry showed a builder's shell refusals while its declaration and payload
