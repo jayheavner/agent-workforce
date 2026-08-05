@@ -116,6 +116,58 @@ block scribe "$(write_payload "$REPO/docs/../src/app.py")" "traversal out of the
 # --- writes outside the repository entirely are outside every lane.
 block scribe "$(write_payload "$WORK/loose.md")" "scribe writing outside the repo blocks"
 
+# --- A LANE MAY NAME AN ABSOLUTE PATH, AND THE AGENT MEMORY IS ONE.
+# 2026-08-04: the agent memory at ~/.claude/projects/<project>/memory is outside
+# every checkout, so no repo-relative lane could ever cover it. The scribe was
+# refused it, the dispatch guard's "unclaimed means source, so the builder's"
+# fallback sent it to the one role confined to a git worktree, and the worktree
+# guard refused it there. Three correct guards and no role left that could write
+# the file. These cases are the lane that removes the loop — and the ones that
+# keep it from becoming "the scribe may write anywhere under ~/.claude", which
+# would include the session transcripts every guard reads.
+FAKEHOME="$WORK/home"
+PROJECT_MEM="$FAKEHOME/.claude/projects/-Users-someone-project/memory"
+mkdir -p "$PROJECT_MEM"
+expect_home() { # $1 expected_rc $2 role $3 json $4 label
+  set +e
+  printf '%s' "$3" | HOME="$FAKEHOME" bash "$GUARD" "$2" >/dev/null 2>&1
+  local rc=$?
+  set -u
+  if [ "$rc" -eq "$1" ]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1))
+    echo "FAIL [$4]: expected=$1 got=$rc"
+  fi
+}
+allow_home() { expect_home 0 "$1" "$2" "$3"; }
+block_home() { expect_home 2 "$1" "$2" "$3"; }
+
+allow_home scribe "$(write_payload "$PROJECT_MEM/feedback-never-bury-open-items.md")" \
+  "scribe writes a lesson into the agent memory"
+allow_home scribe "$(edit_payload "$PROJECT_MEM/MEMORY.md")" \
+  "scribe edits the memory index"
+allow_home scribe "$(write_payload "$FAKEHOME/.claude/projects/-not-created-yet/memory/first.md")" \
+  "the memory directory need not exist yet"
+# The wildcard is exactly one segment. The project directory itself holds the
+# session transcripts these guards read to decide anything, and a lane that
+# reached them would let an agent edit the evidence it is judged on.
+block_home scribe "$(write_payload "$FAKEHOME/.claude/projects/-Users-someone-project/session.jsonl")" \
+  "the project directory itself is not in the memory lane"
+block_home scribe "$(write_payload "$FAKEHOME/.claude/projects/-Users-someone-project/subagents/agent-x.jsonl")" \
+  "a subagent transcript is not in the memory lane"
+block_home scribe "$(write_payload "$FAKEHOME/.claude/projects/-p/deeper/memory/x.md")" \
+  "a wildcard matches one segment, not a run of them"
+block_home scribe "$(write_payload "$FAKEHOME/.claude/settings.json")" \
+  "the rest of ~/.claude is in no lane"
+block_home scribe "$(write_payload "$PROJECT_MEM/../../../../.zshrc")" \
+  "traversal out of the memory lane blocks"
+# The memory is the scribe's, the way documents are: no other role inherits it.
+block_home architect "$(write_payload "$PROJECT_MEM/lesson.md")" \
+  "the architect has no memory lane"
+block_home test-author "$(write_payload "$PROJECT_MEM/lesson.md")" \
+  "the test-author has no memory lane"
+
 # --- roles this guard does not police pass through untouched (the builder has
 # its own worktree guard; the executor carries no file-authoring tools at all).
 allow builder "$(write_payload "$REPO/src/app.py")" "builder is not policed by this guard"

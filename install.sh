@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
 # --- version-pinned hook builds (2026-08-04) ------------------------------------
 # Every hook is wired to one fixed path, and the harness re-reads that file on
 # every tool call — so installing a repair used to rewrite the rules under every
@@ -181,6 +181,8 @@ bash -n "$REPO/hooks/agent-team-report-guard.sh" || fail "report guard failed ba
 bash -n "$REPO/hooks/agent-team-worktree-guard.sh" || fail "worktree guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-lane-guard.sh" ] || fail "hooks/agent-team-lane-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-lane-guard.sh" || fail "lane guard failed bash -n"
+[ -f "$REPO/hooks/agent-team-lane-paths.sh" ] || fail "hooks/agent-team-lane-paths.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-lane-paths.sh" || fail "lane path rules failed bash -n"
 [ -f "$REPO/hooks/agent-team-guard-log.sh" ] || fail "hooks/agent-team-guard-log.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-guard-log.sh" || fail "guard block log failed bash -n"
 # The pin resolver is what every wired hook goes through. A broken one would take
@@ -527,6 +529,7 @@ PREEXISTING_COSTREPORT=0
 PREEXISTING_BUDGETS=0
 PREEXISTING_LANES=0
 PREEXISTING_LANEGUARD=0
+PREEXISTING_LANEPATHS=0
 PREEXISTING_GUARDLOG=0
 PREEXISTING_PIN=0
 [ -f "$HOOKS_DIR/agent-team-secrets.sh" ] && { cp "$HOOKS_DIR/agent-team-secrets.sh" "$BACKUP/"; PREEXISTING_SECRETS=1; }
@@ -547,6 +550,7 @@ PREEXISTING_PIN=0
 [ -f "$HOOKS_DIR/agent-team-budgets.json" ] && { cp "$HOOKS_DIR/agent-team-budgets.json" "$BACKUP/"; PREEXISTING_BUDGETS=1; }
 [ -f "$HOOKS_DIR/agent-team-lanes.json" ] && { cp "$HOOKS_DIR/agent-team-lanes.json" "$BACKUP/"; PREEXISTING_LANES=1; }
 [ -f "$HOOKS_DIR/agent-team-lane-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-lane-guard.sh" "$BACKUP/"; PREEXISTING_LANEGUARD=1; }
+[ -f "$HOOKS_DIR/agent-team-lane-paths.sh" ] && { cp "$HOOKS_DIR/agent-team-lane-paths.sh" "$BACKUP/"; PREEXISTING_LANEPATHS=1; }
 [ -f "$HOOKS_DIR/agent-team-guard-log.sh" ] && { cp "$HOOKS_DIR/agent-team-guard-log.sh" "$BACKUP/"; PREEXISTING_GUARDLOG=1; }
 [ -f "$HOOKS_DIR/agent-team-pin.sh" ] && { cp "$HOOKS_DIR/agent-team-pin.sh" "$BACKUP/"; PREEXISTING_PIN=1; }
 
@@ -618,6 +622,7 @@ restore() {
       agent-team-budgets.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-lanes.json) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-lane-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-lane-paths.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-guard-log.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-pin.sh) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
@@ -671,6 +676,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_WTGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-worktree-guard.sh"
   [ "$PREEXISTING_SESSIONSTART" -eq 0 ] && rm -f "$HOOKS_DIR/session_start.py"
   [ "$PREEXISTING_ARCHIVER" -eq 0 ] && rm -f "$HOOKS_DIR/debug_run_archiver.py"
+  [ "$PREEXISTING_LANEPATHS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lane-paths.sh"
   [ "$PREEXISTING_GUARDLOG" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-guard-log.sh"
   [ "$PREEXISTING_PIN" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-pin.sh"
   while IFS= read -r rel; do
@@ -705,6 +711,7 @@ if ! cp "$REPO/hooks/agent-model-defaults.json" "$HOOKS_DIR/"; then restore; cle
 if ! cp "$REPO/hooks/agent-team-budgets.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch budgets copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-lanes.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "write lanes copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-lane-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "lane guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-lane-paths.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "lane path rules copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-guard-log.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "guard block log copy failed; rolled back"; fi
 # The pin resolver is the one file that is NOT version-pinned: it is what resolves
 # the pin, so every shim sources it from the flat hooks dir by a stable path.

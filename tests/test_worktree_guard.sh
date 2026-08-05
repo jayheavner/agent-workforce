@@ -94,6 +94,12 @@ block builder "$(edit_payload "$MAIN/file.txt" "$TR_MINE")" "edit in the parent 
 block builder "$(write_payload "$WT_OTHER/file.txt" "$TR_MINE")" "write into ANOTHER builder's worktree blocks"
 block builder "$(edit_payload "$WT_OTHER/file.txt" "$TR_MINE")" "edit in another builder's worktree blocks"
 block builder "$(write_payload "$WORK/loose.txt" "$TR_MINE")" "write outside any worktree blocks"
+# The third side of the 2026-08-04 loop, kept explicit: the agent memory is in no
+# worktree, so it can never be the builder's however it was routed here. The
+# repair is that the scribe's lane reaches it (tests/test_lane_guard.sh), never
+# that this confinement softens.
+block builder "$(write_payload "$WORK/home/.claude/projects/-p/memory/lesson.md" "$TR_MINE")" \
+  "write into the agent memory blocks — it is in no worktree"
 
 # Path trickery must not escape: a traversal that lands in the parent checkout
 # is the parent checkout.

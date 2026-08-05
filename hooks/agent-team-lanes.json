@@ -1,5 +1,5 @@
 {
-  "description": "Write lanes the workforce guards enforce. Shipped defaults; a project overrides a key by declaring it in its own .workforce/project.json. A key that cannot be read falls back to the guard's built-in default, never to 'no rule'.",
+  "description": "Write lanes the workforce guards enforce. Shipped defaults; a project overrides a key by declaring it in its own .workforce/project.json. A key that cannot be read falls back to the guard's built-in default, never to 'no rule'. A lane is repo-relative (docs) or filesystem-anchored (/abs, ~/abs), and a '*' matches exactly one path segment.",
   "acceptance_suite_paths": [
     "tests/acceptance"
   ],
@@ -9,7 +9,7 @@
     "doc-inventory"
   ],
   "role_lanes": {
-    "scribe": ["docs", "plans", "doc-inventory"],
+    "scribe": ["docs", "plans", "doc-inventory", "~/.claude/projects/*/memory"],
     "architect": ["plans", "docs", "skills", "agents"],
     "test-author": ["tests"]
   }

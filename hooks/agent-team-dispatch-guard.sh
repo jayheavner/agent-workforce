@@ -45,6 +45,10 @@ readonly OVERRIDE_MARKER="WORKFORCE_OVERRIDE: lane-refusal"
 # shellcheck source=/dev/null
 [ -r "$(dirname "$0")/agent-team-guard-log.sh" ] && . "$(dirname "$0")/agent-team-guard-log.sh"
 command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
+# The rule for which paths a lane covers is shared with the lane guard that
+# enforces it, so a path outside every lane there cannot be owned by a role here.
+# shellcheck source=/dev/null
+[ -r "$(dirname "$0")/agent-team-lane-paths.sh" ] && . "$(dirname "$0")/agent-team-lane-paths.sh"
 
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
 
@@ -165,20 +169,8 @@ esac
 # When a specialist has refused a path as outside its lane, the next dispatch
 # carrying that same path must go to the role whose lane covers it. Anything else
 # is the incident's exact move: a refusal treated as license to widen.
-lane_owner() { # $1 repo-relative path -> the role whose lane owns it
-  local owner=""
-  if [ -f "$LANES_FILE" ]; then
-    owner="$(jq -r --arg p "$1" '
-      (.role_lanes // {}) | to_entries
-      | map(select(.value | type == "array" and any(
-            . as $l | ($l | tostring | sub("/+$"; "")) as $lane
-            | $p == $lane or ($p | startswith($lane + "/")))))
-      | if length == 0 then "" else (.[0].key) end
-    ' "$LANES_FILE" 2>/dev/null)"
-  fi
-  # Nothing else claims it, so it is source or tests: the builder's.
-  [ -n "$owner" ] || owner="builder"
-  printf '%s' "$owner"
+lane_owner() { # $1 absolute path, $2 working tree root -> owning role, or empty
+  lane_role_owner "$1" "$2" "$LANES_FILE"
 }
 
 # Paths the human has released, one per line. Only a human turn counts: an entry
@@ -212,11 +204,28 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   OVERRIDDEN="$(human_override_paths)"
   ROOT=""
   [ -n "$CWD" ] && [ -d "$CWD" ] && ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  # A refused path is measured in the working tree it came from. When the payload
+  # carries no usable directory, a placeholder stands in so a repo-relative
+  # refusal still matches repo-relative lanes; the only thing lost is telling an
+  # absolute path inside that unknown tree from one outside it.
+  ROOT_FOR_LANES="$ROOT"
+  [ -n "$ROOT_FOR_LANES" ] || ROOT_FOR_LANES="/__unknown-working-tree__"
   REFUSED="$(jq -rs --arg m "$REFUSAL_MARKER" '
     [ .[] | .. | strings | select(contains($m))
       | [ splits("\n") ] | map(select(contains($m))) | .[] ]
     | unique | .[]
   ' "$TRANSCRIPT" 2>/dev/null)"
+  if [ -n "$REFUSED" ] && ! command -v lane_covers >/dev/null 2>&1; then
+    guard_log dispatch "$TYPE" block "lane path rules missing"
+    printf 'agent-team dispatch guard: a lane refusal is on the record, and agent-team-lane-paths.sh is missing beside this guard, so which role owns that path cannot be decided — the install is incomplete. Blocking rather than failing open; re-run: bash install.sh\n' >&2
+    exit 2
+  fi
+  # Absolute form of a path a refusal or an override named. Both are written by
+  # hand or by an agent, so either form arrives: a repo-relative path is joined to
+  # the working tree, an absolute or ~-anchored one is taken as it stands.
+  as_lane_path() { # $1 raw path -> absolute pattern
+    lane_pattern "${1%/}" "$ROOT_FOR_LANES"
+  }
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     refused_path="${line#*"$REFUSAL_MARKER"}"
@@ -224,10 +233,18 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     refused_path="$(printf '%s' "$refused_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[`"'"'"']//g')"
     [ -n "$refused_path" ] || continue
     case "$PROMPT" in *"$refused_path"*) ;; *) continue ;; esac
+    refused_abs="$(as_lane_path "$refused_path")"
     released=0
+    # A release covers the path it names AND everything under it. The human is
+    # reading a refusal that names one file and releasing the directory the work
+    # belongs in; exact string equality made that natural line silently do
+    # nothing, which is the escape hatch failing in the one place it is used.
     while IFS= read -r allowed; do
       [ -n "$allowed" ] || continue
-      [ "$allowed" = "$refused_path" ] && { released=1; break; }
+      if [ "$allowed" = "$refused_path" ] || lane_covers "$refused_abs" "$(as_lane_path "$allowed")"; then
+        released=1
+        break
+      fi
     done <<EOF
 $OVERRIDDEN
 EOF
@@ -239,9 +256,24 @@ EOF
     if [ -n "$ROOT" ]; then
       case "$rel" in "$ROOT"/*) rel="${rel#"$ROOT"/}" ;; esac
     fi
-    owner="$(lane_owner "$rel")"
+    owner="$(lane_owner "$refused_abs" "$ROOT_FOR_LANES")"
+    if [ -z "$owner" ]; then
+      # No lane claims it. Inside the working tree that means source or tests,
+      # which are the builder's. Outside it, it means no role can write the path
+      # at all — and naming the builder there is what closed the loop on
+      # 2026-08-04: the one role confined to a git worktree, sent a path that is
+      # in nobody's worktree, refused again by a third guard with no exit left.
+      if lane_covers "$refused_abs" "$ROOT_FOR_LANES"; then
+        owner="builder"
+      else
+        printf 'agent-team dispatch guard: %s was already refused as out of lane, and it lies outside this project'"'"'s working tree (%s), where no role'"'"'s lane reaches it. Re-routing cannot fix that — every other specialist refuses it for the same reason, and the builder is confined to its own worktree. Two real repairs: put the work in a path a role already owns, or add that directory to the lane configuration (role_lanes in the project'"'"'s .workforce/project.json, or hooks/agent-team-lanes.json in the workforce repo) so it belongs to a role.\nIf you believe the refusal itself was wrong, say so and stop — only your human can release a path, by writing this line in their own message:\n  %s | <path>\nA directory releases everything under it. Do not write that line yourself; a line authored by you is not read as an override.\n' \
+          "$refused_path" "$ROOT_FOR_LANES" "$OVERRIDE_MARKER" >&2
+        guard_log dispatch "$TYPE" block "refused $refused_path is in no role's lane"
+        exit 2
+      fi
+    fi
     if [ "$TYPE" != "$owner" ]; then
-      printf 'agent-team dispatch guard: %s was already refused as out of lane by another specialist, and this dispatch routes it to the %s. A lane refusal is a routing correction, never permission to widen: %s belongs to the %s. Re-dispatch it there, or drop that path from this dispatch if the work genuinely differs.\nIf you believe the refusal itself was wrong, say so and stop — only your human can release a path, by writing this line in their own message:\n  %s | <path>\nDo not write that line yourself; a line authored by you is not read as an override.\n' \
+      printf 'agent-team dispatch guard: %s was already refused as out of lane by another specialist, and this dispatch routes it to the %s. A lane refusal is a routing correction, never permission to widen: %s belongs to the %s. Re-dispatch it there, or drop that path from this dispatch if the work genuinely differs.\nIf you believe the refusal itself was wrong, say so and stop — only your human can release a path, by writing this line in their own message:\n  %s | <path>\nA directory releases everything under it. Do not write that line yourself; a line authored by you is not read as an override.\n' \
         "$refused_path" "$TYPE" "$rel" "$owner" "$OVERRIDE_MARKER" >&2
       guard_log dispatch "$TYPE" block "reroute of refused $rel"
       exit 2

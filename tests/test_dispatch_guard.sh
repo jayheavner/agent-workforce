@@ -477,6 +477,92 @@ Apply the fix to src/screening/prompts/guidance.json and also write docs/STATUS-
   "a second refused path with no override still blocks the dispatch"
 rm -f "$ECHO_TR" "$TWO_TR"
 
+# --- A PATH NO LANE COVERS IS NOT AUTOMATICALLY THE BUILDER'S.
+# 2026-08-04: the agent memory at ~/.claude/projects/<project>/memory is outside
+# every checkout. The scribe was refused it; this guard's fallback — "nothing
+# claims it, so it is source, so it is the builder's" — then sent it to the one
+# role confined to a git worktree, which refused it too. The fallback holds
+# INSIDE the working tree, where unclaimed really does mean source, and must not
+# invent an owner outside it.
+MEM_HOME="$WT_WORK/home"
+MEM_DIR="$MEM_HOME/.claude/projects/-Users-someone-project/memory"
+mkdir -p "$MEM_DIR" "$MEM_HOME/notes"
+agent_json_cwd() { # $1 subagent_type $2 transcript $3 prompt $4 cwd
+  jq -cn --arg t "$1" --arg tp "$2" --arg p "$3" --arg cwd "$4" \
+    '{tool_name:"Agent",transcript_path:$tp,cwd:$cwd,tool_input:{subagent_type:$t,prompt:$p}}'
+}
+expect_home() { # $1 expected_rc $2 json $3 label
+  set +e
+  printf '%s' "$2" | HOME="$MEM_HOME" bash "$GUARD" >/dev/null 2>&1
+  local rc=$?
+  set -u
+  if [ "$rc" -eq "$1" ]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1))
+    echo "FAIL [$3]: expected=$1 got=$rc"
+  fi
+}
+allow_home() { expect_home 0 "$1" "$2"; }
+block_home() { expect_home 2 "$1" "$2"; }
+
+MEM_LESSON="$MEM_DIR/feedback-never-bury-open-items.md"
+MEM_TR="$(write_refusal_transcript "$MEM_LESSON")"
+allow_home \
+  "$(agent_json_cwd scribe "$MEM_TR" "Write the lesson to $MEM_LESSON" "$WT_REPO")" \
+  "a refused memory path routed to the scribe, whose lane covers it, allows"
+block_home \
+  "$(agent_json_cwd builder "$MEM_TR" "WORKTREE: $WT_A
+ACCEPTANCE CRITERIA
+  - [ ] AC-1 (mechanical): the lesson exists. Check: \`test -f $MEM_LESSON\` -> expects exit 0.
+Write $MEM_LESSON" "$WT_REPO")" \
+  "a refused memory path routed to the builder still blocks"
+
+# A path outside the tree that NO lane covers: re-routing cannot fix it, so the
+# guard says so instead of naming a role that would be refused in turn.
+LOOSE="$MEM_HOME/notes/loose.md"
+LOOSE_TR="$(write_refusal_transcript "$LOOSE")"
+block_home \
+  "$(agent_json_cwd builder "$LOOSE_TR" "WORKTREE: $WT_A
+ACCEPTANCE CRITERIA
+  - [ ] AC-1 (mechanical): the note exists. Check: \`test -f $LOOSE\` -> expects exit 0.
+Write $LOOSE" "$WT_REPO")" \
+  "an unowned path outside the working tree is not handed to the builder"
+block_home \
+  "$(agent_json_cwd executor "$LOOSE_TR" "PARALLEL_SAFE: no git mutation in this dispatch
+Write $LOOSE" "$WT_REPO")" \
+  "an unowned path outside the working tree is not handed to the executor either"
+LOOSE_MSG="$(printf '%s' "$(agent_json_cwd executor "$LOOSE_TR" "PARALLEL_SAFE: no git mutation in this dispatch
+Write $LOOSE" "$WT_REPO")" | HOME="$MEM_HOME" bash "$GUARD" 2>&1 >/dev/null)"
+case "$LOOSE_MSG" in
+  *"outside this project's working tree"*) PASS=$((PASS+1)) ;;
+  *) FAIL=$((FAIL+1)); echo "FAIL [the refusal says the path is outside the working tree]" ;;
+esac
+case "$LOOSE_MSG" in
+  *"belongs to the builder"*) FAIL=$((FAIL+1)); echo "FAIL [the refusal still names the builder as owner]" ;;
+  *) PASS=$((PASS+1)) ;;
+esac
+
+# --- A RELEASE COVERS THE DIRECTORY IT NAMES.
+# The human is reading a refusal that names one file and releasing the directory
+# the work belongs in — the exact line this guard's own remediation text invites.
+# Exact string equality made that line silently do nothing, which is the escape
+# hatch failing in the one situation it exists for.
+DIR_TR="$(write_refusal_transcript "$MEM_LESSON")"
+append_human_turn "$DIR_TR" "That directory is mine to release.
+WORKFORCE_OVERRIDE: lane-refusal | $MEM_DIR/"
+allow_home \
+  "$(agent_json_cwd executor "$DIR_TR" "PARALLEL_SAFE: no git mutation in this dispatch
+Write $MEM_LESSON" "$WT_REPO")" \
+  "releasing a directory releases a file beneath it"
+OTHER_DIR_TR="$(write_refusal_transcript "$MEM_LESSON")"
+append_human_turn "$OTHER_DIR_TR" "WORKFORCE_OVERRIDE: lane-refusal | $MEM_HOME/notes/"
+block_home \
+  "$(agent_json_cwd executor "$OTHER_DIR_TR" "PARALLEL_SAFE: no git mutation in this dispatch
+Write $MEM_LESSON" "$WT_REPO")" \
+  "releasing a different directory does not release this path"
+rm -f "$MEM_TR" "$LOOSE_TR" "$DIR_TR" "$OTHER_DIR_TR"
+
 # An override is a control that stopped enforcing, so it is recorded as loudly as
 # a block — a fail-open nobody counted is indistinguishable from a rule nobody
 # needed.

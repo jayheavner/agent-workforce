@@ -21,7 +21,9 @@
 # Lanes are configuration, not constants: agent-team-lanes.json ships the
 # defaults and a project overrides them in its own .workforce/project.json,
 # because these directory names are this repository's conventions and the guard
-# installs once and runs against every project.
+# installs once and runs against every project. A lane may also name an absolute
+# path — the matching rule lives in agent-team-lane-paths.sh, shared with the
+# dispatch guard, and its header carries why.
 #
 # Hook JSON on stdin. Exit 0 = allow. Exit 2 = block (stderr goes to the agent).
 # Fail-closed: a policed role whose target cannot be positively confirmed inside
@@ -33,28 +35,39 @@ set -u
 command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
 
 ROLE="${1:-}"
-readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
+readonly GUARD_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly LANES_FILE="$GUARD_DIR/agent-team-lanes.json"
 # Built-in fallback, used only when config cannot be read. Same shape as the
-# config: <role>=<colon-separated repo-relative directories>.
-readonly DEFAULT_LANES="scribe=docs:plans:doc-inventory
+# config: <role>=<colon-separated lanes>. It must mirror agent-team-lanes.json —
+# a missing config file falls back to these, and a fallback that has forgotten a
+# lane re-creates the very refusal the lane was added to prevent.
+readonly DEFAULT_LANES="scribe=docs:plans:doc-inventory:~/.claude/projects/*/memory
 architect=plans:docs:skills:agents
 test-author=tests"
 
 [ -n "$ROLE" ] || exit 0
 
-lane_spec() { # -> colon-separated dirs for $ROLE, empty when unpoliced
-  local from_config=""
-  if command -v jq >/dev/null 2>&1; then
-    for src in "$REPO_ROOT/.workforce/project.json" "$LANES_FILE"; do
-      [ -f "$src" ] || continue
-      from_config="$(jq -r --arg r "$ROLE" '
-        (.role_lanes[$r]? // empty)
-        | if type == "array" then map(tostring | sub("^/+";"") | sub("/+$";"")) | join(":")
-          else empty end
-      ' "$src" 2>/dev/null | head -n1)"
-      [ -n "$from_config" ] && { printf '%s' "$from_config"; return 0; }
-    done
-  fi
+# The matching rule is shared with the dispatch guard so that a path outside every
+# lane here is a path with no owner there. Its absence is a broken install, and a
+# policed role whose lane cannot be evaluated is refused rather than let through.
+if [ -r "$GUARD_DIR/agent-team-lane-paths.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$GUARD_DIR/agent-team-lane-paths.sh"
+fi
+if ! command -v lane_covers >/dev/null 2>&1; then
+  case "$ROLE" in
+    scribe|architect|test-author)
+      guard_log lane "$ROLE" block "lane path rules missing"
+      printf 'agent-team lane guard: agent-team-lane-paths.sh is missing beside this guard, so no lane can be evaluated — the install is incomplete. Blocking rather than failing open; re-run: bash install.sh\n' >&2
+      exit 2 ;;
+    *) exit 0 ;;
+  esac
+fi
+
+lane_spec() { # -> colon-separated lanes for $ROLE, empty when unpoliced
+  local from_config
+  from_config="$(lane_role_spec "$ROLE" "$REPO_ROOT" "$LANES_FILE")"
+  [ -n "$from_config" ] && { printf '%s' "$from_config"; return 0; }
   printf '%s\n' "$DEFAULT_LANES" \
     | sed -n "s/^${ROLE}=//p" | head -n1
 }
@@ -178,21 +191,26 @@ LANES="$(lane_spec)"
 
 ROOT="$(canonical_path "$REPO_ROOT")"
 
-old_ifs="$IFS"; IFS=':'
-for lane in $LANES; do
-  IFS="$old_ifs"
+while IFS= read -r lane; do
   [ -n "$lane" ] || continue
-  allowed="$(canonical_path "$ROOT/$lane")"
-  case "$TARGET" in
-    "$allowed"|"$allowed"/*) exit 0 ;;
-  esac
-  IFS=':'
-done
-IFS="$old_ifs"
+  lane_covers "$TARGET" "$(lane_pattern "$lane" "$ROOT")" && exit 0
+done <<EOF
+$(printf '%s' "$LANES" | tr ':' '\n')
+EOF
 
 REL="$TARGET"
-case "$REL" in "$ROOT"/*) REL="${REL#"$ROOT"/}" ;; esac
+INSIDE_REPO=0
+case "$REL" in "$ROOT"/*) REL="${REL#"$ROOT"/}"; INSIDE_REPO=1 ;; esac
 guard_log lane "$ROLE" block "$REL"
-printf 'agent-team lane guard: this %s targets %s, outside the %s lane (%s under %s). That path belongs to another role — a document is the scribe'"'"'s, a plan or a skill is the architect'"'"'s, a test is the test-author'"'"'s, and source is the builder'"'"'s. Return the work to the orchestrator naming the file and what it needs; do not route around the lane by writing through a shell.\nReport the refusal in the typed form, on its own line, so the re-route is checked mechanically rather than re-interpreted:\n  WORKFORCE_REFUSAL: out-of-lane | %s\n' \
-  "$TOOL" "$TARGET" "$ROLE" "$(printf '%s' "$LANES" | tr ':' ' ')" "$ROOT" "$REL" >&2
+if [ "$INSIDE_REPO" -eq 1 ]; then
+  printf 'agent-team lane guard: this %s targets %s, outside the %s lane (%s under %s). That path belongs to another role — a document is the scribe'"'"'s, a plan or a skill is the architect'"'"'s, a test is the test-author'"'"'s, and source is the builder'"'"'s. Return the work to the orchestrator naming the file and what it needs; do not route around the lane by writing through a shell.\nReport the refusal in the typed form, on its own line, so the re-route is checked mechanically rather than re-interpreted:\n  WORKFORCE_REFUSAL: out-of-lane | %s\n' \
+    "$TOOL" "$TARGET" "$ROLE" "$(printf '%s' "$LANES" | tr ':' ' ')" "$ROOT" "$REL" >&2
+else
+  # Outside the working tree entirely, so "another role owns it" may be false:
+  # only a lane that names an absolute path reaches out here, and if none does,
+  # no role can write this at all. Saying so is what stops the orchestrator
+  # shopping the path around every specialist in turn.
+  printf 'agent-team lane guard: this %s targets %s, which is outside this project'"'"'s working tree (%s) and outside the %s lane (%s). Lanes may name absolute paths, so if this path is genuinely this role'"'"'s, it belongs in the lane configuration (hooks/agent-team-lanes.json, or role_lanes in the project'"'"'s .workforce/project.json) rather than in a re-route — no other specialist has a wider lane out here, and the builder'"'"'s writes are confined to its own worktree. Report this to the orchestrator as a lane-configuration gap and stop.\nReport the refusal in the typed form, on its own line, so the re-route is checked mechanically rather than re-interpreted:\n  WORKFORCE_REFUSAL: out-of-lane | %s\n' \
+    "$TOOL" "$TARGET" "$ROOT" "$ROLE" "$(printf '%s' "$LANES" | tr ':' ' ')" "$REL" >&2
+fi
 exit 2
