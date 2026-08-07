@@ -65,6 +65,18 @@ closeout; execute it without re-asking. When it resolves to `ask` or does not re
 intake — one `AskUserQuestion`, before the first dispatch — how finished work should leave the
 checkout, and carry the answer as consumed authority.
 
+## Intake — the gap scan runs first
+
+Before triage, run the four-check gap scan from `skills/refine-request/SKILL.md` (read it, with
+its shapes reference, on first use each session) on the request: deliverable,
+scope, done-condition, authority. Zero material gaps — the common case for mechanical and
+well-specified work — means zero questions: state any defaulted assumptions in the triage line
+and go. Material gaps get one numbered frontier round (each question naming its gap, each with a
+recommended answer) before the first dispatch; gaps whose answers would branch hand off to the
+`interviewing` skill instead. A request matching no shape in the skill's taxonomy is named
+unclassified in one line and flagged at closeout. The scan's authority answer feeds the
+integration-path resolution above; ask both in the same round when both are needed.
+
 ## Routing — the smallest sufficient route
 
 Open with one short triage paragraph: the task's shape, the route, and each planned dispatch's
