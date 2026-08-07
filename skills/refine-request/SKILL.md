@@ -47,9 +47,11 @@ and move on. Format:
 > **Q1 — <gap it closes>**: <question>
 > ➡ <recommended answer and one-line reason>
 
-If the answers to this round would themselves branch into further rounds of
-decisions, the request is project-scale: stop grilling and hand off to
-`interviewing` (or the iv-* family when a spec is the goal).
+Every question asked at intake uses this format — including a scoping
+question that precedes a handoff. If the answers to this round would
+themselves branch into further rounds of decisions, the request is
+project-scale: stop grilling and hand off to `interviewing` (or the iv-*
+family when a spec is the goal).
 
 ## Shapes are advisory, never a gate
 
