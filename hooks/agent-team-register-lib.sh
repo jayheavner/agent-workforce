@@ -7,7 +7,9 @@
 # process a claim belongs to, whether that process is still the one it was, and how
 # a card is rewritten without destroying a field this build does not know about.
 # It was split out when the register outgrew the project's file-size discipline;
-# sourcing agent-team-register.sh still defines both halves, so no caller changes.
+# sourcing agent-team-register.sh still defines every half, so no caller changes.
+# The third half is agent-team-register-writer.sh: the atomic take and the writer
+# slot, which is everything decided by contention rather than by reading state.
 #
 # Sourcing defines functions only; this file has no side effects and no CLI.
 #

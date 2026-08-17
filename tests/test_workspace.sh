@@ -275,6 +275,74 @@ case_remove_refuses_unmerged() {
   return 0
 }
 
+# The register library is what every workspace decision is computed from. If it
+# cannot be sourced, execution used to continue and every ensure then failed on a
+# missing function, printing the wrong message with the wrong exit code — the
+# install-incomplete diagnosis was produced and then thrown away.
+case_ensure_without_register_library() {
+  fixture no-register-lib || { printf 'fixture setup failed'; return 1; }
+  local hooks="$FX/hooks" out rc
+  mkdir -p "$hooks" || return 1
+  cp "$ROOT/hooks"/agent-team-register*.sh "$ROOT/hooks/agent-team-register.json" \
+    "$ROOT/hooks/agent-team-workspace.sh" "$hooks/" 2>/dev/null || return 1
+  rm -f "$hooks/agent-team-register-lib.sh"
+  out="$(bash "$hooks/agent-team-workspace.sh" ensure "$PROJ" anyslug main 2>&1)"; rc=$?
+  [ "$rc" -eq 7 ] \
+    || { printf 'expected exit 7 when the register library cannot be sourced; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  case "$out" in
+    *"install is incomplete"*) ;;
+    *) printf 'expected the install-incomplete diagnosis kept; observed %s' "$out"; return 1 ;;
+  esac
+  [ -d "$WTPATH/anyslug" ] && { printf 'expected nothing created'; return 1; }
+  return 0
+}
+
+# Remove validated nothing at entry and swallowed the release verdict, so removing
+# a merged foreign change deleted the ref and the tree, failed to release the
+# foreign claim, and still reported success — leaving a live card pointing at
+# nothing.
+case_remove_refuses_bad_slug() {
+  fixture remove-bad-slug || { printf 'fixture setup failed'; return 1; }
+  local s out rc
+  for s in '../escape' 'Bad Slug' 'has/slash' ''; do
+    out="$(ws remove "$PROJ" "$s")"; rc=$?
+    [ "$rc" -eq 6 ] \
+      || { printf 'expected exit 6 for slug "%s"; observed exit=%s out=%s' "$s" "$rc" "$out"; return 1; }
+  done
+  return 0
+}
+
+case_remove_reports_failed_release() {
+  fixture remove-foreign || { printf 'fixture setup failed'; return 1; }
+  local out rc card fpid fstart
+  claimed_change borrowed sess-borrowed || { printf 'fixture change failed'; return 1; }
+  card="$(bash "$REG" card-path "$PROJ" borrowed)"
+  git -C "$PROJ" merge --no-ff --no-edit change/borrowed >/dev/null 2>&1 \
+    || { printf 'fixture merge failed'; return 1; }
+  # Hand the card to a live process that is not this one: neither membership arm
+  # can match, so the release inside remove must fail and remove must say so.
+  sleep 300 >/dev/null 2>&1 &
+  fpid=$!
+  fstart="$(ps -p "$fpid" -o lstart=)"
+  jq --argjson p "$fpid" --arg s "$fstart" '.session = "sess-elsewhere" | .pid = $p | .pid_start = $s' \
+    "$card" > "$card.fixture" && mv "$card.fixture" "$card"
+  out="$(ws remove "$PROJ" borrowed)"; rc=$?
+  kill "$fpid" 2>/dev/null
+  [ "$rc" -ne 0 ] \
+    || { printf 'expected a non-zero exit when the card cannot be released; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  [ -f "$card" ] \
+    || { printf 'expected the foreign card left on disk; observed it deleted'; return 1; }
+  case "$out" in
+    *sess-elsewhere*) ;;
+    *) printf 'expected the refusal to name the holding session; observed %s' "$out"; return 1 ;;
+  esac
+  # And nothing was destroyed on the way to that refusal.
+  [ -d "$CHANGE_WT" ] || { printf 'expected the tree kept when the claim is not this session'; return 1; }
+  git -C "$PROJ" show-ref --verify --quiet refs/heads/change/borrowed \
+    || { printf 'expected the ref kept when the claim is not this session'; return 1; }
+  return 0
+}
+
 run_case 'ensure creates the derived worktree at the derived ref' case_ensure_creates
 run_case 'ensure adopts an existing registered tree' case_ensure_adopts
 run_case 'ensure refuses a tree registered at another ref' case_ensure_refuses_other_ref
@@ -286,6 +354,9 @@ run_case 'integrate refuses when HEAD is not the integration ref' case_integrate
 run_case 'integrate merges, removes the tree, deletes the ref, and releases the card' case_integrate_merges_and_releases
 run_case 'a conflicted merge aborts and leaves the claim intact' case_conflicted_merge_aborts
 run_case 'remove refuses an unmerged change' case_remove_refuses_unmerged
+run_case 'ensure exits 7 when the register library is missing' case_ensure_without_register_library
+run_case 'remove refuses a malformed slug' case_remove_refuses_bad_slug
+run_case 'remove reports failure when the card cannot be released' case_remove_reports_failed_release
 
 printf 'passed=%s failed=%s\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]

@@ -24,18 +24,27 @@
 # Exit codes: 0 ok, 1 no such card, 3 held, 4 no session process,
 # 5 register unusable, 6 bad slug.
 #
+# The register is three files, split for the project's file-size discipline, and
+# sourcing THIS one defines all of them: agent-team-register-lib.sh (derived names,
+# liveness, membership, safe rewrites) and agent-team-register-writer.sh (the atomic
+# take that every removal goes through, and the writer slot built on it).
+#
 # Sourcing this file defines functions only. Executing it dispatches subcommands
 # whose names and argument order match the functions one-for-one.
 set -u
 
 REGISTER_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -r "$REGISTER_SELF_DIR/agent-team-register-lib.sh" ]; then
-  # shellcheck source=hooks/agent-team-register-lib.sh
-  . "$REGISTER_SELF_DIR/agent-team-register-lib.sh"
-else
-  printf 'register: agent-team-register-lib.sh is missing beside this script, so no claim can be resolved — the install is incomplete. Re-run: bash install.sh\n' >&2
-  return 5 2>/dev/null || exit 5
-fi
+for register_sibling in agent-team-register-lib.sh agent-team-register-writer.sh; do
+  if [ -r "$REGISTER_SELF_DIR/$register_sibling" ]; then
+    # shellcheck source=/dev/null
+    . "$REGISTER_SELF_DIR/$register_sibling"
+  else
+    printf 'register: %s is missing beside this script, so no claim can be resolved — the install is incomplete. Re-run: bash install.sh\n' \
+      "$register_sibling" >&2
+    return 5 2>/dev/null || exit 5
+  fi
+done
+unset register_sibling
 
 # Claim a change for this session. Behaviour, in order: validate the slug; resolve
 # the session process; reap THIS card when its recorded process is dead or its
@@ -75,11 +84,23 @@ register_claim() { # $1 project-dir $2 slug $3 session-id
   }
   IFS=$'\t' read -r pid start <<< "$sp"
   register_ensure_dir "$(dirname "$card")" || return 5
-  if [ -e "$card" ] && ! register_card_live "$card"; then
-    rm -f "$card"
+  # A dead card is TAKEN, never unlinked on a judgment: six claimants can all judge
+  # one dead card dead in the same instant, and six unlinks would then land on
+  # whichever fresh card was created first, leaving six winners. A lost take is not
+  # an error — the path is re-read immediately below, which is where a card that
+  # another claimant has already replaced is refused.
+  if [ -e "$card" ]; then
+    register_take_dead_card "$card" >/dev/null 2>&1 || :
   fi
   if [ -e "$card" ]; then
     if register_claim_member "$card" "$3"; then
+      # Adoption RE-ANCHORS liveness (decision 5, recorded as a fail-open): a
+      # resumed session keeps its id and gets a new process, so a card left naming
+      # the pre-resume process reads dead the moment that process exits — after
+      # which any reap frees a slug whose worktree this session is still writing in.
+      register_write_merged "$card" '.pid = $pid | .pid_start = $start | .heartbeat = $hb' \
+        --argjson pid "$pid" --arg start "$start" --argjson hb "$(date +%s)" \
+        >/dev/null 2>&1
       printf '%s\n' "$card"
       return 0
     fi
@@ -165,7 +186,11 @@ register_release() { # $1 project-dir $2 slug [session-id]
   card="$(register_resolve_card "$1" "$2")" || return $?
   sp="$(register_session_process)" || return 4
   IFS=$'\t' read -r pid start <<< "$sp"
-  sess="${3:-$(jq -r '.session // empty' "$card" 2>/dev/null)}"
+  # An omitted session id is NO id, never the card's own: defaulting it to the
+  # card's session would compare the card against itself, the session-id arm would
+  # always match, and any process could delete any live claim. With no id given,
+  # membership can only be established by the process arm.
+  sess="${3:-}"
   if register_card_member "$card" "$pid" "$start" "$sess" >/dev/null \
     || ! register_card_live "$card"; then
     rm -f "$card"
@@ -176,45 +201,19 @@ register_release() { # $1 project-dir $2 slug [session-id]
   return 3
 }
 
-# The writer slot carries its OWN liveness — a heartbeat and a TTL — because a
-# builder subagent that dies mid-task does not kill the session process the card
-# records, so pid liveness alone could never free the slot. Granted when the slot
-# is empty, when it is already this slot's, when the holder's heartbeat is older
-# than writer_ttl_seconds, or when the card's session process is dead. A TTL
-# displacement is a fail-open, recorded as one by the caller.
-register_writer_acquire() { # $1 project-dir $2 slug $3 slot
-  local card cur hb now ttl age
-  card="$(register_resolve_card "$1" "$2")" || return $?
-  cur="$(jq -r '.writer.slot // empty' "$card" 2>/dev/null)"
-  hb="$(jq -r '.writer.heartbeat // empty' "$card" 2>/dev/null)"
-  now="$(date +%s)"
-  ttl="$(register_config_int writer_ttl_seconds 900)"
-  case "$hb" in
-    '' | *[!0-9]*) age=$((ttl + 1)) ;;
-    *) age=$((now - hb)) ;;
-  esac
-  if [ -n "$cur" ] && [ "$cur" != "$3" ] && [ "$age" -le "$ttl" ] \
-    && register_card_live "$card"; then
-    printf 'register: the writer slot for %s is held by %s (%ss old, TTL %ss)\n' \
-      "$2" "$cur" "$age" "$ttl" >&2
-    return 3
-  fi
-  register_write_merged "$card" \
-    '.writer = {slot:$slot, session:.session, heartbeat:$hb} | .heartbeat = $hb' \
-    --arg slot "$3" --argjson hb "$now"
-}
-
-register_writer_release() { # $1 project-dir $2 slug
-  local card
-  card="$(register_resolve_card "$1" "$2")" || return $?
-  register_write_merged "$card" '.writer = null'
-}
-
 # Refreshes the card's heartbeat, and the writer entry's too when a slot is given
-# and it is the slot recorded.
+# and it is the slot recorded — in the slot file as well as in the card's mirror, so
+# a refreshed slot never reads stale through either.
 register_heartbeat() { # $1 project-dir $2 slug [slot]
-  local card
+  local card lock
   card="$(register_resolve_card "$1" "$2")" || return $?
+  if [ -n "${3:-}" ]; then
+    lock="$(register_writer_lock_path "$card")"
+    if [ "$(jq -r '.slot // empty' "$lock" 2>/dev/null)" = "$3" ]; then
+      register_write_merged "$lock" '.heartbeat = $hb' \
+        --argjson hb "$(date +%s)" >/dev/null 2>&1
+    fi
+  fi
   register_write_merged "$card" \
     '.heartbeat = $hb
      | if $slot != "" and (.writer|type) == "object" and .writer.slot == $slot
@@ -224,9 +223,12 @@ register_heartbeat() { # $1 project-dir $2 slug [slot]
 
 # Reconciliation is a reap, never a deadlock: a card goes when it is unreadable or
 # when its recorded process is gone. A card whose process is LIVE is never removed,
-# whatever its age.
+# whatever its age. The removal itself goes through register_take_dead_card, so a
+# card that another process replaced between the judgment and the removal is left
+# alone rather than destroyed. A reaped claim takes its writer slot with it: the slot
+# cannot outlive the claim it belonged to. Crash debris is swept last.
 register_reap() { # $1 project-dir
-  local proj key dir card slug
+  local proj key dir card slug reason
   proj="$(register_project_root "$1")" || return 5
   key="$(register_project_key "$proj")" || return 5
   dir="$(register_root)/$key"
@@ -234,16 +236,18 @@ register_reap() { # $1 project-dir
   for card in "$dir"/*.json; do
     [ -e "$card" ] || continue
     slug="$(basename "$card" .json)"
-    if ! register_card_json_ok "$card"; then
-      rm -f "$card"
-      printf 'reaped %s unreadable-timecard\n' "$slug"
-      continue
+    if register_card_json_ok "$card"; then
+      register_card_live "$card" && continue
+      reason=dead-session-process
+    else
+      reason=unreadable-timecard
     fi
-    if ! register_card_live "$card"; then
-      rm -f "$card"
-      printf 'reaped %s dead-session-process\n' "$slug"
-    fi
+    register_take_dead_card "$card" || continue
+    rm -f "$(register_writer_lock_path "$card")"
+    printf 'reaped %s %s\n' "$slug" "$reason"
   done
+  register_sweep_debris "$dir"
+  register_sweep_debris "$dir/writers"
 }
 
 register_main() {

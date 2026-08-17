@@ -22,8 +22,13 @@ set -u
 
 WORKSPACE_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -r "$WORKSPACE_SELF_DIR/agent-team-register.sh" ]; then
+  # The register's own SOURCE STATUS is the answer, not just its presence: when one
+  # of its libraries is missing it returns non-zero without defining a single
+  # function, and continuing from there means every command fails later on a missing
+  # function — the wrong message, the wrong exit code, and the install-incomplete
+  # diagnosis printed and thrown away.
   # shellcheck source=hooks/agent-team-register.sh
-  . "$WORKSPACE_SELF_DIR/agent-team-register.sh"
+  . "$WORKSPACE_SELF_DIR/agent-team-register.sh" || { return 7 2>/dev/null || exit 7; }
 else
   printf 'workspace: agent-team-register.sh is missing beside this script, so no change can be resolved — the install is incomplete. Re-run: bash install.sh\n' >&2
   return 7 2>/dev/null || exit 7
@@ -31,13 +36,18 @@ fi
 
 # Is this exact path registered as a worktree, and at which ref? Prints the ref
 # (`refs/heads/...` or `detached`) and exits 0 when the path is listed at all.
+#
+# The path is handed to awk through the ENVIRONMENT, not through `-v`: awk expands
+# backslash escapes in a `-v` assignment, so a path containing one would be compared
+# against a string it never equals.
 workspace_registered_ref() { # $1 project-root $2 path
   git -C "$1" worktree list --porcelain 2>/dev/null \
-    | awk -v p="worktree $2" '
+    | WORKSPACE_AWK_PATH="worktree $2" awk '
+        BEGIN { p = ENVIRON["WORKSPACE_AWK_PATH"] }
         $0 == p { seen = 1; ref = "detached"; next }
-        seen && $1 == "branch" { ref = $2; found = 1; exit }
-        seen && $0 == "" { found = 1; exit }
-        END { if (seen) { print ref; exit found ? 0 : 0 } ; exit 1 }'
+        seen && $1 == "branch" { ref = $2; exit }
+        seen && $0 == "" { exit }
+        END { if (seen) { print ref; exit 0 } ; exit 1 }'
 }
 
 # Create or adopt the change's worktree. Adoption is what makes a re-claim after a
@@ -125,6 +135,14 @@ workspace_integrate() { # $1 project-root $2 slug $3 integration-ref [$4 session
   fi
   path="$(register_worktree_path "$1" "$2")"
   short="$(register_ref_name "$2")"
+  # The tree has to be there before its cleanliness can mean anything: a card whose
+  # tree was deleted by hand would otherwise pass an empty dirty check, merge, and
+  # only then fail at worktree removal — with the merge already done.
+  if [ ! -d "$path" ]; then
+    printf 'workspace: the change worktree %s does not exist, so %s cannot be integrated from it. Repair: dispatch the change again — the tree is re-attached to the surviving ref %s, then integrate\n' \
+      "$path" "$2" "refs/heads/$short" >&2
+    return 8
+  fi
   dirty="$(git -C "$path" status --porcelain 2>/dev/null)"
   if [ -n "$dirty" ]; then
     printf 'workspace: the change worktree %s has uncommitted work, so integrating it would lose or ship it unreviewed:\n%s\n' \
@@ -156,15 +174,33 @@ workspace_integrate() { # $1 project-root $2 slug $3 integration-ref [$4 session
   fi
   git -C "$1" update-ref -d "refs/heads/$short" || return 8
   register_writer_release "$1" "$2" >/dev/null 2>&1
-  register_release "$1" "$2" || return 8
+  # The session id this call was made with is passed through: without it, release
+  # can only establish membership by the process arm, so an executor holding a
+  # payload id different from its own process would be refused its own claim.
+  register_release "$1" "$2" "${4:-}" || return 8
 }
 
 # Take a change's workspace down without integrating it — allowed only once its
-# commits are already reachable from HEAD, so nothing is ever destroyed unreviewed.
-workspace_remove() { # $1 project-root $2 slug
-  local path short unmerged err
+# commits are already reachable from HEAD, so nothing is ever destroyed unreviewed,
+# and only when the claim is this session's own.
+#
+# Both checks come BEFORE anything is destroyed. A removal that deleted the ref and
+# the tree and only then failed to release a foreign card would report success and
+# leave a live claim pointing at nothing.
+workspace_remove() { # $1 project-root $2 slug [$3 session-id]
+  register_valid_slug "$2" || {
+    printf 'workspace: "%s" is not a legal change slug, so no worktree path can be derived from it\n' "$2" >&2
+    return 6
+  }
+  local path short unmerged err card rc
   short="$(register_ref_name "$2")"
   path="$(register_worktree_path "$1" "$2")"
+  card="$(register_resolve_card "$1" "$2")" || card=""
+  if [ -n "$card" ] && ! register_mine "$1" "$2" "${3:-}" >/dev/null; then
+    printf 'workspace: the timecard for %s is held by session %s, so this session may not remove it\n' \
+      "$2" "$(jq -r '.session // "unknown"' "$card")" >&2
+    return 8
+  fi
   if ! git -C "$1" show-ref --verify --quiet "refs/heads/$short"; then
     printf 'workspace: there is no ref refs/heads/%s in %s, so there is no change workspace to remove\n' \
       "$short" "$1" >&2
@@ -183,8 +219,16 @@ workspace_remove() { # $1 project-root $2 slug
     fi
   fi
   git -C "$1" update-ref -d "refs/heads/$short" || return 8
-  register_release "$1" "$2" >/dev/null 2>&1
-  return 0
+  # The release verdict is the caller's business, not something to swallow: a claim
+  # that survives its workspace is a slug held by nothing.
+  [ -n "$card" ] || return 0
+  register_release "$1" "$2" "${3:-}" || {
+    rc=$?
+    [ "$rc" -eq 1 ] && return 0     # already released: the slug is free, as intended
+    printf 'workspace: %s was taken down but its timecard could not be released, so the slug is still held\n' \
+      "$2" >&2
+    return "$rc"
+  }
 }
 
 workspace_main() {

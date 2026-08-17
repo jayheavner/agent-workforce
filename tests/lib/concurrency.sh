@@ -44,6 +44,66 @@ spawn_claimants() {
   printf '%s' "$outdir"
 }
 
+# spawn_racers <n> <out-dir> <command> [args...]
+#
+# The general form of the harness above: starts <n> background processes, each
+# running <command> [args...] with RACER_INDEX set to its own 1-based index, its
+# output at <out-dir>/<i>.out and its exit status at <out-dir>/<i>.rc. Every racer
+# is started before any is waited on, so the contention is real rather than
+# sequential — the whole point of this file.
+spawn_racers() {
+  local n="$1" outdir="$2"
+  shift 2
+  local i pids=() p
+  mkdir -p "$outdir" || return 1
+  for ((i = 1; i <= n; i++)); do
+    (
+      RACER_INDEX="$i" "$@" > "$outdir/$i.out" 2>&1
+      printf '%s\n' "$?" > "$outdir/$i.rc"
+    ) &
+    pids+=("$!")
+  done
+  for p in "${pids[@]}"; do
+    wait "$p" 2>/dev/null
+  done
+}
+
+# racer_status_counts <out-dir> <n>
+#
+# Prints `<won> <refused> <other-detail>`: how many racers exited 0, how many
+# exited 3 ("held"), and a description of every other outcome, so a failure can be
+# explained rather than just counted.
+racer_status_counts() {
+  local outdir="$1" n="$2" i rc won=0 refused=0 other="" detail
+  for ((i = 1; i <= n; i++)); do
+    if [ ! -f "$outdir/$i.rc" ]; then
+      other="$other [$i:no-rc-file]"
+      continue
+    fi
+    rc="$(cat "$outdir/$i.rc")"
+    case "$rc" in
+      0) won=$((won + 1)) ;;
+      3) refused=$((refused + 1)) ;;
+      *)
+        detail="$(head -c 80 "$outdir/$i.out" 2>/dev/null | tr '\n\t' '  ')"
+        other="$other [$i:exit=$rc $detail]"
+        ;;
+    esac
+  done
+  printf '%s %s %s' "$won" "$refused" "${other:-none}"
+}
+
+# racer_winners <out-dir> <n> — the indices of every racer that exited 0, space
+# separated, so a case can assert WHICH racer won and check the state it left.
+racer_winners() {
+  local outdir="$1" n="$2" i out=""
+  for ((i = 1; i <= n; i++)); do
+    [ -f "$outdir/$i.rc" ] || continue
+    [ "$(cat "$outdir/$i.rc")" = "0" ] && out="$out $i"
+  done
+  printf '%s' "${out# }"
+}
+
 # assert_exactly_one_winner <out-dir> [expected-total]
 #
 # Exactly one claimant may exit 0; every other must exit 3 ("held"). Anything else

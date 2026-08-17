@@ -14,6 +14,8 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 REG="$ROOT/hooks/agent-team-register.sh"
+# shellcheck source=tests/lib/concurrency.sh
+. "$HERE/lib/concurrency.sh"
 
 PASSED=0
 FAILED=0
@@ -112,6 +114,23 @@ foreign_process() { # prints "<pid>\t<lstart>"
   local p=$!
   note_bg "$p"
   printf '%s\t%s' "$p" "$(ps -p "$p" -o lstart=)"
+}
+
+# A pid that is genuinely gone, with the start string it had while it lived: the
+# shape of a card whose session process has exited.
+dead_process() { # prints "<pid>\t<lstart>"
+  sleep 300 >/dev/null 2>&1 &
+  local p=$! start
+  start="$(ps -p "$p" -o lstart=)"
+  kill "$p" 2>/dev/null
+  wait_for_death "$p" || return 1
+  printf '%s\t%s' "$p" "$start"
+}
+
+# What register_session_process resolves to for a process started from this test:
+# the same answer every claim made here records.
+this_session_process() {
+  bash -c '. "$1"; register_session_process' _ "$REG" 2>/dev/null
 }
 
 # A claim written by a short-lived shell child of a long-lived non-shell parent —
@@ -323,6 +342,81 @@ case_malformed_slug_refused() {
   [ "$rc" -eq 0 ] || { printf 'expected a legal slug accepted; observed exit=%s out=%s' "$rc" "$out"; return 1; }
 }
 
+# Release is the other half of exclusion: if any process can delete any card, then
+# release-then-claim is a claim-theft path and the whole register is decorative.
+case_foreign_release_refused() {
+  fixture foreign-release || { printf 'fixture setup failed'; return 1; }
+  local fp pid start cp out rc
+  fp="$(foreign_process)"
+  IFS=$'\t' read -r pid start <<< "$fp"
+  cp="$(write_card held sess-foreign "$pid" "$start" ready)" \
+    || { printf 'fixture card failed: %s' "$cp"; return 1; }
+  out="$(bash "$REG" release "$PROJ" held sess-mine 2>&1)"; rc=$?
+  [ "$rc" -eq 3 ] \
+    || { printf 'expected exit 3 releasing a live foreign claim; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  [ -f "$cp" ] || { printf 'expected the foreign card still on disk at %s; observed it deleted' "$cp"; return 1; }
+  case "$out" in
+    *sess-foreign*) ;;
+    *) printf 'expected the refusal to name the holding session; observed %s' "$out"; return 1 ;;
+  esac
+}
+
+# With no session id there is nothing to compare against, so membership can only be
+# the process test. Defaulting the argument to the CARD's own session id would make
+# the comparison a tautology and hand every card to every caller.
+case_release_without_session_id() {
+  fixture release-no-id || { printf 'fixture setup failed'; return 1; }
+  local fp pid start cp out rc dp
+  fp="$(foreign_process)"
+  IFS=$'\t' read -r pid start <<< "$fp"
+  cp="$(write_card held sess-foreign "$pid" "$start" ready)" \
+    || { printf 'fixture card failed: %s' "$cp"; return 1; }
+  out="$(bash "$REG" release "$PROJ" held 2>&1)"; rc=$?
+  [ "$rc" -eq 3 ] \
+    || { printf 'expected exit 3 with no session id against a live foreign claim; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  [ -f "$cp" ] || { printf 'expected the foreign card still on disk at %s; observed it deleted' "$cp"; return 1; }
+  # The process arm still works: this session's own claim releases with no id given.
+  bash "$REG" claim "$PROJ" ours sess-ours >/dev/null 2>&1 || { printf 'claim failed'; return 1; }
+  out="$(bash "$REG" release "$PROJ" ours 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] \
+    || { printf 'expected exit 0 releasing this process own claim with no id; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  [ -f "$(card_path ours)" ] && { printf 'expected the released card gone'; return 1; }
+  # A card whose process is dead is releasable by anyone: nothing is being protected.
+  dp="$(dead_process)" || { printf 'could not build a dead process'; return 1; }
+  IFS=$'\t' read -r pid start <<< "$dp"
+  cp="$(write_card abandoned sess-gone "$pid" "$start" ready)" || { printf 'fixture card failed'; return 1; }
+  out="$(bash "$REG" release "$PROJ" abandoned 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] \
+    || { printf 'expected exit 0 releasing a dead claim; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  [ -f "$cp" ] && { printf 'expected the dead card gone'; return 1; }
+  return 0
+}
+
+# A resumed session keeps its id and gets a NEW process. Adopting its own claim has
+# to re-anchor liveness onto that new process, or the card still names a process
+# that is about to exit — after which any reap frees a slug whose worktree the
+# resumed session is still writing in.
+case_adoption_reanchors_process() {
+  fixture reanchor || { printf 'fixture setup failed'; return 1; }
+  local fp pid start cp out rc sp mypid mystart
+  fp="$(foreign_process)"
+  IFS=$'\t' read -r pid start <<< "$fp"
+  cp="$(write_card resumed sess-resume "$pid" "$start" ready)" \
+    || { printf 'fixture card failed: %s' "$cp"; return 1; }
+  out="$(bash "$REG" claim "$PROJ" resumed sess-resume 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] || { printf 'expected exit 0 adopting its own claim; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  sp="$(this_session_process)"
+  IFS=$'\t' read -r mypid mystart <<< "$sp"
+  [ -n "$mypid" ] || { printf 'could not resolve this session process'; return 1; }
+  jq -e --argjson p "$mypid" --arg s "$mystart" '.pid == $p and .pid_start == $s' "$cp" >/dev/null \
+    || { printf 'expected the card re-anchored to pid %s (%s); observed %s' \
+         "$mypid" "$mystart" "$(jq -c '{pid,pid_start}' "$cp")"; return 1; }
+  jq -e --argjson p "$pid" '.pid != $p' "$cp" >/dev/null \
+    || { printf 'expected the pre-resume pid %s replaced; observed it kept' "$pid"; return 1; }
+  jq -e --arg s sess-resume '.session == $s' "$cp" >/dev/null \
+    || { printf 'expected the session id unchanged; observed %s' "$(jq -r '.session' "$cp")"; return 1; }
+}
+
 case_writer_slot_exclusive() {
   fixture writers || { printf 'fixture setup failed'; return 1; }
   local cp out rc
@@ -348,6 +442,93 @@ case_writer_slot_exclusive() {
     || { printf 'expected writer null after release; observed %s' "$(jq -c '.writer' "$cp")"; return 1; }
   out="$(bash "$REG" writer-acquire "$PROJ" shared 'builder#2' 2>&1)"; rc=$?
   [ "$rc" -eq 0 ] || { printf 'expected the freed slot granted to builder#2; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+}
+
+# The writer slot is a contended fact, so the only honest test is real processes
+# contending for it. A sequential test passes against a check-then-write slot that
+# grants every racer at once, which is what the guard would hand two builders
+# dispatched in parallel in one message.
+case_concurrent_writer_acquires() {
+  fixture writer-race || { printf 'fixture setup failed'; return 1; }
+  local rounds=10 racers=8 r slug od counts won refused other winners cp
+  for ((r = 1; r <= rounds; r++)); do
+    slug="race$r"
+    bash "$REG" claim "$PROJ" "$slug" sess-race >/dev/null 2>&1 \
+      || { printf 'round %s: claim failed' "$r"; return 1; }
+    od="$FX/out/writer-$r"
+    spawn_racers "$racers" "$od" \
+      bash -c 'bash "$1" writer-acquire "$2" "$3" "builder#$RACER_INDEX"' _ "$REG" "$PROJ" "$slug" \
+      || { printf 'round %s: could not start the racers' "$r"; return 1; }
+    counts="$(racer_status_counts "$od" "$racers")"
+    IFS=' ' read -r won refused other <<< "$counts"
+    [ "$won" -eq 1 ] \
+      || { printf 'round %s: expected exactly one writer granted; observed won=%s refused=%s other=%s' \
+           "$r" "$won" "$refused" "$other"; return 1; }
+    [ "$refused" -eq $((racers - 1)) ] \
+      || { printf 'round %s: expected %s refusals; observed refused=%s other=%s' \
+           "$r" "$((racers - 1))" "$refused" "$other"; return 1; }
+    winners="$(racer_winners "$od" "$racers")"
+    cp="$(card_path "$slug")"
+    jq -e --arg s "builder#$winners" '.writer.slot == $s' "$cp" >/dev/null \
+      || { printf 'round %s: expected the card to record the one winner builder#%s; observed %s' \
+           "$r" "$winners" "$(jq -c '.writer' "$cp")"; return 1; }
+  done
+}
+
+# Reaping is the other contended fact: the card's removal. Six claimants that all
+# judge one dead card dead at the same instant must still produce one winner, and
+# the winner's fresh card must survive every loser's reap.
+case_reap_race_keeps_one_winner() {
+  fixture reap-race || { printf 'fixture setup failed'; return 1; }
+  local rounds=15 racers=6 r dp pid start cp od counts won refused other winners sess
+  for ((r = 1; r <= rounds; r++)); do
+    dp="$(dead_process)" || { printf 'round %s: could not build a dead process' "$r"; return 1; }
+    IFS=$'\t' read -r pid start <<< "$dp"
+    cp="$(write_card "dead$r" sess-departed "$pid" "$start" ready)" \
+      || { printf 'round %s: fixture card failed: %s' "$r" "$cp"; return 1; }
+    od="$FX/out/reap-$r"
+    spawn_racers "$racers" "$od" \
+      bash -c 'bash "$1" 0.15 "$2" "$3" "sess-racer-$RACER_INDEX"' _ \
+      "$HERE/lib/slow-claimant.sh" "$PROJ" "dead$r" \
+      || { printf 'round %s: could not start the racers' "$r"; return 1; }
+    counts="$(racer_status_counts "$od" "$racers")"
+    IFS=' ' read -r won refused other <<< "$counts"
+    [ "$won" -eq 1 ] \
+      || { printf 'round %s: expected exactly one claimant over the dead card; observed won=%s refused=%s other=%s' \
+           "$r" "$won" "$refused" "$other"; return 1; }
+    [ -f "$cp" ] \
+      || { printf 'round %s: expected the winner card present at %s; observed it destroyed by a loser reap' \
+           "$r" "$cp"; return 1; }
+    winners="$(racer_winners "$od" "$racers")"
+    sess="$(jq -r '.session // empty' "$cp" 2>/dev/null)"
+    [ "$sess" = "sess-racer-$winners" ] \
+      || { printf 'round %s: expected the card to belong to the one winner sess-racer-%s; observed session=%s' \
+           "$r" "$winners" "$sess"; return 1; }
+  done
+}
+
+# A crash between the jq and the mv of a merged rewrite leaves a temp file forever.
+# It can never be read as a card, but nothing swept it either, so the register grew
+# debris with no owner.
+case_reap_sweeps_rewrite_debris() {
+  fixture debris || { printf 'fixture setup failed'; return 1; }
+  local cp dp pid start live_debris dead_debris out
+  bash "$REG" claim "$PROJ" kept sess-debris >/dev/null 2>&1 || { printf 'claim failed'; return 1; }
+  cp="$(card_path kept)"
+  dp="$(dead_process)" || { printf 'could not build a dead process'; return 1; }
+  IFS=$'\t' read -r pid start <<< "$dp"
+  dead_debris="$cp.rewrite.$pid"
+  live_debris="$cp.rewrite.$$"
+  printf '{"half":"written"}\n' > "$dead_debris"
+  printf '{"half":"written"}\n' > "$live_debris"
+  out="$(bash "$REG" reap "$PROJ" 2>&1)"
+  [ -f "$dead_debris" ] \
+    && { printf 'expected the debris of a dead process swept; observed it still at %s (reap said %s)' \
+         "$dead_debris" "$out"; return 1; }
+  [ -f "$live_debris" ] \
+    || { printf 'expected the debris of a LIVE process left alone; observed %s removed' "$live_debris"; return 1; }
+  [ -f "$cp" ] || { printf 'expected the live card untouched by the sweep'; return 1; }
+  return 0
 }
 
 case_stale_writer_releasable() {
@@ -376,8 +557,14 @@ run_case 'a missing register directory is an error, not a holder' case_missing_r
 run_case 'two projects may hold the same slug at once' case_two_projects_one_slug
 run_case 'an unknown field survives a heartbeat' case_unknown_field_survives_heartbeat
 run_case 'a malformed slug is refused' case_malformed_slug_refused
+run_case 'a foreign session cannot release a live claim' case_foreign_release_refused
+run_case 'release with no session id falls back to the process test' case_release_without_session_id
+run_case "adopting one's own claim re-anchors the recorded process" case_adoption_reanchors_process
 run_case 'writer slot is exclusive' case_writer_slot_exclusive
 run_case 'a stale writer slot is releasable' case_stale_writer_releasable
+run_case 'concurrent writer acquires elect exactly one winner' case_concurrent_writer_acquires
+run_case 'reaping a dead card never destroys the card that replaced it' case_reap_race_keeps_one_winner
+run_case 'reap sweeps rewrite debris left by a dead process' case_reap_sweeps_rewrite_debris
 
 printf 'passed=%s failed=%s\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]
