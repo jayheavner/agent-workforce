@@ -7,11 +7,13 @@ refusing honest work.
 **Architecture.** The unit of isolation becomes the *change*, not the agent: one linked
 git worktree per change, shared by every agent contributing to that change, with at most
 one live writer in it at a time. Ownership is a durable fact on disk — a **timecard**
-file per claim in a machine-scoped **work register**, created with an exclusive-create
-that the filesystem itself serialises — so guards read facts instead of inferring
-identity from conversation history. Worktree creation, the timecard, and integration are
-performed by hooks as a side effect of a declaration in the dispatch, so no agent ever
-runs a mutating git command.
+file per claim in a machine-scoped, per-project **work register**, created with an
+exclusive-create that the filesystem itself serialises — so guards read facts instead of
+inferring identity from conversation history. Worktree creation and adoption are
+performed by hooks as a side effect of a declaration in the dispatch; release and
+integration are performed by one workforce command the executor runs, and the Stop hook
+only verifies that it happened. No agent runs a raw mutating git command against the
+shared checkout.
 
 **Tech stack.** Bash hooks + `jq` (existing guard convention), Python 3 only where a
 hook already uses it, POSIX filesystem primitives for exclusion. No new dependencies,
@@ -22,42 +24,127 @@ so `policy:dependency-freshness` pins nothing in this plan.
 - `policy:workspace-isolation` — resolved from **project policy** (`policy/KEYS.md:20`),
   verbatim: *"one unique worktree per builder, created before any code is touched
   (consumers: planning, tdd, debugging, finishing-a-branch)"*. **This plan amends that
-  key** (Task 1): the unit becomes the change, not the builder, and creation moves from
-  the orchestrator to a hook. Until Task 1 lands, the existing wording governs.
+  key** (Task 7): the unit becomes the change, not the builder, and creation moves from
+  the orchestrator to a hook. The existing wording governs every dispatch until the whole
+  of Stage 2 is integrated — including the dispatches that implement this plan.
 - `policy:dependency-freshness` — resolved from **project policy**
   (`policy/KEYS.md:19`); no dependency is added or pinned by this plan, so the key is
   consulted and not exercised.
-- Hooks are pinned per session (`hooks/agent-team-pin.sh`), so two guard builds will
-  read one register concurrently. Every register format change is additive and carries
-  a schema version.
-- Tasks below touch disjoint files and are ordered; each stage produces working,
-  testable software on its own.
-- Security pass: the register stores no credentials; timecards hold session id, process
-  id, change slug, paths, timestamps only. Refusal messages quote paths, never file
-  contents.
+- `policy:closeout-integration` — **no value is pinned in this checkout.** The session
+  executing this plan proceeds on `push` (push to `origin/main` at closeout). Because a
+  push makes a partial state the default for every future session, integration cadence is
+  a design decision here, not a closeout detail: see decision 9.
+- Hooks are pinned per session (`hooks/agent-team-pin.sh`), so two guard builds may read
+  one register concurrently. Every register format change is additive and carries the
+  `v` field; a reader that does not recognise a field preserves it untouched.
+- **Agent documents are not pinned.** `hooks/agent-team-pin.sh` versions hooks only.
+  `install.sh` copies `agents/*.md` flat into `~/.claude/agents/` (install.sh:694), so an
+  install swaps role prose under a running session while that session's guards stay
+  pinned. Directive prose and the guard that enforces it must therefore reach
+  `origin/main` in the same push (decision 9).
+- Tasks are ordered, and every task's files are disjoint from every other task's except
+  where a later task extends a file an earlier task in the same stage created or
+  modified.
+- **Test output convention (new, and the plan depends on it).** Every test file this plan
+  creates or rewrites prints one line per case in exactly this shape — `PASS [<label>]`
+  for a passing case, `FAIL [<label>]: <why>` for a failing one — and keeps a trailing
+  `passed=<n> failed=<n>` summary. The acceptance criteria below count those labels, so a
+  case that is silently dropped fails its criterion instead of passing by absence.
+- **No test writes the real register.** Every test sets
+  `AGENT_TEAM_REGISTER_DIR="$WORK/register"` inside its own temporary fixture, and every
+  test that exercises telemetry sets `AGENT_TEAM_TELEMETRY_DIR` the same way. A test that
+  leaves either unset is a defect, because it would mutate the machine's live register.
+- Security pass: the register stores no credentials; timecards hold a session id, a
+  process id and its start time, a change slug, paths, a ref name, and timestamps only.
+  Refusal messages quote paths and slugs, never file contents. The register directory is
+  created with mode 700.
+- Never the word for a movable git pointer: the unit of isolation is the worktree, and
+  history is named by ref (`main`, `origin/main`, `refs/heads/change/<slug>`).
 
-## Decisions resolved by the panel (2026-08-17, debate mode)
+## Mutation scope
+
+- **Dependencies installed:** none.
+- **Files created:** `hooks/agent-team-register.sh`, `hooks/agent-team-workspace.sh`,
+  `hooks/agent-team-register.json`, `tests/lib/concurrency.sh`,
+  `tests/test_register_concurrency.sh`, `tests/test_register.sh`,
+  `tests/test_workspace.sh`, and — authored by the test-author, not by a builder —
+  `tests/acceptance/test_workspace_isolation.sh` (the directory `tests/acceptance/`
+  does not exist yet; creating it also activates the worktree guard's existing
+  read-only-acceptance-suite rule, `agent-team-worktree-guard.sh:184`–`:201`).
+- **Files modified:** `hooks/agent-team-dispatch-guard.sh`,
+  `hooks/agent-team-worktree-guard.sh`, `hooks/agent_team_closeout.py`,
+  `tools/worktree-hygiene.sh`, `install.sh`, `policy/KEYS.md`, `README.md`,
+  `agents/*.md` (eleven of the thirteen; `agents/researcher.md` and `agents/ticketer.md`
+  are untouched — see Task 6 and Task 7), and the test files
+  `tests/test_dispatch_guard.sh`, `tests/test_worktree_guard.sh`,
+  `tests/test_agent_frontmatter.sh`, `tests/test_closeout_hook.sh`,
+  `tests/test_worktree_hygiene.sh`.
+- **Files deleted:** none.
+- **State touched outside the repo, at run time:**
+  `~/.claude/state/agent-workforce-register/<project-key>/<slug>.json` (created,
+  rewritten, deleted by the register), and one appended line per refusal in
+  `~/.claude/logs/agent-team-telemetry/guard-blocks.jsonl` (existing behaviour). Linked
+  worktrees are created under `<project>/.claude/worktrees/`, already gitignored
+  (`.gitignore:6`).
+- **Not touched by the executing session:** `install.sh` is not *run* by this task, and
+  the launcher is not re-run. See "Executing this plan under the old rules".
+
+## Decisions resolved by the panel (2026-08-17, debate mode), with amendments
 
 1. **Owner and writer are separate fields.** A timecard names the change's owning
    session *and* the currently-writing agent slot. Two builders repairing one change
    share the tree but never hold the writer slot at once. (Adzic: H1 removed the
    accidental serialisation that per-builder trees provided.)
+   *Amended 2026-08-17:* the writer entry carries its **own** liveness — a heartbeat and
+   a TTL — because a builder subagent that dies mid-task does not kill the session
+   process whose pid the timecard records, so pid liveness can never release a writer
+   slot. See Task 4, `register_writer_acquire`.
 2. **Workspace administration is a hook side effect, not an orchestrator command.**
    The orchestrator declares `CHANGE: <slug>` in a dispatch; the dispatch guard claims
-   the timecard, creates the worktree, and rewrites nothing else. This resolves Fowler's
-   contradiction — the orchestrator can lose Bash and still get workspaces — and removes
-   the class of failure where a malformed or missing path burned seven dispatches.
+   the timecard, creates or adopts the worktree, and rewrites nothing else. This resolves
+   Fowler's contradiction — the orchestrator can lose Bash and still get workspaces — and
+   removes the class of failure where a malformed or missing path burned seven dispatches.
+   *Amended 2026-08-17:* the side effect covers **creation and adoption only**. Release,
+   integration, and tree removal are performed by one explicit command
+   (`agent-team-workspace.sh integrate`) that the executor is dispatched to run, because
+   the closeout hook fires on **every** Stop — a mid-task pause that integrated unfinished
+   work and deleted a live workspace is the failure that amendment prevents. The Stop hook
+   verifies the outcome and mutates nothing (Task 8).
 3. **One file per claim, created with `O_EXCL`.** Mutual exclusion is the filesystem's
    atomic create, not a lock file and not an append to a shared list. This answers
    Nygard's lost-update objection and Hohpe's ordering question at once: no two
    processes can both create the same claim.
+   *Refined 2026-08-17:* three implementation constraints are load-bearing and are stated
+   in Task 2 — `set -o noclobber` is set inside the register script itself and never
+   assumed from the caller; creation is a `>` redirection and never `mktemp` + `mv`, which
+   clobbers silently; and a failed redirection is confirmed as "the file already exists" by
+   re-reading the path, so a missing or unwritable register directory reports an error
+   instead of a holder.
 4. **Ordering: claim first, tree second, ready third.** A timecard without a tree is
    reaped by liveness. A tree without a timecard is refused and reported by hygiene.
    A partially written claim is never authoritative — reconciliation is
    `reap`, never deadlock. (Hohpe.)
+   *Amended 2026-08-17:* three cases the original wording left to invention are now
+   specified. An empty or unparseable timecard is **dead**, never a holder, and is reaped
+   (Task 2). A claim whose worktree creation then failed is released by the same guard
+   that wrote it, in the same hook run (Task 4). A claim already held by **this** session
+   is idempotent: the guard resumes it — completing the tree and marking it ready —
+   instead of refusing, so one failed dispatch cannot brick a slug for the session's life.
 5. **`session_id` survives resume — verified.** All three live sessions examined span
    14→17 August in one file with one id each; no id is shared across files. A cleared or
    forked session mints a new id, so reaping is by process liveness, never by id match.
+   *Amended 2026-08-17:* liveness and **membership** are now separate questions, and
+   membership no longer rests on `session_id` alone. A timecard belongs to the agent whose
+   hook is running when **either** its recorded session process matches (pid *and* process
+   start time) **or** its `session` field equals the payload's `session_id`. Two reasons.
+   First, a subagent's hook payload may or may not carry the parent session's id, and this
+   plan must not rest on an unverified harness detail — the session process is the same
+   for the orchestrator and every subagent it dispatches, because subagents run inside the
+   one harness process, so the pid match carries the case where the ids differ. Second, a
+   resumed session keeps its id and gets a new process, so the id match is what lets it
+   adopt its own pre-resume claim (rewriting pid and start time, recorded as a fail-open).
+   Neither test can match a foreign session: ids are unique per session and a live pid
+   belongs to exactly one process.
 6. **Cloud mutations are an explicit non-goal.** A workspace timecard is the wrong claim
    type for an IAM policy. Naming it out of scope beats an exemption inside the gate.
    (Hightower.)
@@ -66,8 +153,65 @@ so `policy:dependency-freshness` pins nothing in this plan.
    (`WORKFORCE_OVERRIDE: lane-refusal`) is extended to workspace claims. False refusal
    is the failure mode with the worst history here; it gets an acceptance criterion of
    its own (Cockburn, Wiegers).
+   *Amended 2026-08-17:* "a write is legal only inside the timecard's worktree" outlawed
+   two writes the workflow itself depends on — the scribe's agent-memory writes at
+   `~/.claude/projects/*/memory`, a path the lane configuration explicitly grants it
+   (`hooks/agent-team-lanes.json:12`, documented at `README.md:107`), and any document
+   write by a role that has no claim yet. The legality rule is therefore two-branch:
+   **inside the session's claimed worktree, OR inside a lane this role owns whose path
+   resolves outside every git working tree.** A lane that resolves *inside* a working tree
+   (the architect's `plans`, the scribe's `docs`) is legal only inside the claimed tree, and
+   the refusal names the one-line repair — the `CHANGE: <slug>` declaration — so the plan
+   document lives with the change it plans. Task 7 writes that into the orchestrator: a
+   task that will produce a commit declares its change at intake, before the first
+   writing dispatch.
 8. **Concurrency is tested with real processes before the feature is built** (Crispin),
    and the role documents are rewritten in the same change as the mechanism (Gregory).
+   *Amended 2026-08-17:* "same change" is sharpened to "same **push**, and committed
+   **after** it". Directive prose that lands in `origin/main` ahead of the guard it
+   describes gives every new session an orchestrator told not to create worktrees and a
+   guard that refuses builders without one — the workforce could not implement Stage 2
+   with itself. See decision 9.
+9. **Integration cadence: one push per stage, documents last within the stage.** *(New,
+   2026-08-17, resolving the version window above.)* Stage 1 is pushed alone because it
+   changes no rule and no instruction — it adds two libraries nothing calls yet. Stage 2's
+   four tasks are committed separately and pushed **together**, with Task 7 (policy key,
+   role documents, README rows, frontmatter assertions) as the last commit in the stage.
+   Stage 3 is pushed after Stage 2. The rejected alternative was pushing every task as it
+   lands: it produces at least two states of `origin/main` in which a new session cannot
+   dispatch a builder at all. The cost of this cadence is that Stage 2's register-backed
+   dispatch guard is not exercised by a fresh session until all four tasks are green; that
+   is paid for by the acceptance suite, which runs the whole path against fixtures, and by
+   AC-11, which is deliberately deferred to the first orchestrated task after landing.
+10. **The workspace path and its ref are derived, never passed.** *(New, 2026-08-17,
+    resolving "how does a builder learn its path".)* An exit-0/exit-2 hook cannot alter a
+    dispatch prompt, so nothing is injected anywhere. Given a change slug, every
+    participant computes the same two names: the worktree is
+    `<project-root>/.claude/worktrees/<slug>` and its ref is `refs/heads/change/<slug>`.
+    The timecard records both verbatim so a guard reads them rather than re-deriving them,
+    and a slug is constrained to `[a-z0-9][a-z0-9._-]{0,63}` so it can never contain a
+    path separator or `..`.
+11. **Bash cannot be read/write-classified, so the Bash rule is per role.** *(New,
+    2026-08-17.)* The verifier and the reviewer hold only `Read, Glob, Grep, Bash`; gating
+    their Bash by working directory the way a builder's is gated would stop the verifier
+    running the acceptance suite and the reviewer running the plan lint — breaking the very
+    gates this change exists to strengthen. Roles are therefore split into four sets with
+    four rules (the table in Task 5). "Denied writes outright" for the judges is enforced
+    where it cannot be reasoned past — the tool layer, asserted in frontmatter — not by a
+    guard that would have to classify shell commands.
+12. **The register is the authority; the agent's own dispatch prompt is only a selector.**
+    *(New, 2026-08-17, replacing "resolution is keyed on `session_id`, never from the
+    transcript".)* Two transcript channels are not the same thing, and forbidding both
+    made the plan's own parallelism promise unimplementable. Forbidden: scanning the
+    **main-session** transcript for the most recent declaration — that is the 2026-08-04
+    defect, where one session's oldest malformed declaration poisoned every later builder.
+    Permitted: reading the **subagent's own** transcript, which contains exactly one
+    dispatch prompt, already validated by the dispatch guard when it was issued. A
+    transcript containing zero `Agent` tool_use blocks is a subagent's own by construction
+    (no dispatched specialist holds the Agent tool), and that is the test the guard uses.
+    So: the session's live claims come from the register; when there is more than one, the
+    `CHANGE: <slug>` line in this agent's own dispatch prompt selects which one governs,
+    and a selector that names no live claim is a refusal that lists every candidate.
 
 ## Open questions the tasks proceed on
 
@@ -76,207 +220,829 @@ so `policy:dependency-freshness` pins nothing in this plan.
   receipt, since that is the one surface the human always reads. Revisit if closeout
   noise becomes the complaint.
 - **Whether the orchestrator loses Bash in this change or the next.** Assumption: not in
-  this change. The register gate (Stage 3) makes its shell harmless first; removing the
-  tool is a separate, reviewable step so a regression in the gate does not blind the
-  orchestrator at the same moment.
+  this change. The register gate (Stage 2, Task 5) makes its shell harmless first;
+  removing the tool is a separate, reviewable step so a regression in the gate does not
+  blind the orchestrator at the same moment.
+- **Whether a subagent's hook payload carries the parent session's id.** Not verified, and
+  deliberately not depended on: decision 5's two-branch membership test holds either way.
+  Task 4 records which branch actually fired in the guard log (`detail` field
+  `membership=pid` or `membership=session-id`), so the first orchestrated task after
+  landing answers the question from evidence.
+
+## Executing this plan under the old rules
+
+This is the one plan whose builders run under the guards it is changing, so the sequence
+is load-bearing and is stated rather than left to inference.
+
+- **This session's own dispatches follow the OLD contract, from first to last.** The
+  installed hooks are pinned to the build resolved at this session's first hook call
+  (`hooks/agent-team-pin.sh:61`–`:99`), so nothing this task commits changes this
+  session's enforcement. Every builder dispatch this session issues therefore still needs
+  a worktree the orchestrator created and a `WORKTREE: <path>` line, exactly as
+  `agent-team-dispatch-guard.sh:328`–`:381` requires today. Reading the new prose in this
+  plan is not permission to stop doing that.
+- **This session must not run `install.sh` and must not re-run `bin/agent-workforce`.**
+  Hook pinning would protect this session's guards, but `agents/*.md` is copied flat and
+  is not pinned, so an install mid-session hands the *next* builder new instructions while
+  the pinned guard still enforces the old rules — BLOCK 4's trap, inside one session.
+- **The last stage boundary at which this session can still safely dispatch a builder is
+  the end of Stage 3** — that is, all of them — *because* nothing is installed
+  mid-session. The boundary that actually matters is not a stage: it is the install. The
+  install is the human's step, after Stage 3 reaches `origin/main`, and the first session
+  launched after it is the first session running the new mechanism.
+- **The new mechanism is therefore not proved end-to-end by this task.** That proof is
+  AC-11, deferred by construction to the first orchestrated task after landing and
+  verified in that task's closeout.
+
+## The acceptance suite (authored by the test-author, red before any builder)
+
+The bar for this plan is one separately-authored file,
+`tests/acceptance/test_workspace_isolation.sh`, written from this plan by the test-author,
+committed red, and read-only to every builder thereafter (the worktree guard enforces that
+once `tests/acceptance/` exists). It prints `PASS [<label>]` / `FAIL [<label>]: <why>` per
+case and a trailing `passed=<n> failed=<n>` summary. The acceptance criteria count these
+exact labels; the labels are the contract between this plan and that suite.
+
+Turned green by Stage 1:
+
+- `exactly one of twenty claimants wins`
+- `claim survives the hook process that created it`
+- `claim is reaped only after the session process exits`
+- `a recycled pid with a different start time is reaped`
+- `an empty timecard is reaped, not honoured as a holder`
+- `a missing register directory is an error, not a holder`
+- `two projects may hold the same slug at once`
+- `installer touchpoints cover the new hook files`
+
+Turned green by Stage 2:
+
+- `re-claim after reap adopts the surviving worktree`
+- `a retry after a failed tree creation re-claims the same slug`
+- `a retry after a crash before ready completes the claim`
+- `a second live session is refused and the holder is named`
+- `two live writers on one change are refused`
+- `a stale writer slot is releasable`
+- `shared-checkout write refused: builder`
+- `shared-checkout write refused: test-author`
+- `shared-checkout write refused: architect`
+- `shared-checkout write refused: scribe`
+- `shared-checkout write refused: executor`
+- `shared-checkout write refused: deployer`
+- `shared-checkout write refused: verifier`
+- `shared-checkout write refused: reviewer`
+- `shared-checkout write refused: debugger`
+- `shared-checkout write refused: ops`
+- `scribe memory write with no claim is allowed`
+- `architect plan write inside the claimed tree is allowed`
+- `verifier runs the acceptance suite from the shared checkout`
+- `reviewer runs the plan lint from the shared checkout`
+- `two live claims with no selector is a refusal naming both`
+- `a selector naming no live claim is a refusal naming both`
+- `a dispatch declaring PARALLEL_SAFE may not write`
+
+Turned green by Stage 3:
+
+- `a bare Stop with a live claim integrates nothing`
+- `a completion claim with no change disposition is blocked`
+- `an integrated claim survives closeout only as a verified fact`
+- `hygiene lists a held claim and flags an unclaimed tree`
 
 ---
 
 ## Stage 1 — Foundation
 
-### Task 1: amend the policy key and the role documents
+Integrates alone and safely: it adds two sourced libraries and one config file that no
+guard calls yet, and changes no rule and no instruction.
 
-**Files.** Modify `policy/KEYS.md:20`; modify all twelve `agents/*.md` workspace prose;
-modify `README.md:106`. Test `tests/test_agent_frontmatter.sh`.
-
-**Interfaces.** Produces the vocabulary every later task quotes: *change*, *change
-workspace*, *timecard*, *work register*, *writer slot*.
-
-**Steps.**
-1. [ ] Add to `tests/test_agent_frontmatter.sh` an assertion that no `agents/*.md`
-   instructs an agent to create a worktree, and that `agents/orchestrator.md` states
-   workspaces are requested by declaration, not created.
-2. [ ] Run `bash tests/test_agent_frontmatter.sh` — expect failure naming
-   `orchestrator.md` (its `:48`–`:52` prose and the "orchestrator owns creation" rule).
-3. [ ] Rewrite the prose in all twelve role documents and `policy/KEYS.md:20`.
-4. [ ] Run `bash tests/test_agent_frontmatter.sh` — expect pass.
-5. [ ] `git commit -am "policy(workspace-isolation): the change owns the worktree, and a hook creates it"`
-
-### Task 2: the concurrency test harness
+### Task 1: the concurrency test harness
 
 **Files.** Create `tests/lib/concurrency.sh`, `tests/test_register_concurrency.sh`.
 
-**Interfaces.** Exports `spawn_claimants <n> <register-dir> <slug>` (n real background
-processes racing one claim) and `assert_exactly_one_winner`. Every later stage's test
-consumes these.
+**Interfaces produced.**
+- `spawn_claimants <n> <register-dir> <project-root> <slug>` — starts `n` real background
+  processes, each running `bash hooks/agent-team-register.sh claim <project-root> <slug>
+  <session-id>` with `AGENT_TEAM_REGISTER_DIR=<register-dir>`, each writing its exit
+  status to `<register-dir>/../out/<i>.rc`, and waits for all of them.
+- `assert_exactly_one_winner <out-dir>` — prints
+  `PASS [exactly one of twenty claimants wins]` when exactly one `.rc` file holds `0` and
+  every other holds `3`; otherwise prints `FAIL [...]: winners=<w> refusals=<r>
+  other=<list>`.
 
 **Steps.**
-1. [ ] Write `tests/test_register_concurrency.sh` asserting that twenty concurrent
-   processes claiming one slug produce exactly one success and nineteen refusals.
-2. [ ] Run it — expect failure: `register-claim.sh: No such file or directory`.
-3. [ ] Leave it red; Task 3 turns it green. Commit the harness alone:
+1. [ ] Write `tests/lib/concurrency.sh` with the two functions above. Each claimant is a
+   separate `bash` process started with `&`, and all of them are started before any is
+   waited on, so the race is real rather than sequential.
+2. [ ] Write `tests/test_register_concurrency.sh`: build a temporary project fixture
+   (`git init -q -b main`, one commit), point `AGENT_TEAM_REGISTER_DIR` at a temporary
+   directory inside the fixture, call `spawn_claimants 20 ...`, then
+   `assert_exactly_one_winner`.
+3. [ ] Run `bash tests/test_register_concurrency.sh` — expect failure with
+   `hooks/agent-team-register.sh: No such file or directory` on every claimant and
+   `FAIL [exactly one of twenty claimants wins]: winners=0`.
+4. [ ] Leave it red; Task 2 turns it green. Commit the harness alone:
    `git commit -am "test(register): a real multi-process race harness, red until the register exists"`
 
-### Task 3: the register primitive
+### Task 2: the register primitive
 
-**Files.** Create `hooks/agent-team-register.sh`. Test
-`tests/test_register_concurrency.sh` (from Task 2), `tests/test_register.sh`.
+**Files.** Create `hooks/agent-team-register.sh`, `hooks/agent-team-register.json`.
+Modify `install.sh` (the five per-file touchpoints: `HOOK_FILES` at `:127`, the pre-install
+backup block at `:540`–`:555`, the `restore()` case list at `:600`–`:629`, the
+`cleanup_fresh` removals at `:666`–`:681`, and the forward copy at `:694`–`:718`; plus one
+`bash -n "$REPO/hooks/agent-team-register.sh"` line beside the checks at `:184`–`:187`).
+Test `tests/test_register.sh` (new), `tests/test_register_concurrency.sh` (from Task 1),
+`tests/test_install_touchpoints.sh` (existing, must stay green).
 
-**Interfaces.**
-- `register_claim <slug> <session-id> <pid> <worktree-path>` → exit 0 and prints the
-  timecard path, or exit 3 and prints the current holder. Creates
-  `$REGISTER_DIR/<slug>.json` with `set -o noclobber` redirection (the shell's
-  `O_EXCL`), schema `{"v":1,"slug","session","pid","worktree","state":"claiming",
-  "opened","heartbeat","writer":null}`.
-- `register_ready <slug>` → `state:"ready"`.
-- `register_holder <slug>` → prints the JSON or nothing.
-- `register_writer_acquire <slug> <agent-slot>` / `register_writer_release <slug>`.
-- `register_heartbeat <slug>`; `register_reap <register-dir>` — removes any timecard
-  whose `pid` is not live (`kill -0`).
-- Unknown JSON fields are preserved across every rewrite (temp file + `mv`), so an older
-  pinned guard cannot destroy a newer guard's data.
+**Interfaces produced.** A sourced library that also runs as a CLI. Sourcing defines
+functions only; executing dispatches subcommands (`claim`, `ready`, `holder`, `release`,
+`reap`, `writer-acquire`, `writer-release`, `heartbeat`, `session-claims`, `card-path`,
+`worktree-path`) whose names and argument order match the functions below one-for-one.
+
+- `register_config_int <key> <default>` → the integer from
+  `hooks/agent-team-register.json` beside this script, or the default when the file is
+  missing or unreadable. Config: `{"schema":1,"writer_ttl_seconds":900,
+  "claim_stale_warn_seconds":86400}`.
+- `register_root` → `${AGENT_TEAM_REGISTER_DIR:-$HOME/.claude/state/agent-workforce-register}`.
+- `register_project_root <dir>` → the **main** checkout for `<dir>`: `git -C <dir>
+  rev-parse --show-toplevel`, and when that top level is itself a linked worktree (its
+  `.git` is a file whose first line matches `^gitdir: .*/\.git/worktrees/[^/]+$`), the
+  prefix before `/.git/worktrees/`. Empty output plus exit 5 when `<dir>` is in no
+  repository.
+- `register_project_key <project-root>` → the first 12 hex characters of the SHA-256 of
+  the canonical project root path, using `shasum -a 256` or `sha256sum`, whichever exists;
+  exit 5 when neither does. This is what keeps two unrelated projects both claiming
+  `fix-typo` from colliding.
+- `register_card_path <project-root> <slug>` →
+  `<register-root>/<project-key>/<slug>.json`.
+- `register_worktree_path <project-root> <slug>` →
+  `<project-root>/.claude/worktrees/<slug>`.
+- `register_ref_name <slug>` → `change/<slug>` (the full ref is
+  `refs/heads/change/<slug>`).
+- `register_valid_slug <slug>` → exit 0 when the slug matches
+  `^[a-z0-9][a-z0-9._-]{0,63}$` and contains no `..`; else exit 6.
+- `register_session_process` → prints `<pid>` and `<start-string>` on one line separated
+  by a tab: the **session's long-lived harness process**, found by walking ancestry
+  upward from `$PPID`. At each step, `ps -p <pid> -o ppid=` gives the parent and
+  `ps -p <pid> -o comm=` gives the command; the basename of the command, with any leading
+  `-` stripped, is compared against the shell set `sh bash dash zsh ksh csh tcsh fish env
+  timeout nice sudo ps`. The first ancestor **not** in that set is the answer; if the walk
+  reaches pid 1 without finding one, the last ancestor before pid 1 is the answer; if
+  there is no ancestor at all, exit 4. The start string is `ps -p <pid> -o lstart=`
+  verbatim (it contains spaces, so it is read by its own `ps` call and stored as a
+  string). This is the field BLOCK 1 turns on: the process the hook runs in exits seconds
+  after the dispatch is allowed, and recording it would make every claim look dead.
+- `register_alive <pid> <start-string>` → exit 0 when `kill -0 <pid>` succeeds **and**
+  `ps -p <pid> -o lstart=` still equals `<start-string>`; else exit 1. Both halves are
+  required: without the start string a recycled pid reports a stale claim as live and
+  holds a slug indefinitely. Noted limit, single-user machine: `kill -0` also fails with
+  EPERM for a live process owned by another user, which would read as dead — acceptable
+  here, and the reason the start-time comparison (which needs no permission) is the
+  second half rather than the only half.
+- `register_claim <project-root> <slug> <session-id>` → exit 0 and print the card path
+  when the claim is taken; exit 3 and print the holder's JSON when a **live** foreign
+  session holds it; exit 4/5/6 per above. Behaviour, in order: validate the slug; resolve
+  the session process; reap this one card if its recorded process is dead or its content
+  is empty or unparseable; if a card still exists, decide membership by decision 5 (pid
+  match or session-id match) — a member returns exit 0 with the existing card (idempotent),
+  a non-member returns exit 3; otherwise create the card.
+- `register_ready <project-root> <slug>` → sets `state` to `ready`.
+- `register_holder <project-root> <slug>` → prints the card's JSON, or nothing and exit 1.
+- `register_mine <project-root> <slug> <session-id>` → exit 0 when the card exists and
+  passes decision 5's membership test; prints `pid` or `session-id` naming which branch
+  matched.
+- `register_session_claims <project-root> <session-id>` → one line per live card in this
+  project that this session is a member of: `<slug>\t<worktree>\t<state>`.
+- `register_release <project-root> <slug>` → deletes the card **only** when
+  `register_mine` passes or its process is dead; exit 3 without deleting otherwise.
+- `register_writer_acquire <project-root> <slug> <slot>` → sets
+  `writer={"slot":<slot>,"session":<session-id>,"heartbeat":<epoch>}` and exits 0 when the
+  slot is empty, when the existing entry's `slot` equals `<slot>`, when its `heartbeat` is
+  older than `writer_ttl_seconds`, or when the card's session process is dead. Otherwise
+  exit 3 printing the holding slot and the age in seconds. A TTL displacement is recorded
+  as a fail-open in the guard log by the caller.
+- `register_writer_release <project-root> <slug>` → sets `writer` to `null`.
+- `register_heartbeat <project-root> <slug> [slot]` → refreshes the card's `heartbeat`,
+  and the writer entry's too when `[slot]` is given and matches.
+- `register_reap <project-root>` → for every card in the project's directory, remove it
+  when its content is empty or unparseable, or when `register_alive` fails for its
+  recorded process; print one `reaped <slug> <reason>` line per removal. Never removes a
+  card whose process is live, whatever its age.
+
+Timecard schema, version 1:
+
+```json
+{"v":1,"slug":"<slug>","project":"<absolute main checkout>","project_key":"<12 hex>",
+ "session":"<session id>","pid":<session process pid>,"pid_start":"<ps lstart string>",
+ "worktree":"<absolute path>","ref":"refs/heads/change/<slug>",
+ "base_ref":"<ref the tree was created from>","base_sha":"<40 hex>",
+ "state":"claiming","opened":"<ISO-8601 UTC>","heartbeat":<epoch seconds>,"writer":null}
+```
+
+Creation and rewrite rules, all three from decision 3:
+
+- Creation is `( set -o noclobber; printf '%s\n' "$json" > "$card" )`. The `set -o
+  noclobber` is inside that subshell in this script — never assumed from the caller — and
+  the redirection is `>`, which Bash implements with `O_CREAT|O_EXCL` and which is atomic
+  on APFS. `mktemp` + `mv` is forbidden for creation: it clobbers silently and destroys
+  the exclusion this whole design rests on.
+- A failed redirection is **not** evidence of a holder. Re-read the path: when the file
+  exists, the claim is held; when it does not, the register directory is missing or
+  unwritable, which is exit 5 with the repair (`mkdir -p` on the register root) and never
+  a holder.
+- Every rewrite (`ready`, `heartbeat`, writer changes) reads the existing object, merges
+  the changed fields with `jq`, writes a temp file in the same directory and `mv`s it over
+  the card, so unknown fields written by a newer guard survive an older pinned guard.
 
 **Steps.**
-1. [ ] Write `tests/test_register.sh` covering: claim succeeds; second claim by another
-   session exits 3 and names the holder; `register_reap` removes a dead pid's timecard
-   and leaves a live one; an unknown field survives a heartbeat.
-2. [ ] Run both test files — expect failure, `agent-team-register.sh` missing.
-3. [ ] Implement `hooks/agent-team-register.sh`.
-4. [ ] Run both — expect pass, including exactly-one-winner across twenty processes.
-5. [ ] `git commit -am "feat(register): a timecard per change, exclusive by filesystem create"`
+1. [ ] Write `tests/test_register.sh` covering, with these exact case labels: `claim
+   succeeds and prints the card path`; `a second claim by a foreign live session exits 3
+   and names the holder`; `a second claim by the same session is idempotent`; `claim
+   survives the hook process that created it`; `claim is reaped only after the session
+   process exits`; `a recycled pid with a different start time is reaped`; `an empty
+   timecard is reaped, not honoured as a holder`; `a missing register directory is an
+   error, not a holder`; `two projects may hold the same slug at once`; `an unknown field
+   survives a heartbeat`; `a malformed slug is refused`; `writer slot is exclusive`; `a
+   stale writer slot is releasable`.
+   The liveness cases use a real process tree rather than a mock: a long-lived
+   non-shell parent started as `python3 -c "import subprocess,sys,time;
+   subprocess.run(sys.argv[1:]); time.sleep(300)" bash -c '<claim command>'` — the claim
+   runs in a short-lived `bash` child whose first non-shell ancestor is that `python3`
+   process. Assert the card still resolves as live after the `bash` child has exited, then
+   `kill` the `python3` process and assert `register_reap` removes it. The recycled-pid
+   case rewrites a card's `pid` to the test's own live pid while leaving `pid_start` as a
+   fabricated older string, and asserts the card is reaped.
+2. [ ] Run `bash tests/test_register.sh` and `bash tests/test_register_concurrency.sh` —
+   expect both to fail with `agent-team-register.sh` missing.
+3. [ ] Implement `hooks/agent-team-register.sh` and `hooks/agent-team-register.json`.
+4. [ ] Wire the two new files through all five installer touchpoints and add the
+   `bash -n` line. Run `bash tests/test_install_touchpoints.sh` — expect
+   `install-touchpoint tests: PASS=<n> FAIL=0`.
+5. [ ] Run all three — expect pass, including `PASS [exactly one of twenty claimants
+   wins]`.
+6. [ ] `git commit -am "feat(register): a timecard per change, exclusive by filesystem create"`
+
+### Task 3: the workspace primitive
+
+**Files.** Create `hooks/agent-team-workspace.sh`. Modify `install.sh` (the same five
+touchpoints plus its `bash -n` line). Test `tests/test_workspace.sh` (new),
+`tests/test_install_touchpoints.sh`.
+
+**Interfaces produced.** A sourced library that also runs as a CLI (`ensure`, `integrate`,
+`remove`). It sources `agent-team-register.sh` from its own directory. It is the **only**
+component in this plan that runs a mutating git command, and no agent invokes `ensure`
+directly — the dispatch guard does.
+
+- `workspace_ensure <project-root> <slug> <base-ref>` → prints the worktree path, exit 0.
+  This is BLOCK 5's adoption rule, in order:
+  1. Refuse (exit 7) unless `git -C <project-root> check-ignore -q .claude/worktrees`
+     succeeds, naming the `.gitignore` line to add — an un-ignored worktree directory
+     turns every change into dirt in the shared checkout.
+  2. Derive `path` and `ref` per decision 10.
+  3. Read `git -C <project-root> worktree list --porcelain`. When `path` is listed at
+     `refs/heads/change/<slug>`, **adopt it**: print the path and exit 0 without touching
+     git. This is what makes a re-claim after a reap succeed against the tree the dead
+     session left behind.
+  4. When `path` is listed at a different ref, exit 7 naming both refs and the repair
+     (`git -C <project-root> worktree remove <path>`).
+  5. When `path` exists on disk but is not listed, run `git -C <project-root> worktree
+     prune` once and re-read the list; if it is still unlisted and still present, exit 7
+     naming the path and the repair.
+  6. When the ref `refs/heads/change/<slug>` already exists (`git -C <project-root>
+     show-ref --verify --quiet refs/heads/change/<slug>`), attach the tree to it:
+     `git -C <project-root> worktree add "<path>" "change/<slug>"`.
+  7. Otherwise create both: `git -C <project-root> worktree add "<path>" -b
+     "change/<slug>" "<base-ref>"`. Exit 7 on failure, printing git's own stderr.
+- `workspace_integrate <project-root> <slug> <integration-ref>` → exit 0 only after all of
+  it succeeded, and exit 8 with the reason otherwise. In order: the card exists and this
+  session is a member; `git -C <worktree> status --porcelain` is empty (else exit 8 naming
+  the dirty paths); `git -C <project-root> symbolic-ref --short HEAD` equals
+  `<integration-ref>` (else exit 8); `git -C <project-root> status --porcelain` is empty
+  (else exit 8); then `git -C <project-root> merge --no-ff --no-edit "change/<slug>"`;
+  then `git -C <project-root> worktree remove "<path>"`; then `git -C <project-root>
+  update-ref -d "refs/heads/change/<slug>"`; then `register_writer_release` and
+  `register_release`. A conflicted merge exits 8 after `git -C <project-root> merge
+  --abort`, leaving the tree, the ref, and the timecard exactly as they were.
+- `workspace_remove <project-root> <slug>` → removes the tree and deletes the ref **only**
+  when `git -C <project-root> merge-base --is-ancestor "change/<slug>" HEAD` succeeds;
+  exit 8 naming the unmerged commits otherwise. Then releases the card.
+
+**Steps.**
+1. [ ] Write `tests/test_workspace.sh` with these case labels: `ensure creates the derived
+   worktree at the derived ref`; `ensure adopts an existing registered tree`; `ensure
+   refuses a tree registered at another ref`; `ensure prunes a stale registration and
+   retries`; `ensure attaches to an existing ref whose tree was removed`; `ensure refuses
+   when the worktree directory is not gitignored`; `integrate refuses a dirty change
+   tree`; `integrate refuses when HEAD is not the integration ref`; `integrate merges,
+   removes the tree, deletes the ref, and releases the card`; `a conflicted merge aborts
+   and leaves the claim intact`; `remove refuses an unmerged change`.
+2. [ ] Run `bash tests/test_workspace.sh` — expect failure, `agent-team-workspace.sh`
+   missing.
+3. [ ] Implement `hooks/agent-team-workspace.sh`; wire it through the five installer
+   touchpoints and add its `bash -n` line.
+4. [ ] Run `bash tests/test_workspace.sh` and `bash tests/test_install_touchpoints.sh` —
+   expect pass and `FAIL=0`.
+5. [ ] `git commit -am "feat(workspace): create, adopt, and integrate a change's worktree in one place"`
+
+**Stage 1 integration.** Run `tests/test_register.sh`,
+`tests/test_register_concurrency.sh`, `tests/test_workspace.sh`,
+`tests/test_install_touchpoints.sh`, and `tests/test_hook_pin.sh`; each must end
+`failed=0` or `FAIL=0`. Then push Stage 1's three commits to `origin/main`. Nothing
+installed by them is called by any guard, and no instruction has changed, so a session
+launched between Stage 1 and Stage 2 behaves exactly as it does today.
 
 ## Stage 2 — Administration by declaration
 
-### Task 4: the dispatch guard claims and creates
+**One push for the whole stage** (decision 9), with Task 7 committed last. No individual
+task in this stage is pushed on its own.
 
-**Files.** Modify `hooks/agent-team-dispatch-guard.sh` (the
-`WORKTREE_REQUIRED_ROLES` block, lines 286–470). Test
-`tests/test_dispatch_guard.sh`.
+### Task 4: the dispatch guard claims, creates, adopts, and resumes
 
-**Interfaces.** Consumes `register_claim`/`register_holder`/`register_writer_acquire`.
-A dispatch declares `CHANGE: <slug>`; the guard resolves the workspace path from the
-claim, creates the worktree when the claim is new, injects the resolved path into the
-refusal-free path, and refuses when another *live* session holds the slug — naming that
-session and the reaping command.
+**Files.** Modify `hooks/agent-team-dispatch-guard.sh`: replace the workspace-isolation
+block at `:286`–`:470` (which today comprises the `GIT_SERIALIZED_ROLES` scan at
+`:289`–`:295`, `normalize_worktree` at `:301`–`:303`, the `WORKTREE:` shape and existence
+checks at `:305`–`:397`, and the transcript collision scan at `:399`–`:469`); add the
+constants beside `:21`–`:25`. Test `tests/test_dispatch_guard.sh`.
+
+**Interfaces consumed.** `register_claim`, `register_holder`, `register_mine`,
+`register_ready`, `register_release`, `register_reap`, `register_writer_acquire`,
+`register_project_root`, `register_valid_slug`, `workspace_ensure`.
+
+**Interfaces produced.**
+- `readonly CHANGE_MARKER_PREFIX="CHANGE:"` and
+  `readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: this dispatch writes nothing"`.
+- `readonly CHANGE_REQUIRED_ROLES="builder test-author executor deployer"` — the roles a
+  dispatch must declare a change for. The debugger and ops **may** declare one and it is
+  honoured when present, because their Bash rule (Task 5) refuses git mutation outside a
+  claimed tree; a diagnosis that will commit declares its change like anything else.
+- The retired `WORKTREE:` marker is refused, not ignored: a dispatch carrying a
+  `WORKTREE:` line is blocked with a message naming `CHANGE: <slug>` as its replacement,
+  so a stale habit produces one clear correction instead of a silently unenforced line.
+- The old `PARALLEL_SAFE: no git mutation in this dispatch` literal is likewise refused
+  with a message naming the new literal, because the meaning changed: it now asserts the
+  dispatch **writes nothing at all**, and Task 5 verifies that rather than trusting it.
+- A dispatch with neither a `CHANGE:` line nor the `PARALLEL_SAFE` line, in a role that
+  requires one, is refused. The old implicit serialisation of undeclared targets
+  (`:459`–`:467`) is retired along with the transcript collision scan: two live writers
+  are now decided by the register's writer slot, which is a durable fact, rather than by
+  reading the transcript for unresolved dispatches.
+
+Behaviour for a declared change, in order: resolve the project root from `.cwd`;
+`register_reap` the project; `register_claim`; on exit 3, refuse naming the holding
+session, its slug, its worktree, how long it has been held, and the two escapes (wait, or
+the human's `WORKFORCE_OVERRIDE: lane-refusal | <slug>` line); on exit 0, call
+`workspace_ensure`; on `workspace_ensure` failure, call `register_release` for the card
+this hook just wrote and refuse with git's own message — SHOULD 10's window A, so a failed
+tree creation never leaves a `claiming` card behind a live pid; on success,
+`register_ready` and `register_writer_acquire "<role>#<n>"`, where `<n>` is the count of
+prior dispatches of this role for this slug in the payload's transcript, so two builders
+repairing one change hold distinct slot names.
+
+Same-session resumption (SHOULD 10, both windows): when `register_claim` returns exit 0
+against an **existing** card this session is a member of, the guard does not refuse. A
+card in `state: claiming` is resumed — `workspace_ensure` then `register_ready` — and a
+card in `state: ready` is verified by `workspace_ensure`'s adoption path. One failed
+dispatch therefore cannot brick a slug for the session's life.
 
 **Steps.**
-1. [ ] Add tests: a dispatch with `CHANGE:` and no existing claim creates the tree and
-   succeeds; the same slug from a second session is refused with the holder named; a
-   dispatch whose slug is held by a dead pid succeeds after automatic reaping; two live
-   writers on one slug are refused.
-2. [ ] Run `bash tests/test_dispatch_guard.sh` — expect the four new cases to fail.
-3. [ ] Implement, deleting the `WORKTREE:`-path shape checks that creation makes moot.
-4. [ ] Run — expect pass.
+1. [ ] Add cases to `tests/test_dispatch_guard.sh` with these labels: `a builder dispatch
+   declaring a new change claims it and creates the tree`; `the same slug from a foreign
+   live session is refused with the holder named`; `re-claim after reap adopts the
+   surviving worktree`; `a retry after a failed tree creation re-claims the same slug`; `a
+   retry after a crash before ready completes the claim`; `two live writers on one change
+   are refused`; `a second writer slot after the TTL is granted and logged as a
+   fail-open`; `a WORKTREE: line is refused and names CHANGE:`; `the retired PARALLEL_SAFE
+   literal is refused and names the new one`; `a builder with neither CHANGE: nor
+   PARALLEL_SAFE is refused`; `an executor dispatch declaring a change claims it`; `a
+   malformed slug is refused before anything is created`.
+   The reap case is the one BLOCK 5 turns on: claim, kill the holder process, `register_reap`,
+   then re-claim the same slug and assert exit 0 **and** that
+   `git -C <project> worktree list --porcelain` still lists the same path at the same ref.
+   Every case exports `AGENT_TEAM_REGISTER_DIR` into its own fixture.
+2. [ ] Run `bash tests/test_dispatch_guard.sh` — expect the new cases to fail and every
+   pre-existing case to pass.
+3. [ ] Implement, deleting the `WORKTREE:` shape and existence checks and the transcript
+   collision scan that the register replaces.
+4. [ ] Run `bash tests/test_dispatch_guard.sh` — expect pass.
 5. [ ] `git commit -am "feat(dispatch): a change declaration claims its workspace and the hook builds it"`
 
-### Task 5: retire resolve-by-recency
+### Task 5: the worktree guard resolves and gates from the register
 
-**Files.** Modify `hooks/agent-team-worktree-guard.sh` (`declared_worktree`,
-`live_declaration_count`, lines 203–333). Modify `tests/test_worktree_guard.sh` —
-**delete** the case at `:270` that blesses recency, replacing it in the same commit.
-
-**Interfaces.** The guard resolves confinement from `register_holder` keyed on the
-payload's `session_id`, never from the transcript. More than one candidate workspace for
-one session is a refusal that names both.
-
-**Steps.**
-1. [ ] Replace `:270` with its inverse: two live claims for one session must **block**,
-   and the message must name both slugs and the override line.
-2. [ ] Run `bash tests/test_worktree_guard.sh` — expect the new case to fail.
-3. [ ] Rewrite resolution to read the register; delete both transcript-scanning
-   functions and the task-notification gap with them.
-4. [ ] Run — expect pass, and confirm the deleted test's replacement is green.
-5. [ ] `git commit -am "fix(worktree): ambiguity is a refusal, because a guess aims a builder at a peer's tree"`
-
-### Task 6: extend confinement to every writer
-
-**Files.** Modify `hooks/agent-team-worktree-guard.sh:46` (`POLICED_ROLES`); modify
-`agents/{architect,scribe,test-author,executor,deployer,verifier,reviewer}.md`
-frontmatter to register the guard. Test `tests/test_worktree_guard.sh`,
-`tests/test_agent_frontmatter.sh`.
-
-**Interfaces.** `POLICED_ROLES` becomes every role holding Write, Edit, NotebookEdit, or
-Bash. Verifier and reviewer are policed *and* denied writes outright — their concern is
-judgment, not production.
-
-**Steps.**
-1. [ ] Add tests: a scribe write to the shared checkout is refused; a test-author write
-   lands in the change's tree; a reviewer write is refused anywhere.
-2. [ ] Run — expect failure (today only `builder` is policed).
-3. [ ] Implement, and add the guard to the seven frontmatter blocks.
-4. [ ] Run both test files — expect pass.
-5. [ ] `git commit -am "feat(guards): every writer is confined to the change's workspace, and judges write nothing"`
-
-## Stage 3 — The gate and the view
-
-### Task 7: no mutation without a live timecard
-
-**Files.** Modify `hooks/agent-team-worktree-guard.sh` (PreToolUse branch). Test
+**Files.** Modify `hooks/agent-team-worktree-guard.sh`: replace `declared_worktree`
+(`:203`–`:264`) and `live_declaration_count` (`:266`–`:294`) and their call sites
+(`:296`–`:325`); add the legality branch and the per-role Bash rule to the PreToolUse
+section (`:335`–`:407`). Modify `tests/test_worktree_guard.sh` — the whole
+resolution section at `:193`–`:280` is rewritten, not one case (see below). Test
 `tests/test_worktree_guard.sh`.
 
-**Interfaces.** A write is legal only when a live timecard covers this `session_id` and
-the target lies inside that timecard's worktree. Reads are never gated. `PARALLEL_SAFE`
-is redefined to mean *writes nothing* and is verified by the same target check rather
-than accepted as an assertion.
+**Interfaces consumed.** `register_session_claims`, `register_holder`, `register_mine`,
+`register_heartbeat`, `register_project_root`, and `lane_role_spec` / `lane_pattern` /
+`lane_covers` from `hooks/agent-team-lane-paths.sh` (already sourced by two guards; this
+becomes the third reader of that one rule).
+
+**Interfaces produced.**
+- `resolve_change <role>` → prints `<slug>\t<worktree>` for the change that governs this
+  agent, or one of the words `none` or `ambiguous`. Per decision 12: the candidate set is
+  `register_session_claims`; one candidate resolves; more than one is narrowed by
+  `own_dispatch_change`; a selector naming no candidate, or no selector with more than one
+  candidate, yields `ambiguous`.
+- `own_dispatch_change` → the `CHANGE:` slug from **this agent's own** dispatch prompt,
+  read only when the transcript contains zero `Agent` tool_use blocks — the structural
+  test that it is a subagent's own transcript. When `Agent` blocks are present the
+  transcript is a main session's and this function returns nothing: the recency scan that
+  poisoned six dispatches on 2026-08-04 does not come back.
+- `own_dispatch_parallel_safe` → exit 0 when that same own-transcript prompt carries the
+  `PARALLEL_SAFE` marker. Known limit, stated: when the guard is handed a main-session
+  transcript instead of the subagent's own, a `PARALLEL_SAFE` assertion cannot be checked
+  and the write is judged by the timecard rule alone. That bounds the failure to a write
+  inside the session's own claimed tree — never another session's — and it is recorded in
+  the guard log as `parallel-safe-unverifiable`.
+- `write_verdict` → the two-branch legality rule of decision 7, applied to
+  `Write|Edit|NotebookEdit` targets: allow when the target is inside the resolved change's
+  worktree (subject to the existing read-only acceptance-suite rule); allow when the target
+  is covered by a lane this role owns **and** that lane resolves outside every git working
+  tree (`git -C <nearest existing ancestor> rev-parse --show-toplevel` finds nothing);
+  refuse otherwise. The refusal for an in-repository lane path with no claim names the
+  repair verbatim: add `CHANGE: <slug>` to the dispatch. This is what keeps the scribe's
+  `~/.claude/projects/*/memory` writes legal with no claim at all, and puts the plan
+  document inside the change it plans.
+- `POLICED_ROLES` becomes `"builder test-author architect scribe executor deployer
+  verifier reviewer debugger ops"` — every role holding Write, Edit, NotebookEdit, or Bash.
+  The researcher and the ticketer are **exempt with a reason**: both deny those tools in
+  frontmatter (`agents/researcher.md:7`, `agents/ticketer.md:6`,
+  `disallowedTools: Edit, Write, NotebookEdit, Bash, Agent`), so there is nothing to
+  police; Task 7 adds a frontmatter assertion that keeps that true. The orchestrator is
+  the main session, policed by the dispatch guard.
+
+The per-role Bash rule (decision 11) — four sets, four rules:
+
+| Set | Roles | Rule for Bash |
+|---|---|---|
+| Change-confined | builder, test-author | Effective working directory must be inside the resolved change's worktree, and every `git -C <path>` must point inside it. Unchanged from today's builder rule (`:368`–`:406`), including the leading-`cd` allowance. |
+| Integrator | executor, deployer | Not directory-confined. A git-mutating subcommand is refused unless it runs inside the resolved change's worktree, **or** the command is an invocation of `agent-team-workspace.sh` (`integrate`/`remove`) — the one sanctioned mutation of the shared checkout, which the closeout path needs. |
+| Judge | verifier, reviewer | Not directory-confined, so the verifier still runs the acceptance suite and the reviewer still runs the plan lint from the shared checkout. Refused: any git-mutating subcommand, and any in-place file mutation whose resolvable target lies inside a git working tree. Write tools are absent by frontmatter, asserted in Task 7. |
+| Diagnostic | debugger, ops | Identical to Judge. Cloud and outward mutations are untouched (decision 6). |
+
+The pattern lists below are best-effort, not the guarantee: an interpreter-wrapped write
+(`bash -c`, `python3 -c`), `find -delete`, or `xargs rm` can reach a file no pattern names.
+For the Judge and Diagnostic roles, the real wall is the absence of `Write`, `Edit`, and
+`NotebookEdit` in their frontmatter — asserted by Task 7's test — and the Bash patterns
+below are defence in depth on top of that, not what the guarantee rests on.
+
+The matcher skips every leading global option before looking for the subcommand —
+`-C <path>`, `-c <k>=<v>`, `--git-dir=<path>` (and `--git-dir <path>`),
+`--work-tree=<path>` (and `--work-tree <path>`), `--namespace=<name>` (and `--namespace
+<name>`), `--exec-path[=<path>]`, `--no-pager`, `--no-replace-objects`,
+`--literal-pathspecs`, `--bare`, `-p`, `--paginate`, and their space-separated forms where
+git accepts one. An unrecognised leading option is skipped rather than treated as the
+subcommand; a command whose subcommand cannot be identified at all is refused for the
+Judge and Diagnostic sets rather than allowed — the classification fails closed, not open.
+`--git-dir` and `--work-tree` in any form redirect git at another working tree, so for the
+Integrator, Judge, and Diagnostic sets their presence is judged against the resolved
+change worktree exactly as `-C` is.
+
+The git-mutating subcommand set, matched as the first token that survives that skip: `add
+am apply branch checkout cherry-pick clean clone commit config fetch gc init merge mv
+notes prune pull push rebase reflog remote replace reset restore revert rm stash
+submodule switch symbolic-ref tag update-ref worktree`. The head-ref subcommand — the one
+word this project bans in prose, appearing here because the list matches literal command
+tokens — is required: without it, a command of the form `git <that subcommand> -D
+change/<slug>` deletes a change's ref and its history undetected, which is precisely the
+loss this whole plan exists to prevent. In-place file mutation, matched as a command head:
+`tee`, `sed -i`, `perl -i`, `cp`, `mv`, `rm`, `mkdir`, `touch`, `install`, `dd`, `chmod`,
+`chown`, `ln`, `truncate`, and any `>` or `>>` redirection. For Judge and Diagnostic roles
+these are refused only when the resolvable target is inside a git working tree, so a
+temporary file under `$TMPDIR` and a suite's own scratch output stay legal.
+
+**Reads are never gated**, and that is now a property of the wiring rather than a
+sentence: the guard is registered on `PreToolUse(Write|Edit|NotebookEdit|Bash)` only, so
+`Read`, `Glob`, and `Grep` never reach it.
+
+**The rewrite of `tests/test_worktree_guard.sh:193`–`:280` in full** (SHOULD 11 — the
+original plan named one case and broke six). Every case in that section resolves from a
+transcript shape and carries neither a `session_id` nor any register state, so all of them
+are rewritten together:
+
+- `write_payload`, `edit_payload`, `bash_payload`, and `stop_payload` (`:58`–`:73`) gain a
+  `session_id` field, and the fixture gains a register directory
+  (`AGENT_TEAM_REGISTER_DIR="$WORK/register"`) plus a helper `card <slug> <worktree>
+  <state>` that writes a timecard whose `pid`/`pid_start` are the test process's own, so
+  the card is live for the duration of the run.
+- `TR_POISONED` (`:218`–`:229`) — deleted. It exists to bless the live-dispatch-wins
+  behaviour of a main-session recency scan; there is no recency scan left. Its intent is
+  carried by a new case: a main-session transcript carrying two dispatch declarations
+  yields no selector at all, and resolution comes from the register.
+- `TR_TWO_LIVE` (`:231`–`:237`), `TR_BACKGROUND` (`:239`–`:246`), `TR_OTHER_ROLE`
+  (`:248`–`:253`), `TR_ALL_DONE` (`:255`–`:262`) — deleted, all four. Each asserts which
+  transcript-derived declaration wins; the register decides that now, and a resolved or
+  unresolved dispatch has no bearing on it.
+- The subagent-fallback case (`:264`–`:267`) — kept and inverted in meaning: it is no
+  longer a fallback but the **only** transcript read, and it now supplies the `CHANGE:`
+  selector rather than the worktree path. Its label becomes `a subagent's own dispatch
+  prompt selects among its session's claims`.
+- The ambiguity case (`:269`–`:279`) — replaced. It asserts today that ambiguity is
+  *recorded* while the guard proceeds by recency; it must now assert that ambiguity
+  **blocks**, and that the message names every candidate slug and the override line.
+- New cases: `two live claims with no selector is a refusal naming both`; `a selector
+  naming no live claim is a refusal naming both`; `one live claim resolves with no
+  selector`; `a claim held by another session is not this session's candidate`; plus one
+  `shared-checkout write refused: <role>` case for each of the ten policed roles, the
+  four false-refusal cases from the acceptance suite's Stage 2 list, and one Bash case per
+  row of the table above.
 
 **Steps.**
-1. [ ] Add tests: a write with no timecard is refused; a `PARALLEL_SAFE` dispatch that
-   writes is refused; a read with no timecard succeeds.
-2. [ ] Run — expect failure.
-3. [ ] Implement.
-4. [ ] Run — expect pass.
-5. [ ] `git commit -am "feat(guards): a mutation requires a live timecard; reads never do"`
+1. [ ] Rewrite `tests/test_worktree_guard.sh:193`–`:280` exactly as enumerated above:
+   delete the five listed cases, add `session_id` and the `card` helper to the fixture,
+   and add the new cases with their labels. Every case prints `PASS [<label>]` on success.
+2. [ ] Run `bash tests/test_worktree_guard.sh` — expect the new cases to fail and the
+   confinement cases outside `:193`–`:280` to pass.
+3. [ ] Implement: delete both transcript-scanning functions, add `resolve_change`,
+   `own_dispatch_change`, `own_dispatch_parallel_safe`, `write_verdict`, and the per-role
+   Bash rule; extend `POLICED_ROLES` to the ten roles.
+4. [ ] Run `bash tests/test_worktree_guard.sh` — expect pass with `failed=0`.
+5. [ ] `git commit -am "fix(worktree): confinement comes from a timecard, and ambiguity is a refusal"`
 
-### Task 8: integration and the operator view
+### Task 6: wire the guard to every writing role
 
-**Files.** Modify `hooks/agent_team_closeout.py`; modify `tools/worktree-hygiene.sh`.
-Test `tests/test_worktree_hygiene.sh`, `tests/test_closeout_hook.sh`.
+**Files.** Modify `agents/{test-author,architect,scribe,executor,deployer,verifier,
+reviewer,debugger,ops}.md` — nine frontmatter blocks; `agents/builder.md` already wires
+the guard (`tests/test_agent_frontmatter.sh:51`–`:56`). Test
+`tests/test_agent_frontmatter.sh`, `tests/test_worktree_guard.sh`.
 
-**Interfaces.** Closeout integrates the change's tree, releases the writer slot,
-punches out the timecard, and removes the tree only after integration. Hygiene gains
-`--register`: who holds what, since when, which claims are stale, and which trees have
-no timecard.
+**Interfaces consumed.** The `POLICED_ROLES` set from Task 5. This task is a separate
+commit from Task 5 because a reviewer can reject the wiring while approving the rule, but
+it is in the **same stage and the same push**: the rule without the wiring polices nobody,
+and the wiring without the rule would refuse the architect and the scribe every write.
 
 **Steps.**
-1. [ ] Add tests: closeout releases the claim and leaves no tree behind; hygiene lists a
-   held claim and flags an unclaimed tree.
-2. [ ] Run both — expect failure.
-3. [ ] Implement.
-4. [ ] Run both — expect pass.
-5. [ ] `git commit -am "feat(closeout): integration punches the timecard out, and hygiene shows the field"`
+1. [ ] Add to `tests/test_agent_frontmatter.sh`: for each of the ten policed roles, assert
+   `agent-team-worktree-guard.sh <role>` appears in the file and appears inside the
+   `PreToolUse:` section (the same `awk` shape used at `:53`); for `test-author`,
+   `builder`, `executor`, `deployer` also assert the Stop/SubagentStop backstop (the shape
+   at `:55`).
+2. [ ] Run `bash tests/test_agent_frontmatter.sh` — expect failure naming the nine
+   unwired roles.
+3. [ ] Add the hook entry to the nine frontmatter blocks. The architect and the scribe keep
+   their existing lane-guard entry as well: the lane guard decides which directories, the
+   worktree guard decides which working tree.
+4. [ ] Run `bash tests/test_agent_frontmatter.sh` and `bash tests/test_worktree_guard.sh`
+   — expect both to pass.
+5. [ ] `git commit -am "feat(guards): every writing role is wired to the workspace guard"`
+
+### Task 7: the policy key, the role documents, and the README
+
+**Committed last in Stage 2, and pushed with it** (decisions 8 and 9). Directive prose
+reaches `origin/main` in the same push as the guard that enforces it, never ahead of it.
+
+**Files.** Modify `policy/KEYS.md:20`; modify `agents/orchestrator.md:48`–`:53` and
+`:123`–`:137`; modify `agents/builder.md`, `agents/test-author.md`,
+`agents/architect.md`, `agents/scribe.md`, `agents/executor.md`, `agents/deployer.md`,
+`agents/verifier.md`, `agents/reviewer.md`, `agents/debugger.md`, `agents/ops.md` where
+each names its workspace — eleven of the thirteen `agents/*.md` counting the
+orchestrator, with `researcher.md` and `ticketer.md` untouched because they hold no
+writing or shell tools. Modify `README.md:105` (dispatch-guard row), `:106`
+(worktree-guard row), and
+`:107` (lane-guard row). Test `tests/test_agent_frontmatter.sh`.
+
+**Interfaces produced.** The vocabulary every later reader quotes: *change*, *change
+workspace*, *timecard*, *work register*, *writer slot*, *change disposition*.
+
+Four prose facts this rewrite must state, because each one closes a finding:
+
+- **The orchestrator declares; it never creates.** `agents/orchestrator.md:125`–`:127`
+  today reads *"You create each builder's worktree before you dispatch it"* — the exact
+  sentence to remove. In its place: every git-mutating dispatch carries
+  `CHANGE: <task-slug>` as a bare slug at the start of a line, and the dispatch guard
+  claims the timecard and builds or adopts the worktree. The path is derived, not passed:
+  `<project>/.claude/worktrees/<slug>`.
+- **The pre-existing contradiction is named as resolved** (NOTE 20). `:52` says *"Never
+  mutate files, git, or systems yourself"* while `:125` said the orchestrator creates
+  worktrees — a git mutation. The rewrite says in one sentence that the hook-side-effect
+  design is what dissolves it, so the removal reads as intended rather than as an
+  oversight.
+- **A task that will produce a commit declares its change at intake**, before the first
+  writing dispatch — including the architect's, so the plan document is written inside the
+  change's workspace and integrates with it. This is also the answer to open issue #6
+  (*"Status note has no defined home for PR-protected-main / multi-worktree tasks"*): the
+  status note lives at `docs/STATUS-<task-slug>.md` **inside the change's workspace** and
+  reaches the shared checkout by integration like any other file. The commit closes #6.
+- **Parallelism is per change, and serialisation is per writer slot.** Two changes run
+  concurrently by construction; two writers in one change are refused; a dispatch that
+  writes nothing declares `PARALLEL_SAFE: this dispatch writes nothing` and is verified
+  against that claim rather than trusted on it.
+
+`policy/KEYS.md:20` becomes, in the file's one-line-per-key shape: *"workspace-isolation —
+one worktree per change, claimed in the work register and created by the dispatch guard
+before any agent writes; every git-mutating dispatch declares `CHANGE: <slug>` (consumers:
+planning, tdd, debugging, finishing-a-branch)"*.
+
+**Steps.**
+1. [ ] Add to `tests/test_agent_frontmatter.sh`: no `agents/*.md` instructs an agent to
+   create a worktree (a `grep -n` for `worktree add` and for `create .* worktree` across
+   `agents/` that must find nothing, printing what it found on failure);
+   `agents/orchestrator.md` contains the `CHANGE:` declaration rule; every one of the
+   thirteen `agents/*.md` carries either a `tools:` line or a `disallowedTools:` line, so
+   "which roles hold writing tools" is always answerable from the file; `researcher.md`
+   and `ticketer.md` still deny `Write`, `Edit`, `NotebookEdit`, and `Bash`; and
+   `verifier.md`, `reviewer.md`, `debugger.md`, `ops.md` carry none of `Write`, `Edit`,
+   `NotebookEdit` in their `tools:` line (the token-exact `tr ',' '\n' | grep -qx` shape
+   already used at `:36`–`:40`).
+2. [ ] Run `bash tests/test_agent_frontmatter.sh` — expect failure naming
+   `orchestrator.md` for its creation rule at `:125` and its missing `CHANGE:` rule.
+3. [ ] Rewrite the prose in the eleven role documents, `policy/KEYS.md:20`, and the three
+   `README.md` rows.
+4. [ ] Run `bash tests/test_agent_frontmatter.sh` — expect pass.
+5. [ ] `git commit -am "policy(workspace-isolation): the change owns the worktree, and a hook creates it" -m "Closes #6"`
+
+**Stage 2 integration.** Run the eight suites this stage can affect —
+`tests/test_dispatch_guard.sh`, `tests/test_worktree_guard.sh`,
+`tests/test_agent_frontmatter.sh`, `tests/test_register.sh`,
+`tests/test_register_concurrency.sh`, `tests/test_workspace.sh`,
+`tests/test_hook_pin.sh`, `tests/test_install_touchpoints.sh` — each ending `failed=0` or
+`FAIL=0`. Then push Tasks 4–7 to `origin/main` as one push. No task in this stage is
+pushed on its own, because Task 7's prose and Task 4's guard are only consistent together.
+
+## Stage 3 — Closeout and the operator view
+
+### Task 8: closeout verifies integration; it never performs it
+
+**Files.** Modify `hooks/agent_team_closeout.py`: add one check to `ledger_checks`
+(`:352`–`:492`) and one helper beside `pending_code_paths` (`:318`–`:349`). Test
+`tests/test_closeout_hook.sh`.
+
+**Interfaces produced.** This is BLOCK 6's resolution: the hook stays a verifier, and the
+integration is an executor dispatch it checks.
+
+- `held_claims(cwd)` → the live timecards for this project that this session is a member
+  of, read by shelling out to `agent-team-register.sh session-claims`. Read-only.
+- Ledger check 6, `change disposition`: when `held_claims` is non-empty, the final message
+  must carry one line per held slug in the shape
+  `CHANGE-DISPOSITION: <slug> | integrated into <ref> | kept for <tracker-ref> | abandoned`.
+  A missing line blocks with the exact line to add. An `integrated` claim is **verified**,
+  not believed: `git -C <cwd> merge-base --is-ancestor refs/heads/change/<slug> <ref>`
+  must succeed, and the presence of the timecard is itself the counter-evidence — a claim
+  reported as integrated whose card still exists means `workspace_integrate` did not run,
+  and the block says so and names the command.
+- The trigger is the existing gate's, unchanged and stated so no builder invents one: the
+  check runs only where `ledger_checks` already runs — after `main()` has established that
+  the session dispatched work (`total > 0`), that nothing is in flight (`in_flight` empty),
+  and that this stop is not already priced (`total > state["acked_total"]`) — and it is
+  skipped entirely when the final message carries `WORKFORCE_PAUSE: HUMAN_DECISION`. A
+  mid-task pause therefore demands nothing and integrates nothing. The hook runs no git
+  command that mutates, removes no tree, and deletes no timecard; the existing
+  `MAX_BLOCKS = 3` cap still applies, so this check can never wedge a session.
+
+**Steps.**
+1. [ ] Add cases to `tests/test_closeout_hook.sh` with these labels: `a bare Stop with a
+   live claim integrates nothing` (assert the fixture's worktree and timecard both still
+   exist after the hook runs); `a completion claim with no change disposition is blocked`;
+   `a HUMAN_DECISION pause with a live claim is allowed`; `an integrated disposition whose
+   ref is not an ancestor is blocked`; `an integrated disposition whose timecard still
+   exists is blocked`; `a kept disposition citing a tracker reference is allowed`.
+2. [ ] Run `bash tests/test_closeout_hook.sh` — expect the new cases to fail.
+3. [ ] Implement `held_claims` and ledger check 6.
+4. [ ] Run `bash tests/test_closeout_hook.sh` — expect pass.
+5. [ ] `git commit -am "feat(closeout): a held change needs a stated disposition, and integration is verified not claimed"`
+
+### Task 9: the operator view
+
+**Files.** Modify `tools/worktree-hygiene.sh` (argument handling at `:10`–`:20`, and a new
+report section after the summary line at `:96`). Test `tests/test_worktree_hygiene.sh`.
+
+**Interfaces produced.** `worktree-hygiene.sh <repo> [--register]`. Without the flag the
+output is byte-identical to today's. With it, one additional block: one line per timecard
+in this project — `slug`, holding session, pid liveness, `state`, writer slot and its age,
+`opened`, and `stale` when the claim is older than `claim_stale_warn_seconds` — followed by
+one line per registered worktree under `.claude/worktrees/` that **no** timecard covers,
+marked `unclaimed` with the exact `git worktree remove` command. Still read-only: the
+existing byte-identical-state assertion (`tests/test_worktree_hygiene.sh:72`–`:82`) covers
+the new flag too.
+
+**Steps.**
+1. [ ] Add cases to `tests/test_worktree_hygiene.sh` with these labels: `hygiene lists a
+   held claim and flags an unclaimed tree`; `hygiene marks a claim whose process is dead
+   as reapable`; `hygiene without --register is unchanged`; `hygiene with --register
+   mutates nothing`.
+2. [ ] Run `bash tests/test_worktree_hygiene.sh` — expect the new cases to fail.
+3. [ ] Implement the flag and the report block.
+4. [ ] Run `bash tests/test_worktree_hygiene.sh` — expect pass.
+5. [ ] `git commit -am "feat(hygiene): --register shows who holds what, and which trees nobody claims"`
+
+**Stage 3 integration.** Run the ten suites — the eight from Stage 2 plus
+`tests/test_closeout_hook.sh` and `tests/test_worktree_hygiene.sh` — and then
+`bash tests/acceptance/test_workspace_isolation.sh`, which must now end `failed=0` with
+every label from all three stage lists present. Then push.
 
 ## Acceptance criteria
 
-- [ ] AC-1 (mechanical): two sessions cannot hold one change. Check:
-  `bash tests/test_register_concurrency.sh` -> expects exactly one winner of twenty.
-- [ ] AC-2 (mechanical): no builder is handed another dispatch's workspace. Check:
-  `bash tests/test_worktree_guard.sh` -> expects the two-live-claims case to block and
-  name both slugs.
-- [ ] AC-3 (mechanical): no agent writes the shared checkout. Check:
-  `bash tests/test_worktree_guard.sh` -> expects refusal for scribe, architect,
-  test-author, executor, reviewer targets at the checkout root.
-- [ ] AC-4 (mechanical): a dead session's claim never blocks new work. Check:
-  `bash tests/test_register.sh` -> expects reap of a dead pid and survival of a live one.
-- [ ] AC-5 (mechanical): the bar and the code share a base. Check:
-  `bash tests/test_dispatch_guard.sh` -> expects test-author and builder on one slug to
-  resolve to one worktree path.
-- [ ] AC-6 (mechanical): false-refusal ceiling. Check:
-  `jq -r 'select(.guard=="worktree" and .verdict=="block")' ~/.claude/logs/agent-team-telemetry/guard-blocks.jsonl | wc -l`
-  -> expects zero blocks attributable to an unresolvable workspace across one full
-  orchestrated task after landing.
-- [ ] AC-7 (judgment): every refusal names the durable fact and the command that
-  resolves it. Judge: reviewer, in spec-fidelity mode. Bar: a "no" is any refusal string
-  a reader cannot act on without reading the hook source.
+Every mechanical check below runs the separately-authored acceptance suite
+`tests/acceptance/test_workspace_isolation.sh`, which no builder may edit, and counts the
+case labels it printed. A dropped case counts zero and fails its criterion.
+
+- [ ] AC-1 (mechanical): two operating-system processes cannot both hold one change.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -c 'PASS \[exactly one of twenty claimants wins\]'`
+  -> expects `1`.
+- [ ] AC-2 (mechanical): a claim's liveness follows the session's harness process, not the
+  short-lived hook process that wrote it.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(claim survives the hook process that created it|claim is reaped only after the session process exits|a recycled pid with a different start time is reaped)\]'`
+  -> expects `3`.
+- [ ] AC-3 (mechanical): a partially written or unreadable register never speaks for a
+  holder.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(an empty timecard is reaped, not honoured as a holder|a missing register directory is an error, not a holder|two projects may hold the same slug at once)\]'`
+  -> expects `3`.
+- [ ] AC-4 (mechanical): a dead session's claim never blocks new work, and the tree it left
+  behind is adopted rather than fought over.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -c 'PASS \[re-claim after reap adopts the surviving worktree\]'`
+  -> expects `1`.
+- [ ] AC-5 (mechanical): a same-session retry through either crash window resumes instead
+  of refusing.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(a retry after a failed tree creation re-claims the same slug|a retry after a crash before ready completes the claim)\]'`
+  -> expects `2`.
+- [ ] AC-6 (mechanical): every one of the ten policed roles is refused a write to the
+  shared checkout.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -c 'PASS \[shared-checkout write refused: '`
+  -> expects `10`.
+- [ ] AC-7 (mechanical): the four writes and shell runs the workflow itself depends on stay
+  legal — the scribe's agent memory with no claim at all, the architect's plan inside the
+  claimed tree, the verifier's acceptance-suite run from the shared checkout, and the
+  reviewer's plan lint from the shared checkout.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(scribe memory write with no claim is allowed|architect plan write inside the claimed tree is allowed|verifier runs the acceptance suite from the shared checkout|reviewer runs the plan lint from the shared checkout)\]'`
+  -> expects `4`.
+- [ ] AC-8 (mechanical): no agent is ever handed a peer's workspace by a guess — an
+  unresolvable workspace is a refusal that names both candidates, and a dispatch that
+  declared it writes nothing may not write.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(two live claims with no selector is a refusal naming both|a selector naming no live claim is a refusal naming both|a dispatch declaring PARALLEL_SAFE may not write)\]'`
+  -> expects `3`.
+- [ ] AC-9 (mechanical): one change's writer slot admits one writer at a time and releases
+  on its own TTL when the writer dies.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(two live writers on one change are refused|a stale writer slot is releasable)\]'`
+  -> expects `2`.
+- [ ] AC-10 (mechanical): a stop that is not a closeout integrates nothing, and a closeout
+  that claims integration is checked against git.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(a bare Stop with a live claim integrates nothing|a completion claim with no change disposition is blocked|an integrated claim survives closeout only as a verified fact)\]'`
+  -> expects `3`.
+- [ ] AC-11 (mechanical): the installer carries the three new files through all five of its
+  per-file touchpoints, so a rolled-back install leaves no debris and `install.sh --check`
+  finds nothing missing.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -c 'PASS \[installer touchpoints cover the new hook files\]'`
+  -> expects `1`.
+- [ ] AC-12 (mechanical): the false-refusal ceiling — **deferred by construction to the
+  first orchestrated task after landing**, and not checkable in this one. Record the
+  landing timestamp `T` (the closeout of the task that integrates Stage 3) in that task's
+  closeout receipt, then in the **next** task's closeout run
+  Check: `jq -r --arg t "$T" 'select(.ts >= $t and .guard=="worktree" and .verdict=="block" and (.detail|test("no timecard|ambiguous|unresolvable")))' ~/.claude/logs/agent-team-telemetry/guard-blocks.jsonl | wc -l`
+  -> expects `0` across that whole task, verified in that task's closeout and not in this
+  one's. The `.ts` filter is what makes this criterion able to pass at all: the log
+  persists across sessions and carries the 2026-08-04 incident's own blocks, so an
+  unfiltered count fails forever on old data.
+- [ ] AC-13 (mechanical): the operator can see who holds what and which trees nobody
+  claims, without the report changing anything.
+  Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -c 'PASS \[hygiene lists a held claim and flags an unclaimed tree\]'`
+  -> expects `1`.
+- [ ] AC-14 (judgment): every refusal this change introduces names the durable fact it
+  rests on and the one command or line that clears it. Judge: reviewer, in spec-fidelity
+  mode, reading each new refusal message against the escape it offers. Bar: a "no" is any
+  refusal a reader could not act on without opening the hook source, or one whose named
+  escape is itself refused by another guard in this repository.
 
 ## Self-review
 
-- No task depends on another's uncommitted work; Stage 1 is independently shippable.
-- Task 2 lands a deliberately red test, stated as such in its commit message, and Task 3
-  turns it green — the only red-commit in the plan.
-- Stages 2 and 3 rewrite live safety controls. Hook pinning means an installed repair
-  does not change rules under a running session; that is verified by
-  `tests/test_hook_pin.sh` and must be re-run after each stage.
-- Not covered, deliberately: cloud-resource claims (decision 6), removing the
-  orchestrator's Bash (open question 2), and the `~/.claude/agent-dispatch-lint.STOP`
-  kill switch, which is Jay's own machine-level escape hatch and not this repo's to
-  remove.
+- **Coverage.** Every finding folded into this revision has a home: BLOCK 1 in Task 2
+  (`register_session_process`, `register_alive`) and AC-2; BLOCK 2 in decision 7 and Task
+  5 (`write_verdict`) and AC-7; BLOCK 3 in decision 12 and Task 5
+  (`own_dispatch_change`) and AC-8; BLOCK 4 in decision 9 and the Stage 2 single push with
+  Task 7 last; BLOCK 5 in Task 3 (`workspace_ensure` step 3) and AC-4; BLOCK 6 in decision
+  2 and Task 8 and AC-10; BLOCK 7 in decision 11's table and AC-6/AC-7. SHOULD 8 in Task
+  5's `POLICED_ROLES` and its stated researcher/ticketer exemption; SHOULD 9 in
+  `register_root` and `register_project_key`; SHOULD 10 in Task 4's resumption paragraph
+  and AC-5; SHOULD 11 in Task 5's full enumeration of the rewritten test section; SHOULD 12
+  in AC-12; SHOULD 13 in `register_alive` including the EPERM note; SHOULD 14 in decision
+  10; SHOULD 15 in decision 1's amendment and `register_writer_acquire`. NOTE 16's stale
+  references are corrected throughout (the orchestrator's creation rule is at `:123`–`:137`,
+  not `:48`–`:52`; thirteen agent documents, not twelve; the README rows are `:105`–`:107`;
+  AC-6 names the verifier). NOTE 17's three constraints are in decision 3 and Task 2. NOTE
+  18 is answered in Task 7 (`Closes #6`). NOTE 19 is answered in Task 4
+  (`CHANGE_REQUIRED_ROLES` includes executor and deployer; the transcript collision scan is
+  retired). NOTE 20 is named in Task 7's prose facts.
+- **Placeholder scan.** No "TBD", no "TODO", no "similar to Task N", no "implement later",
+  no interface referenced that no task defines. Every exit code, marker literal, field
+  name, function signature, and test-case label a later task quotes is defined in an
+  earlier one.
+- **Consistency.** The marker literals (`CHANGE:`, `PARALLEL_SAFE: this dispatch writes
+  nothing`, `CHANGE-DISPOSITION:`), the derived names
+  (`<project>/.claude/worktrees/<slug>`, `refs/heads/change/<slug>`), the exit codes (0
+  ok, 3 held, 4 no session process, 5 register unusable, 6 bad slug, 7 workspace unusable,
+  8 not integrable), and the timecard field names are used identically in every task and
+  every criterion.
+- **Red commit.** Task 1 lands a deliberately red test, stated as such in its commit
+  message, and Task 2 turns it green — the only red commit in the plan. The acceptance
+  suite is also committed red, by the test-author, before any builder runs; that is the
+  route's design, not an exception to it.
+- **Live safety controls.** Stages 2 and 3 rewrite controls that are themselves protecting
+  the session doing the work. Hook pinning means an installed repair does not change rules
+  under a running session; that is verified by `tests/test_hook_pin.sh` and must be re-run
+  after each stage. Agent documents are **not** pinned, which is why nothing installs
+  mid-task and why decision 9 exists.
+- **Not covered, deliberately.** Cloud-resource claims (decision 6); removing the
+  orchestrator's Bash (open question 2); the `~/.claude/agent-dispatch-lint.STOP` kill
+  switch, which is Jay's own machine-level escape hatch and not this repo's to remove; and
+  end-to-end proof of the new mechanism in a live orchestrated session, which is AC-12 and
+  belongs to the first task after landing.
