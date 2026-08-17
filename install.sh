@@ -255,6 +255,15 @@ jq -e '["acceptance_suite_paths", "doc_paths"]
              and (all(.[]; type == "string" and length > 0 and (startswith("/") | not)))))' \
   --argjson lanes "$(cat "$REPO/hooks/agent-team-lanes.json")" -n >/dev/null \
   || fail "agent-team-lanes.json: .acceptance_suite_paths and .doc_paths must each be a non-empty array of relative paths"
+# The register's config carries the writer TTL and the stale-claim warning window.
+# A malformed one would install silently and every read of it would fall back to a
+# default nobody chose, so it is validated here like every other JSON config.
+[ -f "$REPO/hooks/agent-team-register.json" ] || fail "hooks/agent-team-register.json is missing from repo"
+jq empty "$REPO/hooks/agent-team-register.json" || fail "agent-team-register.json is not valid JSON"
+# Dispatch budgets were in the same position: shipped as configuration, validated by
+# nothing.
+[ -f "$REPO/hooks/agent-team-budgets.json" ] || fail "hooks/agent-team-budgets.json is missing from repo"
+jq empty "$REPO/hooks/agent-team-budgets.json" || fail "agent-team-budgets.json is not valid JSON"
 
 [ -f "$REPO/tools/agent-team-scoreboard.sh" ] || fail "tools/agent-team-scoreboard.sh is missing from repo"
 bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed bash -n"
