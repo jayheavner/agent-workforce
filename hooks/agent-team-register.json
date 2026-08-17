@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "writer_ttl_seconds": 900,
+  "claim_stale_warn_seconds": 86400
+}
