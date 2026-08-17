@@ -158,16 +158,50 @@ register_ensure_dir() { # $1 dir
   return 5
 }
 
+# How many names a file has: 2 while a pin of ours stands beside a path that still
+# exists, 1 once that path is gone. BSD `stat` first, then GNU; an unusable answer
+# is empty, and callers treat that as "cannot tell" rather than as a verdict.
+register_link_count() { # $1 path
+  stat -f %l "$1" 2>/dev/null || stat -c %h "$1" 2>/dev/null
+}
+
 # Every rewrite goes through here: read the existing object, MERGE the changed
 # fields, move a temp file in the same directory over the card. The card is never
 # reconstructed from known fields, so a field written by a newer guard survives an
 # older pinned one untouched.
+#
+# A `mv` is unconditional — it creates the destination when nothing is there — so a
+# rewrite that started while the card existed and finished after another process
+# REMOVED it would resurrect the path: a heartbeat racing a release would wedge a
+# slug until its session died, and one racing a writer release would leave a ghost
+# holder for up to the TTL. The bytes are therefore hard linked to a private name
+# first, the merge reads THAT link, and the number of names the link still has is
+# read immediately before the move: a count of 1 means the card path is gone, so the
+# rewrite is abandoned instead of re-creating it. What remains is the residual window
+# the whole design has: between that count and the `mv` there is no portable way to
+# make "replace this path only if it still exists" one operation — unlink is by name,
+# rename is unconditional, link is create-only, and the atomic-exchange system calls
+# are not reachable from a shell. That window is microseconds wide and documented
+# rather than hidden.
 register_write_merged() { # $1 card $2 jq-program [jq args...]
-  local card="$1" prog="$2" tmp
+  local card="$1" prog="$2" tmp pin links
   shift 2
   [ -f "$card" ] || return 1
+  pin="$card.pin.$$"
   tmp="$card.rewrite.$$"
-  if ! jq "$@" "$prog" "$card" > "$tmp" 2>/dev/null; then
+  rm -f "$pin"
+  ln "$card" "$pin" 2>/dev/null || return 1
+  if ! jq "$@" "$prog" "$pin" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp" "$pin"
+    return 1
+  fi
+  links="$(register_link_count "$pin")"
+  rm -f "$pin"
+  # Only a positive count of 1 is evidence of a removal. A count above 2 is another
+  # process pinning the same bytes, which is no reason to abandon anything, and an
+  # unreadable count means `stat` could not answer — the rewrite proceeds, exactly
+  # as it did before this check existed.
+  if [ "$links" = "1" ]; then
     rm -f "$tmp"
     return 1
   fi

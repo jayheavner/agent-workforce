@@ -225,10 +225,16 @@ register_heartbeat() { # $1 project-dir $2 slug [slot]
 # when its recorded process is gone. A card whose process is LIVE is never removed,
 # whatever its age. The removal itself goes through register_take_dead_card, so a
 # card that another process replaced between the judgment and the removal is left
-# alone rather than destroyed. A reaped claim takes its writer slot with it: the slot
-# cannot outlive the claim it belonged to. Crash debris is swept last.
+# alone rather than destroyed. A reaped claim takes ITS OWN writer slot with it: the
+# slot cannot outlive the claim it belonged to, but the slot file at that path may
+# already belong to a FRESH claim on the same slug whose writer acquired it in the
+# microseconds after the dead card was taken, so it is never unlinked by name. The
+# session recorded in the dying card is read before the card goes, and the slot file
+# is taken only when it records that same session. An unreadable card names no
+# session, so its slot is left to a TTL displacement rather than guessed at. Crash
+# debris is swept last.
 register_reap() { # $1 project-dir
-  local proj key dir card slug reason
+  local proj key dir card slug reason sess
   proj="$(register_project_root "$1")" || return 5
   key="$(register_project_key "$proj")" || return 5
   dir="$(register_root)/$key"
@@ -242,8 +248,9 @@ register_reap() { # $1 project-dir
     else
       reason=unreadable-timecard
     fi
+    sess="$(jq -r '.session // empty' "$card" 2>/dev/null)"
     register_take_dead_card "$card" || continue
-    rm -f "$(register_writer_lock_path "$card")"
+    register_writer_take_matching "$(register_writer_lock_path "$card")" session "$sess" || :
     printf 'reaped %s %s\n' "$slug" "$reason"
   done
   register_sweep_debris "$dir"

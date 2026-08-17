@@ -173,7 +173,11 @@ workspace_integrate() { # $1 project-root $2 slug $3 integration-ref [$4 session
     return 8
   fi
   git -C "$1" update-ref -d "refs/heads/$short" || return 8
-  register_writer_release "$1" "$2" >/dev/null 2>&1
+  # The whole claim is coming down, and the checks above have already established
+  # that it is this caller's own, so the writer slot goes with it whoever holds it —
+  # unconditional by design, since no change is left for a holder to write in. The
+  # slot-scoped path is `writer-release`, which refuses a slot it does not hold.
+  register_writer_teardown "$1" "$2" >/dev/null 2>&1
   # The session id this call was made with is passed through: without it, release
   # can only establish membership by the process arm, so an executor holding a
   # payload id different from its own process would be refused its own claim.

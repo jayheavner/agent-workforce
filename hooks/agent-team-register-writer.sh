@@ -61,19 +61,23 @@ register_take_token_live() { # $1 token
 # is itself won by an exclusive create of a token named after them: exactly one
 # process can hold it, the losers refuse and re-read the path, and the holder
 # re-checks the bytes before unlinking, so a path that changed hands meanwhile is
-# never touched. A token whose creating process is gone is abandoned debris, not a
-# holder — the same rule the register applies to timecards — so it is removed and
-# the create retried once.
+# never touched.
+#
+# A LOST create is a refusal, full stop, even when the token's taker is gone. The
+# obvious-looking recovery — judge the taker dead, remove the token, create a fresh
+# one — is the very check-then-act this function exists to abolish, and it hands the
+# same digest to two takers: both fail the create, both judge the taker dead, the
+# first removes and re-creates, the second's removal then takes the FIRST's fresh
+# token and it re-creates in turn, so two processes hold "the" exclusive take and
+# the later unlink lands on whatever the winner has already put at the path. So an
+# abandoned token is left to register_sweep_debris, which every reap runs last: the
+# token goes as debris and the path is taken on the next pass, one cycle later.
 register_take_file() { # $1 path $2 digest-of-the-judged-bytes
   local path="$1" want="${2:-}" token
   [ -n "$want" ] || return 1
   [ -f "$path" ] || return 1
   token="$(dirname "$path")/.take.$(basename "$path").$want"
-  if ! register_take_token_claim "$token"; then
-    register_take_token_live "$token" && return 1
-    rm -f "$token"
-    register_take_token_claim "$token" || return 1
-  fi
+  register_take_token_claim "$token" || return 1
   if [ "$(register_digest_file "$path" 2>/dev/null)" = "$want" ]; then
     rm -f "$path"
     rm -f "$token"
@@ -153,6 +157,13 @@ register_writer_displace() { # $1 card $2 slot-file $3 ttl $4 now
 # matches them — but nothing swept them either, so a crash between the jq and the mv
 # of a rewrite left one behind forever. A file whose trailing pid is gone, and a
 # token whose taker is gone, have no owner that could still be writing them.
+#
+# Noted limit, deliberately left as it is: a trailing pid is checked with `kill -0`
+# alone, without the process-start-time half that register_alive uses, because the
+# file name carries a pid and nothing else. A RECYCLED pid therefore reads as the
+# original owner and its debris survives this sweep. That error is in the safe
+# direction — debris is kept, never a live writer's file removed — and the next
+# sweep after the recycled pid exits collects it.
 register_sweep_debris() { # $1 dir
   local f pid
   [ -d "$1" ] || return 0
@@ -175,8 +186,9 @@ register_sweep_debris() { # $1 dir
 # — two guards firing from one dispatch message both read an empty slot, both merge
 # their own name into the card, the second write wins, and both are told they may
 # write. So the slot has its own file, `writers/<slug>.json`, created under
-# noclobber and released by unlink; the card keeps a mirror of it for the operator
-# view and for the heartbeat that decides staleness.
+# noclobber and removed only by a digest-checked take that the holding slot names
+# itself in; the card keeps a mirror of it for the operator view and for the
+# heartbeat that decides staleness.
 #
 # The slot also carries its own liveness — a heartbeat and a TTL — because a builder
 # subagent that dies mid-task does not kill the session process the card records, so
@@ -232,9 +244,69 @@ register_writer_slot_create() { # $1 slot-file $2 json
   ( set -o noclobber; printf '%s\n' "$2" > "$1" ) 2>/dev/null
 }
 
-register_writer_release() { # $1 project-dir $2 slug
+# Take the slot file away only when the value it RECORDS is the one the caller
+# claims authority from: the holding slot's own name on the release path, the
+# reaped card's session on the reap path. The bytes are pinned first, the field is
+# read from the pinned bytes, and the removal is the same digest-checked take every
+# other removal in the register goes through — so a slot file that another process
+# replaced between the read and the removal is left alone rather than destroyed.
+# Exit 0 when the path was taken, 1 when it was not this caller's to take.
+register_writer_take_matching() { # $1 slot-file $2 json-field $3 wanted-value
+  local pin="$1.pin.$$" rc=1
+  [ -f "$1" ] || return 1
+  rm -f "$pin"
+  ln "$1" "$pin" 2>/dev/null || return 1
+  if [ "$(jq -r --arg f "$2" '.[$f] // empty' "$pin" 2>/dev/null)" = "$3" ]; then
+    register_take_file "$1" "$(register_digest_file "$pin" 2>/dev/null)" && rc=0
+  fi
+  rm -f "$pin"
+  return "$rc"
+}
+
+# Releasing the slot is a REMOVAL of the one file that decides occupancy, so it is
+# authorised like every other removal: the caller names the slot it holds, and only
+# that slot's own file may be taken. A release that took no slot name and unlinked
+# the path unconditionally let ANY process — a foreign session, or the other
+# subagent of the same session — drop the holder's exclusion, after which a third
+# acquirer was granted a slot two processes then believed they held. The card's
+# mirror is nulled only after a successful take, and only while it still names this
+# slot, so a slot granted to someone else in the meantime keeps its record.
+# Exit 2 when no slot is named, 3 when the slot named is not the holder.
+register_writer_release() { # $1 project-dir $2 slug $3 slot
+  local card lock slot="${3:-}"
+  [ -n "$slot" ] || {
+    printf 'register: writer-release needs the slot that holds it, so a foreign process cannot drop the holder exclusion. Usage: writer-release <project-dir> <slug> <slot>\n' >&2
+    return 2
+  }
+  card="$(register_resolve_card "$1" "$2")" || return $?
+  lock="$(register_writer_lock_path "$card")"
+  if [ -f "$lock" ] && ! register_writer_take_matching "$lock" slot "$slot"; then
+    printf 'register: the writer slot for %s is held by %s, so %s may not release it\n' \
+      "$2" "$(jq -r '.slot // "an unnamed writer"' "$lock" 2>/dev/null)" "$slot" >&2
+    return 3
+  fi
+  register_writer_unrecord "$card" "$slot"
+}
+
+# The card's mirror stops naming a slot that no longer holds one. Conditional on the
+# slot: the mirror is only ever this slot's to clear.
+register_writer_unrecord() { # $1 card $2 slot
+  register_write_merged "$1" \
+    'if (.writer | type) == "object" and .writer.slot == $slot then .writer = null else . end' \
+    --arg slot "$2" >/dev/null 2>&1
+  return 0
+}
+
+# Tearing the whole change down, which is a different act from a slot holder
+# stepping out of it: workspace_integrate has already established that the claim is
+# the caller's own and is removing the claim itself, so the slot goes with it
+# whoever holds it — there is no change left for a holder to write in. Unconditional
+# BY DESIGN; the slot-scoped path is register_writer_release, which refuses a
+# foreign slot.
+register_writer_teardown() { # $1 project-dir $2 slug
   local card
   card="$(register_resolve_card "$1" "$2")" || return $?
   rm -f "$(register_writer_lock_path "$card")"
-  register_write_merged "$card" '.writer = null'
+  register_write_merged "$card" '.writer = null' >/dev/null 2>&1
+  return 0
 }
