@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent-team-workspace.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
 # --- version-pinned hook builds (2026-08-04) ------------------------------------
 # Every hook is wired to one fixed path, and the harness re-reads that file on
 # every tool call — so installing a repair used to rewrite the rules under every
@@ -191,6 +191,10 @@ bash -n "$REPO/hooks/agent-team-guard-log.sh" || fail "guard block log failed ba
 bash -n "$REPO/hooks/agent-team-register.sh" || fail "work register failed bash -n"
 [ -f "$REPO/hooks/agent-team-register-lib.sh" ] || fail "hooks/agent-team-register-lib.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-register-lib.sh" || fail "work register library failed bash -n"
+# The workspace library is the one component that runs a mutating git command, so
+# a syntax error in it would be a broken merge rather than a broken message.
+[ -f "$REPO/hooks/agent-team-workspace.sh" ] || fail "hooks/agent-team-workspace.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-workspace.sh" || fail "change workspace library failed bash -n"
 # The pin resolver is what every wired hook goes through. A broken one would take
 # every guard on the machine down with it, so it is validated before anything is
 # touched, exactly like the guards it fronts.
@@ -541,6 +545,7 @@ PREEXISTING_PIN=0
 PREEXISTING_REGISTER=0
 PREEXISTING_REGISTERLIB=0
 PREEXISTING_REGISTERCONF=0
+PREEXISTING_WORKSPACE=0
 [ -f "$HOOKS_DIR/agent-team-secrets.sh" ] && { cp "$HOOKS_DIR/agent-team-secrets.sh" "$BACKUP/"; PREEXISTING_SECRETS=1; }
 [ -f "$HOOKS_DIR/agent-team-audit.sh" ] && { cp "$HOOKS_DIR/agent-team-audit.sh" "$BACKUP/"; PREEXISTING_AUDIT=1; }
 [ -f "$HOOKS_DIR/agent-team-plugin-router.sh" ] && { cp "$HOOKS_DIR/agent-team-plugin-router.sh" "$BACKUP/"; PREEXISTING_ROUTER=1; }
@@ -565,6 +570,7 @@ PREEXISTING_REGISTERCONF=0
 [ -f "$HOOKS_DIR/agent-team-register.sh" ] && { cp "$HOOKS_DIR/agent-team-register.sh" "$BACKUP/"; PREEXISTING_REGISTER=1; }
 [ -f "$HOOKS_DIR/agent-team-register-lib.sh" ] && { cp "$HOOKS_DIR/agent-team-register-lib.sh" "$BACKUP/"; PREEXISTING_REGISTERLIB=1; }
 [ -f "$HOOKS_DIR/agent-team-register.json" ] && { cp "$HOOKS_DIR/agent-team-register.json" "$BACKUP/"; PREEXISTING_REGISTERCONF=1; }
+[ -f "$HOOKS_DIR/agent-team-workspace.sh" ] && { cp "$HOOKS_DIR/agent-team-workspace.sh" "$BACKUP/"; PREEXISTING_WORKSPACE=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -640,6 +646,7 @@ restore() {
       agent-team-register.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-register-lib.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-register.json) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-workspace.sh) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -697,6 +704,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_REGISTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register.sh"
   [ "$PREEXISTING_REGISTERLIB" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register-lib.sh"
   [ "$PREEXISTING_REGISTERCONF" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register.json"
+  [ "$PREEXISTING_WORKSPACE" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-workspace.sh"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -740,6 +748,7 @@ if ! cp "$REPO/hooks/agent-team-pin.sh" "$HOOKS_DIR/"; then restore; cleanup_fre
 if ! cp "$REPO/hooks/agent-team-register.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-register-lib.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register library copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-register.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register config copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-workspace.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "change workspace library copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done
