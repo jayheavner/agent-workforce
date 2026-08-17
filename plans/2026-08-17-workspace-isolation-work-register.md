@@ -64,8 +64,8 @@ so `policy:dependency-freshness` pins nothing in this plan.
 ## Mutation scope
 
 - **Dependencies installed:** none.
-- **Files created:** `hooks/agent-team-register.sh`, `hooks/agent-team-workspace.sh`,
-  `hooks/agent-team-register.json`, `tests/lib/concurrency.sh`,
+- **Files created:** `hooks/agent-team-register.sh`, `hooks/agent-team-register-lib.sh`,
+  `hooks/agent-team-workspace.sh`, `hooks/agent-team-register.json`, `tests/lib/concurrency.sh`,
   `tests/test_register_concurrency.sh`, `tests/test_register.sh`,
   `tests/test_workspace.sh`, and — authored by the test-author, not by a builder —
   `tests/acceptance/test_workspace_isolation.sh` (the directory `tests/acceptance/`
@@ -145,6 +145,25 @@ so `policy:dependency-freshness` pins nothing in this plan.
    adopt its own pre-resume claim (rewriting pid and start time, recorded as a fail-open).
    Neither test can match a foreign session: ids are unique per session and a live pid
    belongs to exactly one process.
+   *Amended 2026-08-17, second pass (Stage 1's own acceptance run):* the paragraph above
+   answers "who may ever resolve to this claim" — it does not answer "who may take over an
+   *existing* claim outright," and those turned out to be different questions. Implemented
+   literally, the twenty-way race case in the acceptance suite produced eighteen winners,
+   not one: every racer in that race shares one session id and one long-lived harness
+   process, so once the two-branch test above is applied on the **claim** path itself, every
+   loser of the exclusive create still matches the winner's card by pid and is granted
+   membership. Liveness (is the recorded process still running) and identity (whose claim
+   is this) are separate questions on the claim path specifically, and the claim path uses
+   **identity by session id alone**. Implemented: `register_claim` decides membership
+   against an existing card with `register_claim_member`, which reads only the card's
+   `session` field — never `pid`/`pid_start` — and a lost exclusive-create race is exit 3
+   outright, with no membership test applied on that path at all. The pid stays a liveness
+   fact on the claim path; it is never an identity fact there. The two-branch test above is
+   otherwise unchanged and still governs `register_mine`, `register_session_claims`, and
+   `register_release` — which is what the pid branch is actually *for*: a subagent whose
+   hook payload carries a session id different from its parent's, and a resumed session
+   adopting its own pre-resume claim by pid before its id has anywhere else to be read from.
+   See Task 2, `register_claim` and `register_claim_member`.
 6. **Cloud mutations are an explicit non-goal.** A workspace timecard is the wrong claim
    type for an IAM policy. Naming it out of scope beats an exemption inside the gate.
    (Hightower.)
@@ -174,7 +193,7 @@ so `policy:dependency-freshness` pins nothing in this plan.
    with itself. See decision 9.
 9. **Integration cadence: one push per stage, documents last within the stage.** *(New,
    2026-08-17, resolving the version window above.)* Stage 1 is pushed alone because it
-   changes no rule and no instruction — it adds two libraries nothing calls yet. Stage 2's
+   changes no rule and no instruction — it adds three libraries nothing calls yet. Stage 2's
    four tasks are committed separately and pushed **together**, with Task 7 (policy key,
    role documents, README rows, frontmatter assertions) as the last commit in the stage.
    Stage 3 is pushed after Stage 2. The rejected alternative was pushing every task as it
@@ -311,7 +330,7 @@ Turned green by Stage 3:
 
 ## Stage 1 — Foundation
 
-Integrates alone and safely: it adds two sourced libraries and one config file that no
+Integrates alone and safely: it adds three sourced libraries and one config file that no
 guard calls yet, and changes no rule and no instruction.
 
 ### Task 1: the concurrency test harness
@@ -344,18 +363,31 @@ guard calls yet, and changes no rule and no instruction.
 
 ### Task 2: the register primitive
 
-**Files.** Create `hooks/agent-team-register.sh`, `hooks/agent-team-register.json`.
-Modify `install.sh` (the five per-file touchpoints: `HOOK_FILES` at `:127`, the pre-install
+**Files.** Create `hooks/agent-team-register.sh`, `hooks/agent-team-register.json`, and
+`hooks/agent-team-register-lib.sh` — the derived-names, session-process resolution,
+liveness, membership, card-validity, and safe-rewrite primitives that `register.sh` itself
+would otherwise have to carry past this repository's file-size discipline (with every
+function documented, the register alone runs to 420 lines). `agent-team-register.sh`
+sources `agent-team-register-lib.sh` from its own directory — the same precedent
+`agent-team-lane-guard.sh` already sets by sourcing `agent-team-lane-paths.sh` — and fails
+hard with a repair line (`Re-run: bash install.sh`) when the sibling is missing beside it,
+exactly as that precedent does. Sourcing `agent-team-register.sh` still defines every
+function this task names; nothing that sources the register changes because of the split.
+Modify `install.sh` (the five per-file touchpoints — `HOOK_FILES` at `:127`, the pre-install
 backup block at `:540`–`:555`, the `restore()` case list at `:600`–`:629`, the
-`cleanup_fresh` removals at `:666`–`:681`, and the forward copy at `:694`–`:718`; plus one
-`bash -n "$REPO/hooks/agent-team-register.sh"` line beside the checks at `:184`–`:187`).
+`cleanup_fresh` removals at `:666`–`:681`, and the forward copy at `:694`–`:718` — for each
+of these three new files; plus two `bash -n` lines beside the checks at `:184`–`:187`, one
+for `agent-team-register.sh` and one for `agent-team-register-lib.sh` — `agent-team-register.json`
+gets no `bash -n` line, being JSON rather than shell).
 Test `tests/test_register.sh` (new), `tests/test_register_concurrency.sh` (from Task 1),
 `tests/test_install_touchpoints.sh` (existing, must stay green).
 
-**Interfaces produced.** A sourced library that also runs as a CLI. Sourcing defines
-functions only; executing dispatches subcommands (`claim`, `ready`, `holder`, `release`,
-`reap`, `writer-acquire`, `writer-release`, `heartbeat`, `session-claims`, `card-path`,
-`worktree-path`) whose names and argument order match the functions below one-for-one.
+**Interfaces produced.** A sourced library that also runs as a CLI (defined across
+`agent-team-register.sh` and the sibling library it sources; sourcing the former still
+defines every function below). Sourcing defines functions only; executing dispatches
+subcommands (`claim`, `ready`, `holder`, `mine`, `release`, `reap`, `writer-acquire`,
+`writer-release`, `heartbeat`, `session-claims`, `card-path`, `worktree-path`) whose names
+and argument order match the functions below one-for-one.
 
 - `register_config_int <key> <default>` → the integer from
   `hooks/agent-team-register.json` beside this script, or the default when the file is
@@ -397,22 +429,43 @@ functions only; executing dispatches subcommands (`claim`, `ready`, `holder`, `r
   EPERM for a live process owned by another user, which would read as dead — acceptable
   here, and the reason the start-time comparison (which needs no permission) is the
   second half rather than the only half.
-- `register_claim <project-root> <slug> <session-id>` → exit 0 and print the card path
-  when the claim is taken; exit 3 and print the holder's JSON when a **live** foreign
-  session holds it; exit 4/5/6 per above. Behaviour, in order: validate the slug; resolve
-  the session process; reap this one card if its recorded process is dead or its content
-  is empty or unparseable; if a card still exists, decide membership by decision 5 (pid
-  match or session-id match) — a member returns exit 0 with the existing card (idempotent),
-  a non-member returns exit 3; otherwise create the card.
+- `register_claim <project-root> <slug> <session-id>` → exit 0 and print the **card path**
+  when the claim is taken or already held by this same session (idempotent) — `claim`
+  always prints a path on success, never the card's JSON; exit 3 and print the holder's
+  JSON when a **live** foreign session holds it, including when this call lost an
+  exclusive-create race; exit 4/5/6 per above. Behaviour, in order: validate the slug;
+  resolve the session process; reap this one card if its recorded process is dead or its
+  content is empty or unparseable; if a card still exists, decide membership by **session
+  id alone** (`register_claim_member`, decision 5's second-pass amendment below) — a member
+  prints the existing card's path and returns exit 0 (idempotent), a non-member prints the
+  card's JSON and returns exit 3, with **no** pid-branch test applied on this path; otherwise
+  attempt the exclusive create — on success, print the new card's path and return exit 0;
+  on a lost race (the path now exists because another claimant won it first), print that
+  card's JSON and return exit 3, again with no membership test on this path at all.
+- `register_claim_member <card> <session-id>` → exit 0 when the card is live JSON and its
+  `session` field equals `<session-id>`. This is the **only** membership test the claim
+  path applies; it never reads `pid`/`pid_start`. That comparison is decision 5's other
+  branch, reserved for `register_mine`, `register_session_claims`, and `register_release`
+  below, where the pid branch is what lets a subagent whose payload session id differs from
+  its parent's, or a resumed session, resolve a claim its own process actually holds.
+- `register_resolve_card <project-root> <slug>` — **internal**, not a CLI subcommand:
+  prints the path of an existing card, or exit 1 (no such card) / 5 (project or register
+  unresolvable) / 6 (bad slug). Every function below that operates on an already-claimed
+  card (`register_ready`, `register_holder`, `register_mine`, `register_release`,
+  `register_writer_acquire`, `register_writer_release`, `register_heartbeat`) resolves the
+  card path through this helper first.
 - `register_ready <project-root> <slug>` → sets `state` to `ready`.
 - `register_holder <project-root> <slug>` → prints the card's JSON, or nothing and exit 1.
 - `register_mine <project-root> <slug> <session-id>` → exit 0 when the card exists and
-  passes decision 5's membership test; prints `pid` or `session-id` naming which branch
-  matched.
+  passes decision 5's **full two-branch** membership test (pid match or session-id match —
+  not the claim path's session-id-only rule above); prints `pid` or `session-id` naming
+  which branch matched.
 - `register_session_claims <project-root> <session-id>` → one line per live card in this
-  project that this session is a member of: `<slug>\t<worktree>\t<state>`.
+  project that this session is a member of: `<slug>\t<worktree>\t<state>`. Membership here
+  is again decision 5's full two-branch test, matching `register_mine`.
 - `register_release <project-root> <slug>` → deletes the card **only** when
-  `register_mine` passes or its process is dead; exit 3 without deleting otherwise.
+  `register_mine` passes (decision 5's full two-branch test) or its process is dead; exit 3
+  without deleting otherwise.
 - `register_writer_acquire <project-root> <slug> <slot>` → sets
   `writer={"slot":<slot>,"session":<session-id>,"heartbeat":<epoch>}` and exits 0 when the
   slot is empty, when the existing entry's `slot` equals `<slot>`, when its `heartbeat` is
@@ -472,9 +525,11 @@ Creation and rewrite rules, all three from decision 3:
    fabricated older string, and asserts the card is reaped.
 2. [ ] Run `bash tests/test_register.sh` and `bash tests/test_register_concurrency.sh` —
    expect both to fail with `agent-team-register.sh` missing.
-3. [ ] Implement `hooks/agent-team-register.sh` and `hooks/agent-team-register.json`.
-4. [ ] Wire the two new files through all five installer touchpoints and add the
-   `bash -n` line. Run `bash tests/test_install_touchpoints.sh` — expect
+3. [ ] Implement `hooks/agent-team-register.sh`, `hooks/agent-team-register-lib.sh`, and
+   `hooks/agent-team-register.json`.
+4. [ ] Wire the three new files through all five installer touchpoints and add the two
+   `bash -n` lines (one for `agent-team-register.sh`, one for `agent-team-register-lib.sh`).
+   Run `bash tests/test_install_touchpoints.sh` — expect
    `install-touchpoint tests: PASS=<n> FAIL=0`.
 5. [ ] Run all three — expect pass, including `PASS [exactly one of twenty claimants
    wins]`.
@@ -497,23 +552,34 @@ directly — the dispatch guard does.
      succeeds, naming the `.gitignore` line to add — an un-ignored worktree directory
      turns every change into dirt in the shared checkout.
   2. Derive `path` and `ref` per decision 10.
-  3. Read `git -C <project-root> worktree list --porcelain`. When `path` is listed at
-     `refs/heads/change/<slug>`, **adopt it**: print the path and exit 0 without touching
-     git. This is what makes a re-claim after a reap succeed against the tree the dead
-     session left behind.
-  4. When `path` is listed at a different ref, exit 7 naming both refs and the repair
+  3. Read `git -C <project-root> worktree list --porcelain`. **When `path` is listed but
+     its directory is gone from disk**, run `git -C <project-root> worktree prune` once and
+     re-read the list — a registration whose tree has already vanished (removed by hand, or
+     by a completed integration) is stale, and the step below must not read it as a tree
+     still there to adopt.
+  4. When `path` is listed at `refs/heads/change/<slug>` **and its directory still exists**,
+     **adopt it**: print the path and exit 0 without touching git. This is what makes a
+     re-claim after a reap succeed against the tree the dead session left behind.
+  5. When `path` is listed at a different ref, exit 7 naming both refs and the repair
      (`git -C <project-root> worktree remove <path>`).
-  5. When `path` exists on disk but is not listed, run `git -C <project-root> worktree
+  6. When `path` exists on disk but is not listed, run `git -C <project-root> worktree
      prune` once and re-read the list; if it is still unlisted and still present, exit 7
      naming the path and the repair.
-  6. When the ref `refs/heads/change/<slug>` already exists (`git -C <project-root>
+  7. When the ref `refs/heads/change/<slug>` already exists (`git -C <project-root>
      show-ref --verify --quiet refs/heads/change/<slug>`), attach the tree to it:
-     `git -C <project-root> worktree add "<path>" "change/<slug>"`.
-  7. Otherwise create both: `git -C <project-root> worktree add "<path>" -b
+     `git -C <project-root> worktree add "<path>" "change/<slug>"`. This is also the path
+     step 3's prune falls through to once the tree is confirmed gone: the ref a vanished
+     tree left behind is still there, so committed work on it is never stranded.
+  8. Otherwise create both: `git -C <project-root> worktree add "<path>" -b
      "change/<slug>" "<base-ref>"`. Exit 7 on failure, printing git's own stderr.
-- `workspace_integrate <project-root> <slug> <integration-ref>` → exit 0 only after all of
-  it succeeded, and exit 8 with the reason otherwise. In order: the card exists and this
-  session is a member; `git -C <worktree> status --porcelain` is empty (else exit 8 naming
+- `workspace_integrate <project-root> <slug> <integration-ref> [session-id]` → exit 0 only
+  after all of it succeeded, and exit 8 with the reason otherwise. In order: the card
+  exists and this session is a member (`register_mine`, decision 5's full two-branch test)
+  — with no fourth argument, membership can only be established by the pid branch, since
+  there is then no session id to compare against; a caller holding a payload session id
+  different from its own process passes it as the fourth argument so the session-id branch
+  has something to test (Task 8: this is exactly the executor's case); `git -C <worktree>
+  status --porcelain` is empty (else exit 8 naming
   the dirty paths); `git -C <project-root> symbolic-ref --short HEAD` equals
   `<integration-ref>` (else exit 8); `git -C <project-root> status --porcelain` is empty
   (else exit 8); then `git -C <project-root> merge --no-ff --no-edit "change/<slug>"`;
@@ -869,7 +935,10 @@ pushed on its own, because Task 7's prose and Task 4's guard are only consistent
 `tests/test_closeout_hook.sh`.
 
 **Interfaces produced.** This is BLOCK 6's resolution: the hook stays a verifier, and the
-integration is an executor dispatch it checks.
+integration is an executor dispatch it checks. That dispatch runs `agent-team-workspace.sh
+integrate <project-root> <slug> <integration-ref> <session-id>`, passing its own payload
+session id as the fourth argument so `workspace_integrate`'s membership check (Task 3) has
+a session id to compare against rather than the pid branch alone.
 
 - `held_claims(cwd)` → the live timecards for this project that this session is a member
   of, read by shelling out to `agent-team-register.sh session-claims`. Read-only.
@@ -979,7 +1048,7 @@ case labels it printed. A dropped case counts zero and fails its criterion.
   that claims integration is checked against git.
   Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -cE 'PASS \[(a bare Stop with a live claim integrates nothing|a completion claim with no change disposition is blocked|an integrated claim survives closeout only as a verified fact)\]'`
   -> expects `3`.
-- [ ] AC-11 (mechanical): the installer carries the three new files through all five of its
+- [ ] AC-11 (mechanical): the installer carries the four new files through all five of its
   per-file touchpoints, so a rolled-back install leaves no debris and `install.sh --check`
   finds nothing missing.
   Check: `bash tests/acceptance/test_workspace_isolation.sh | grep -c 'PASS \[installer touchpoints cover the new hook files\]'`
