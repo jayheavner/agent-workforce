@@ -68,6 +68,12 @@ so `policy:dependency-freshness` pins nothing in this plan.
   `hooks/agent-team-register-writer.sh` (added 2026-08-17, Stage 1's code review — the
   exclusive take a removal goes through, and the writer slot built on it), `hooks/agent-team-workspace.sh`, `hooks/agent-team-register.json`, `tests/lib/concurrency.sh`,
   `tests/test_register_concurrency.sh`, `tests/test_register.sh`,
+  `tests/test_register_lifecycle.sh`, `tests/test_register_races.sh` (added 2026-08-17,
+  Stage 1's code review — the unit tier split three ways: decisions, a card's lifetime, and
+  the real-process race tier), `tests/lib/register-fixture.sh` (added the same pass — the
+  fixture and case-runner the three files above share), `tests/lib/slow-claimant.sh` (added
+  the same pass — a real claimant process the race tier uses to hold the dead-card judgment
+  open long enough to force the worst-case interleaving on demand),
   `tests/test_workspace.sh`, and — authored by the test-author, not by a builder —
   `tests/acceptance/test_workspace_isolation.sh` (the directory `tests/acceptance/`
   does not exist yet; creating it also activates the worktree guard's existing
@@ -160,6 +166,24 @@ so `policy:dependency-freshness` pins nothing in this plan.
    own election is unaffected by any of this — it is still decided by the exclusive create
    on the card path, never by this mechanism. See Task 2 and
    `hooks/agent-team-register-writer.sh`, `register_take_dead_card`.
+   *Amended 2026-08-17, third pass (verified against the implementation; folded in here
+   because it is the same removal-versus-rewrite hazard one function over):*
+   `register_write_merged`
+   no longer resurrects a card another process has just unlinked out from under it. Every
+   rewrite hard-links the card to a private pin before reading it, exactly as a removal does;
+   what is new is that, immediately before the final `mv` of the rewritten temp file onto the
+   card path, the rewrite reads how many names that pin still has (`register_link_count`). A
+   count of one means the card path is already gone — the rewrite is abandoned rather than
+   `mv`ing a fresh copy back into existence, which is what an unconditional `mv` had done
+   before: a heartbeat racing a release would wedge a slug until its session died, and one
+   racing a writer release would leave a ghost holder for up to the TTL. Residual limit,
+   stated rather than hidden, and the second of two places in this design portable shell
+   cannot close (the first is the digest-check-then-unlink window above): the instant between
+   reading the link count and the `mv` is not itself atomic, so a card unlinked in that
+   instant is still resurrected. That window is microseconds wide; closing it would need an
+   atomic-exchange or conditional-rename system call this project's shell primitives cannot
+   reach. See `hooks/agent-team-register-lib.sh`, `register_write_merged` and
+   `register_link_count`.
 5. **`session_id` survives resume — verified.** All three live sessions examined span
    14→17 August in one file with one id each; no id is shared across files. A cleared or
    forked session mints a new id, so reaping is by process liveness, never by id match.
@@ -416,15 +440,34 @@ names; nothing that sources the register changes because of the split. Modify `i
 plus three `bash -n` lines beside the checks at `:190`–`:199`, one each for
 `agent-team-register.sh`, `agent-team-register-lib.sh`, and `agent-team-register-writer.sh`
 — `agent-team-register.json` gets no `bash -n` line, being JSON rather than shell).
-Test `tests/test_register.sh` (new), `tests/test_register_concurrency.sh` (from Task 1),
-`tests/test_install_touchpoints.sh` (existing, must stay green).
+Test `tests/test_register.sh` (new, the register's DECISIONS — who may claim, release, and
+write), `tests/test_register_lifecycle.sh` (new, a card's LIFETIME — naming, liveness, reap,
+crash debris), `tests/test_register_races.sh` (new, the RACE tier — real multi-process
+contention for the writer slot and the digest-checked take, sequential by design so nothing
+competes for the cores the interleaving needs), `tests/lib/register-fixture.sh` (new, the
+shared fixture and case-runner the three files above all source — its own concurrent-case
+runner is what keeps the unit tier itself fast: `tests/test_register.sh` and
+`tests/test_register_lifecycle.sh` each run their cases in the background against their own
+per-case fixture directory, so the whole tier finishes in about the time its slowest single
+case takes, not the sum of all of them), `tests/test_register_concurrency.sh` (from Task 1,
+the twenty-claimant race on the claim path itself), `tests/test_install_touchpoints.sh`
+(existing, must stay green).
 
 **Interfaces produced.** A sourced library that also runs as a CLI (defined across
 `agent-team-register.sh` and the sibling libraries it sources; sourcing the former still
 defines every function below). Sourcing defines functions only; executing dispatches
 subcommands (`claim`, `ready`, `holder`, `mine`, `release`, `reap`, `writer-acquire`,
 `writer-release`, `heartbeat`, `session-claims`, `card-path`, `worktree-path`) whose names
-and argument order match the functions below one-for-one.
+and argument order match the functions below one-for-one. Two internal helpers carry no CLI
+subcommand of their own and are named here so a later reader does not mistake them for
+undocumented surface: `register_writer_take_matching <slot-file> <json-field>
+<wanted-value>` (in the writer file) pins the slot file, takes it only when the pinned bytes'
+named field equals `<wanted-value>`, and is what both `register_writer_release` and
+`register_reap` use to remove a slot only when it still names the session or slot they judged
+it against; `register_link_count <path>` (in the register library) prints how many names a
+path still has (`stat -f %l` or `stat -c %h`), which `register_write_merged` reads on the pin
+immediately before its final move to tell "the card is gone" from "another process is merely
+also pinning it."
 
 - `register_config_int <key> <default>` → the integer from
   `hooks/agent-team-register.json` beside this script, or the default when the file is
@@ -520,14 +563,32 @@ and argument order match the functions below one-for-one.
   displaced by the same take-and-re-judge sequence a dead card goes through, never by an
   unconditional unlink). Otherwise exit 3, printing the holding slot and the age in seconds.
   A TTL displacement is recorded as a fail-open in the guard log by the caller.
+- `register_writer_teardown <project-dir> <slug>` → removes the slot file
+  **unconditionally**, whoever holds it, and nulls the card's `.writer` mirror. This is a
+  different act from a slot holder releasing its own slot: it is only for a caller that has
+  already established the claim is its own and is tearing the whole claim down, so there is
+  no change left for any writer to hold a slot in. `workspace_integrate` (Task 3) uses this
+  in place of `register_writer_release`, because at that point membership on the claim is
+  already established and the writer slot — whoever holds it — comes down with the claim.
   *Amended 2026-08-17, Stage 1's code review:* the slot was originally the card's own
   `writer` field, set by reading the existing value and writing the new one — not atomic,
   so two guards racing for the same slot both read it empty and both were granted,
   reproduced at five winners out of eight racers. The slot is now decided by the file's own
   existence; the card's `.writer` field is written after and is a **mirror only**, read by
   the operator view and the staleness heartbeat, never by this function.
-- `register_writer_release <project-root> <slug>` → unlinks the slot file and sets the
-  card's `.writer` mirror to `null`.
+- `register_writer_release <project-dir> <slug> <slot>` → the slot the caller holds is a
+  **required** third argument, not an optional one: it pins the slot file's exact bytes
+  (the same hard-link-then-digest take every removal in the register goes through), compares
+  the slot recorded in those pinned bytes against `<slot>`, and removes the slot file only
+  when they match — never an unconditional unlink. Exit 2 when `<slot>` is omitted, before
+  anything is touched; exit 3 when the slot named is not the recorded holder, naming the
+  actual holder; exit 0 on release, after which the card's `.writer` mirror is nulled — and
+  only while it still names this slot. *Amended 2026-08-17, Stage 1's code review, third
+  pass:* the two-argument form (unlink unconditionally) was the same defect as the stealable
+  claim release one level down (decision 1) — a release with no ownership check let one agent
+  drop another's exclusion, after which a third agent was granted a slot two agents still
+  believed they held. See `register_writer_take_matching` and `register_writer_unrecord` in
+  `hooks/agent-team-register-writer.sh`.
 - `register_heartbeat <project-root> <slug> [slot]` → refreshes the card's `heartbeat`,
   and the writer entry's mirror too when `[slot]` is given and matches. *Amended
   2026-08-17, Stage 1's code review:* since the writer slot moved to its own file, this
@@ -657,9 +718,12 @@ directly — the dispatch guard does.
   `<integration-ref>` (else exit 8); `git -C <project-root> status --porcelain` is empty
   (else exit 8); then `git -C <project-root> merge --no-ff --no-edit "change/<slug>"`;
   then `git -C <project-root> worktree remove "<path>"`; then `git -C <project-root>
-  update-ref -d "refs/heads/change/<slug>"`; then `register_writer_release` and
-  `register_release`. A conflicted merge exits 8 after `git -C <project-root> merge
-  --abort`, leaving the tree, the ref, and the timecard exactly as they were.
+  update-ref -d "refs/heads/change/<slug>"`; then `register_writer_teardown` — the
+  claim-scoped teardown, not `register_writer_release`, because membership on the claim is
+  already established at this point and the whole claim is coming down, so the writer slot
+  goes with it whoever holds it — and `register_release`. A conflicted merge exits 8 after
+  `git -C <project-root> merge --abort`, leaving the tree, the ref, and the timecard exactly
+  as they were.
 - `workspace_remove <project-root> <slug> [session-id]` → validates the slug at entry
   (exit 6 for a malformed one, before anything is touched); when a card exists, checks
   membership against `[session-id]` **before** destroying anything and exits 8, naming the
@@ -745,7 +809,11 @@ hook just wrote and refuse with git's own message — SHOULD 10's window A, so a
 tree creation never leaves a `claiming` card behind a live pid; on success,
 `register_ready` and `register_writer_acquire "<role>#<n>"`, where `<n>` is the count of
 prior dispatches of this role for this slug in the payload's transcript, so two builders
-repairing one change hold distinct slot names.
+repairing one change hold distinct slot names. Should this guard ever release a writer
+slot (`register_writer_release`), the third argument — the exact slot string it acquired
+with — is required, not optional (2026-08-17, Stage 1's code review, third pass): a caller
+that omits it or reconstructs the slot name differently is refused rather than allowed to
+release a slot it does not name correctly.
 
 Same-session resumption (SHOULD 10, both windows): when `register_claim` returns exit 0
 against an **existing** card this session is a member of, the guard does not refuse. A
@@ -1202,10 +1270,16 @@ case labels it printed. A dropped case counts zero and fails its criterion.
 - **Not covered, deliberately.** Cloud-resource claims (decision 6); removing the
   orchestrator's Bash (open question 2); the `~/.claude/agent-dispatch-lint.STOP` kill
   switch, which is Jay's own machine-level escape hatch and not this repo's to remove;
-  end-to-end proof of the new mechanism in a live orchestrated session, which is AC-12 and
-  belongs to the first task after landing; and `tests/test_register.sh` sitting at 570
-  lines against this repository's ~300-line file-size guideline (2026-08-17, Stage 1's
-  code review) — the acceptance criteria pin specific case labels to that suite's exact
-  printed output, so shrinking it means splitting case bodies into sourced case libraries
-  the way the register itself was split, not trimming cases; recorded here as debt, not as
-  done.
+  and end-to-end proof of the new mechanism in a live orchestrated session, which is AC-12
+  and belongs to the first task after landing. The file-size debt this list once carried —
+  `tests/test_register.sh` sitting at 570 lines against this repository's ~300-line
+  guideline — is paid: the unit tier is split three ways by decision, not by case-trimming
+  (`tests/test_register.sh`, the register's decisions, at 277 lines; `tests/test_register_lifecycle.sh`,
+  a card's lifetime; `tests/test_register_races.sh`, the multi-process race tier; sharing
+  `tests/lib/register-fixture.sh`), so no entry belongs here for it. What keeps the split
+  unit tier fast despite running four times the case count of the original file: the two
+  unit-tier suites run their own cases concurrently, each case against its own private
+  fixture directory and register root, so the tier's wall time is close to its slowest
+  single case rather than the sum of all of them; the race tier stays sequential on purpose,
+  because its cases start real processes and assert what their interleaving produced, and a
+  second race running beside them would compete for the very cores that interleaving needs.
