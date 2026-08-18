@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent-team-register-writer.sh agent-team-workspace.sh agent-team-dispatch-change.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-worktree-rules.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent-team-register-writer.sh agent-team-workspace.sh agent-team-dispatch-change.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
 # --- version-pinned hook builds (2026-08-04) ------------------------------------
 # Every hook is wired to one fixed path, and the harness re-reads that file on
 # every tool call — so installing a repair used to rewrite the rules under every
@@ -179,6 +179,10 @@ bash -n "$REPO/hooks/agent-team-interrupt-guard.sh" || fail "interrupt guard fai
 bash -n "$REPO/hooks/agent-team-report-guard.sh" || fail "report guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-worktree-guard.sh" ] || fail "hooks/agent-team-worktree-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-worktree-guard.sh" || fail "worktree guard failed bash -n"
+# The worktree guard reads what a shell command is trying to do from this one file;
+# without it the guard blocks every command it is asked about, so it is checked here.
+[ -f "$REPO/hooks/agent-team-worktree-rules.sh" ] || fail "hooks/agent-team-worktree-rules.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-worktree-rules.sh" || fail "worktree command rules failed bash -n"
 [ -f "$REPO/hooks/agent-team-lane-guard.sh" ] || fail "hooks/agent-team-lane-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-lane-guard.sh" || fail "lane guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-lane-paths.sh" ] || fail "hooks/agent-team-lane-paths.sh is missing from repo"
@@ -555,6 +559,7 @@ PREEXISTING_BUDGETS=0
 PREEXISTING_LANES=0
 PREEXISTING_LANEGUARD=0
 PREEXISTING_LANEPATHS=0
+PREEXISTING_WTRULES=0
 PREEXISTING_GUARDLOG=0
 PREEXISTING_PIN=0
 PREEXISTING_REGISTER=0
@@ -574,6 +579,7 @@ PREEXISTING_DISPATCHCHANGE=0
 [ -f "$HOOKS_DIR/agent-team-interrupt-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-interrupt-guard.sh" "$BACKUP/"; PREEXISTING_IGUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-report-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-report-guard.sh" "$BACKUP/"; PREEXISTING_RGUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-worktree-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-worktree-guard.sh" "$BACKUP/"; PREEXISTING_WTGUARD=1; }
+[ -f "$HOOKS_DIR/agent-team-worktree-rules.sh" ] && { cp "$HOOKS_DIR/agent-team-worktree-rules.sh" "$BACKUP/"; PREEXISTING_WTRULES=1; }
 [ -f "$HOOKS_DIR/lint_acceptance_checks.py" ] && { cp "$HOOKS_DIR/lint_acceptance_checks.py" "$BACKUP/"; PREEXISTING_LINT=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
@@ -646,6 +652,7 @@ restore() {
       agent-team-interrupt-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-report-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-worktree-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-worktree-rules.sh) cp "$b" "$HOOKS_DIR/" ;;
       lint_acceptance_checks.py) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-process-assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
@@ -717,6 +724,7 @@ cleanup_fresh() {
   [ "$PREEXISTING_AUDIT" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-audit.sh"
   [ "$PREEXISTING_ROUTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-plugin-router.sh"
   [ "$PREEXISTING_WTGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-worktree-guard.sh"
+  [ "$PREEXISTING_WTRULES" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-worktree-rules.sh"
   [ "$PREEXISTING_SESSIONSTART" -eq 0 ] && rm -f "$HOOKS_DIR/session_start.py"
   [ "$PREEXISTING_ARCHIVER" -eq 0 ] && rm -f "$HOOKS_DIR/debug_run_archiver.py"
   [ "$PREEXISTING_LANEPATHS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lane-paths.sh"
@@ -749,6 +757,7 @@ if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; 
 if ! cp "$REPO/hooks/agent-team-interrupt-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "interrupt guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-report-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "report guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-worktree-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "worktree guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-worktree-rules.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "worktree command rules copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi

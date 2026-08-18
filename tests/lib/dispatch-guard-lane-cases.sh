@@ -133,7 +133,7 @@ Apply the fix to src/screening/prompts/guidance.json and also write docs/STATUS-
   "a second refused path with no override still blocks the dispatch"
 
 # --- A PATH NO LANE COVERS IS NOT AUTOMATICALLY THE BUILDER'S.
-# 2026-08-04: the agent memory at ~/.claude/projects/<project>/memory is outside every
+# 2026-08-04: the agent memory, at <home>/.claude/projects/<project>/memory, is outside every
 # checkout. The scribe was refused it; this guard's fallback — "nothing claims it, so
 # it is source, so it is the builder's" — then sent it to the one role confined to a
 # git worktree, which refused it too. The fallback holds INSIDE the working tree, where
