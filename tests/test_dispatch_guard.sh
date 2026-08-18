@@ -80,8 +80,14 @@ ACCEPTANCE CRITERIA
 expect_block "$(agent_json_p builder 'Build it.
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): file present. Check: `test -f slug.py` -> expects exit 0.')" "silent existence probe blocks"
+# Its own change, for the same reason the test-author case above has one: this is a
+# SECOND builder dispatch, with a different prompt, and nothing on the record says the
+# first one finished — so the writing turn is still the first one's. Sharing
+# criteria-check here passed only while a matching slot NAME was read as the same
+# dispatch re-entering, which is the writer-slot false grant this suite now proves
+# closed (tests/lib/dispatch-guard-writer-cases.sh).
 expect_allow "$(crit_payload builder 'Build it.
-CHANGE: criteria-check
+CHANGE: criteria-probe
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): file present. Check: `test -f slug.py || echo "why: slug.py missing"` -> expects exit 0.')" \
   "same probe with failure output allows"

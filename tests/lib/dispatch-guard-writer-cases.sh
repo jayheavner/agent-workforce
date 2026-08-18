@@ -141,6 +141,47 @@ case_checkpoint_block_strands_nothing() {
   return 0
 }
 
+# THE WRITER-SLOT FALSE GRANT, closed. Two builder dispatches on one change, in one
+# session, with no transcript to count from: both compute the slot name `builder#0`, and
+# both used to be granted the writing turn — the second read as the first re-entering,
+# because the session and the card's `opened` stamp are identical for the pair. The slot
+# now also records an identifier of the dispatch that took it, so a sibling is refused
+# and the holder keeps its turn.
+case_sibling_dispatch_refused_the_writing_turn() {
+  dg_fixture sibling-writer || { printf 'fixture setup failed'; return 1; }
+  run "$(dg_payload builder "$(change_prompt shared-turn)" sess-sibling "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the first builder allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  run "$(dg_payload builder "Implement the other half.
+CHANGE: shared-turn
+$CRITERIA_BODY" sess-sibling "$PROJ" "")"
+  [ "$RC" -eq 2 ] || { printf 'expected the sibling dispatch refused the writing turn; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  case "$OUT" in
+    *'live writer'*) ;;
+    *) printf 'expected the refusal to name the live writer; observed %s' "$OUT"; return 1 ;;
+  esac
+  jq -e '.slot == "builder#0" and (.dispatch | length) > 0' "$(slot_path shared-turn)" >/dev/null 2>&1 \
+    || { printf 'expected the first dispatch still recorded as the holder; observed %s' \
+         "$(head -c 200 "$(slot_path shared-turn)" 2>/dev/null)"; return 1; }
+  return 0
+}
+
+# And the case the discriminator must NOT break: one dispatch whose guard runs twice —
+# the same payload, byte for byte — is the same writer re-entering its own slot, not a
+# second one, and it is granted.
+case_same_dispatch_reenters_its_own_slot() {
+  dg_fixture reenter-writer || { printf 'fixture setup failed'; return 1; }
+  local payload
+  payload="$(dg_payload builder "$(change_prompt re-entered)" sess-reenter "$PROJ" "")"
+  run "$payload"
+  [ "$RC" -eq 0 ] || { printf 'expected the first run allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  run "$payload"
+  [ "$RC" -eq 0 ] || { printf 'expected the identical payload allowed as re-entry; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "builder#0"' "$(slot_path re-entered)" >/dev/null 2>&1 \
+    || { printf 'expected the one slot still held by builder#0; observed %s' \
+         "$(head -c 200 "$(slot_path re-entered)" 2>/dev/null)"; return 1; }
+  return 0
+}
+
 run_case "a resolved dispatch's writer slot is released before the next one acquires" \
   case_resolved_slot_released_before_acquire
 run_case 'a builder then an executor on one change both proceed' \
@@ -153,3 +194,7 @@ run_case 'a judge dispatch declaring a change takes no writer slot' \
   case_judge_takes_no_writer_slot
 run_case 'a checkpoint-blocked dispatch strands no claim and no writer slot' \
   case_checkpoint_block_strands_nothing
+run_case 'a sibling dispatch on one change is refused the writing turn' \
+  case_sibling_dispatch_refused_the_writing_turn
+run_case "the same dispatch re-entering its own writer slot is granted" \
+  case_same_dispatch_reenters_its_own_slot

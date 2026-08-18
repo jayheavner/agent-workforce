@@ -277,11 +277,25 @@ dispatch_change_gate() {
         case "$PRIOR_ROLE_DISPATCHES" in '' | *[!0-9]*) PRIOR_ROLE_DISPATCHES=0 ;; esac
       fi
       WRITER_SLOT="$TYPE#$PRIOR_ROLE_DISPATCHES"
+      # The slot NAME cannot tell two dispatches apart when the count behind it is not
+      # reproducible: two builders on one change, dispatched before either reached the
+      # transcript, both compute `builder#0`, and the acquire then read the second one as
+      # the first re-entering and granted both the writing turn. Session and the card's
+      # `opened` stamp do not separate them either — one session, one claim incarnation.
+      # What does is the dispatch itself, and the only per-dispatch fact this hook holds
+      # is the prompt it is processing: PreToolUse carries no dispatch identifier. So the
+      # slot records a digest of that prompt, and re-entry requires it to match. Two
+      # byte-identical prompts remain indistinguishable — that is the residual, stated
+      # rather than hidden, and it is the same one change_dispatches_in_flight lives
+      # with; an unavailable digest tool degrades to the old behaviour rather than
+      # refusing an honest dispatch.
+      DISPATCH_ID="$(printf '%s' "$PROMPT" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null; } | awk '{print $1}')"
+      DISPATCH_ID="${DISPATCH_ID:0:16}"
       # Read before acquiring: a grant that displaced somebody is a control that stopped
       # enforcing, and it must be recorded as loudly as a refusal.
       DISPLACED_SLOT=""
       [ -n "$SLOT_FILE" ] && DISPLACED_SLOT="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
-      WRITER_OUT="$(register_writer_acquire "$PROJECT_ROOT" "$DECLARED_CHANGE" "$WRITER_SLOT" 2>&1)"
+      WRITER_OUT="$(register_writer_acquire "$PROJECT_ROOT" "$DECLARED_CHANGE" "$WRITER_SLOT" "$DISPATCH_ID" 2>&1)"
       WRITER_RC=$?
       if [ "$WRITER_RC" -ne 0 ]; then
         guard_log dispatch "$TYPE" block "writer slot $WRITER_SLOT for $DECLARED_CHANGE refused"

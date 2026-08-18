@@ -115,10 +115,10 @@ register_writer_lock_path() { # $1 card
 }
 
 # How old the evidence for a held slot is. The CARD's writer heartbeat is what a
-# heartbeat call refreshes, so it is preferred whenever it names the same slot; the
-# slot file's own heartbeat is the fallback, and it is what makes a slot created
-# milliseconds ago read as fresh even before the card mirror has landed. No usable
-# heartbeat at all reads as infinitely old.
+# heartbeat call refreshes, so it is preferred whenever it names the same slot; the slot
+# file's own heartbeat is the fallback, which is what makes a slot created milliseconds
+# ago read as fresh before the card mirror has landed. No usable heartbeat reads as
+# infinitely old.
 register_writer_age() { # $1 card $2 slot-file $3 holder-slot $4 now
   local hb
   hb="$(jq -r --arg s "$3" '
@@ -153,37 +153,41 @@ register_writer_displace() { # $1 card $2 slot-file $3 ttl $4 now
   return "$rc"
 }
 
-# The writer slot is exclusive by the SAME primitive the claim is: an atomic
-# exclusive create of a path. It cannot be a field inside the card guarded by a read
-# — two guards firing from one dispatch message both read an empty slot, both merge
-# their own name into the card, the second write wins, and both are told they may
-# write. So the slot has its own file, `writers/<slug>.json`, created under
-# noclobber and removed only by a digest-checked take that the holding slot names
-# itself in; the card keeps a mirror of it for the operator view and for the
-# heartbeat that decides staleness.
+# The writer slot is exclusive by the SAME primitive the claim is: an atomic exclusive
+# create of a path. It cannot be a field inside the card guarded by a read — two guards
+# firing from one dispatch message both read an empty slot, both merge their own name
+# in, the second write wins, and both are told they may write. So the slot has its own
+# file, `writers/<slug>.json`, created under noclobber and removed only by a
+# digest-checked take the holding slot names itself in; the card keeps a mirror for the
+# operator view and the staleness heartbeat.
 #
 # The slot also carries its own liveness — a heartbeat and a TTL — because a builder
-# subagent that dies mid-task does not kill the session process the card records, so
-# pid liveness alone could never free the slot. Granted when the slot file does not
-# exist, when it is already this slot's, when the holder's heartbeat is older than
-# writer_ttl_seconds, or when the card's session process is dead. A TTL displacement
-# is a fail-open, recorded as one by the caller.
-register_writer_acquire() { # $1 project-dir $2 slug $3 slot
+# subagent that dies mid-task does not kill the session process the card records, so pid
+# liveness alone could never free the slot. Granted when the slot file does not exist,
+# when it is already this dispatch's, when the holder's heartbeat is older than
+# writer_ttl_seconds, or when the card's session process is dead. A TTL displacement is
+# a fail-open, recorded as one by the caller.
+register_writer_acquire() { # $1 project-dir $2 slug $3 slot [$4 dispatch id]
   local card lock now ttl cur age json
   card="$(register_resolve_card "$1" "$2")" || return $?
   lock="$(register_writer_lock_path "$card")"
   register_ensure_dir "$(dirname "$lock")" || return 5
   now="$(date +%s)"
   ttl="$(register_config_int writer_ttl_seconds 900)"
-  # The slot records BOTH halves of whose it is: the session, and that session's
-  # `opened` stamp — the one field on the card that changes on every incarnation of
-  # it. A session keeps its id across a resume, so the id alone cannot tell a
-  # pre-resume claim's slot from the slot the resumed session's writer just took, and
-  # the reap authorises its slot take against both (register_reap).
-  json="$(jq -cn --arg slot "$3" --argjson hb "$now" \
+  # The slot records whose it is: the session, and that session's `opened` stamp — the
+  # one card field that changes on every incarnation of it. A session keeps its id
+  # across a resume, so the id alone cannot tell a pre-resume claim's slot from the one
+  # the resumed session's writer just took; the reap authorises its take against both.
+  # The optional fourth argument is the one fact that separates two dispatches of the
+  # same role, in the same session, on the same claim incarnation: an identifier of the
+  # DISPATCH that took the slot. Without it both compute the slot name `<role>#0` —
+  # what happens whenever the transcript cannot be read — and the re-entry branch below
+  # granted both the writing turn. Optional so a caller that cannot identify its
+  # dispatch keeps working; what it loses is only the ability to prove re-entry.
+  json="$(jq -cn --arg slot "$3" --argjson hb "$now" --arg disp "${4:-}" \
     --arg sess "$(jq -r '.session // empty' "$card" 2>/dev/null)" \
     --arg opened "$(jq -r '.opened // empty' "$card" 2>/dev/null)" \
-    '{slot:$slot,session:$sess,opened:$opened,heartbeat:$hb}')" || return 5
+    '{slot:$slot,session:$sess,opened:$opened,dispatch:$disp,heartbeat:$hb}')" || return 5
   if register_writer_slot_create "$lock" "$json"; then
     register_writer_record "$card" "$3" "$now"
     return
@@ -195,7 +199,8 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot
     return 5
   }
   cur="$(jq -r '.slot // empty' "$lock" 2>/dev/null)"
-  if [ -n "$cur" ] && [ "$cur" = "$3" ] && register_writer_slot_is_ours "$card" "$lock"; then
+  if [ -n "$cur" ] && [ "$cur" = "$3" ] \
+    && register_writer_slot_is_ours "$card" "$lock" "${4:-}"; then
     register_write_merged "$lock" '.heartbeat = $hb' --argjson hb "$now" >/dev/null 2>&1
     register_writer_record "$card" "$3" "$now"
     return
@@ -216,20 +221,22 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot
   return 3
 }
 
-# Does the slot file record THIS incarnation of the claim — the session and the
-# `opened` stamp the card carries now? A matching slot NAME is not identity, and
-# treating one as its own re-entry granted two live writers in one change: the
-# name is `<role>#<n>` counted from a transcript, so two dispatches whose
-# transcript cannot be read both compute `builder#0` and both were told they may
-# write. The same pair register_reap authorises its slot take against, and read
-# from the card and the slot file themselves rather than trusted from the caller.
-# Unreadable either side is a NO, which refuses re-entry rather than granting a
-# second writer.
-register_writer_slot_is_ours() { # $1 card $2 slot-file
-  local want got
+# Does the slot file record THIS incarnation of the claim — the session and the card's
+# current `opened` stamp — AND, when either side names one, this same dispatch? A
+# matching slot NAME is not identity: the name is `<role>#<n>` counted from a
+# transcript, so two dispatches whose transcript cannot be read both compute
+# `builder#0`, and session plus `opened` do not separate them either, since two
+# dispatches of one session against one claim incarnation share both. The dispatch
+# identifier is the third fact and the only one that differs, so a slot recording one
+# is never re-entered by a caller naming a different one or naming none: that is a
+# sibling asking for a turn somebody else holds. Unreadable either side is a NO.
+register_writer_slot_is_ours() { # $1 card $2 slot-file [$3 dispatch id]
+  local want got disp
   want="$(jq -r '[(.session // ""), (.opened // "")] | @tsv' "$1" 2>/dev/null)"
   got="$(jq -r '[(.session // ""), (.opened // "")] | @tsv' "$2" 2>/dev/null)"
-  [ -n "$want" ] && [ "$want" = "$got" ]
+  [ -n "$want" ] && [ "$want" = "$got" ] || return 1
+  disp="$(jq -r '.dispatch // ""' "$2" 2>/dev/null)"
+  [ -z "$disp" ] || [ "$disp" = "${3:-}" ]
 }
 
 # The one operation that decides occupancy. The noclobber is set HERE, in this
@@ -238,16 +245,14 @@ register_writer_slot_create() { # $1 slot-file $2 json
   ( set -o noclobber; printf '%s\n' "$2" > "$1" ) 2>/dev/null
 }
 
-# Take the slot file away only when the values it RECORDS are the ones the caller
-# claims authority from: the holding slot's own name on the release path, the reaped
-# card's session AND that card's `opened` stamp on the reap path. The bytes are pinned
-# first, the fields are read from the pinned bytes, and the removal is the same
-# digest-checked take every other removal in the register goes through — so a slot
-# file that another process replaced between the read and the removal is left alone
-# rather than destroyed. A second field/value pair is optional and, when given, must
-# ALSO match; an empty wanted value never matches at all, since `// empty` would
-# otherwise equate "the field is absent" with "the caller named nothing" and hand a
-# slot file to a caller that could not identify it.
+# Take the slot file away only when the values it RECORDS are the ones the caller claims
+# authority from: the holding slot's own name on the release path, the reaped card's
+# session AND `opened` stamp on the reap path. The bytes are pinned first, the fields are
+# read from the pinned bytes, and the removal is the same digest-checked take every other
+# removal goes through — so a slot file another process replaced between the read and the
+# removal is left alone rather than destroyed. A second field/value pair is optional and,
+# when given, must ALSO match; an empty wanted value never matches, since `// empty` would
+# equate "the field is absent" with "the caller named nothing".
 # Exit 0 when the path was taken, 1 when it was not this caller's to take.
 register_writer_take_matching() { # $1 slot-file $2 field $3 value [$4 field $5 value]
   local pin="$1.pin.$$" rc=1 matched=1
@@ -269,13 +274,12 @@ register_writer_take_matching() { # $1 slot-file $2 field $3 value [$4 field $5 
 }
 
 # Releasing the slot is a REMOVAL of the one file that decides occupancy, so it is
-# authorised like every other removal: the caller names the slot it holds, and only
-# that slot's own file may be taken. A release that took no slot name and unlinked
-# the path unconditionally let ANY process — a foreign session, or the other
-# subagent of the same session — drop the holder's exclusion, after which a third
-# acquirer was granted a slot two processes then believed they held. The card's
-# mirror is nulled only after a successful take, and only while it still names this
-# slot, so a slot granted to someone else in the meantime keeps its record.
+# authorised like every other removal: the caller names the slot it holds, and only that
+# slot's own file may be taken. A release that took no slot name and unlinked the path
+# unconditionally let ANY process — a foreign session, or another subagent of the same
+# session — drop the holder's exclusion, after which a third acquirer was granted a slot
+# two processes believed they held. The card's mirror is nulled only after a successful
+# take, and only while it still names this slot.
 # Exit 2 when no slot is named, 3 when the slot named is not the holder.
 register_writer_release() { # $1 project-dir $2 slug $3 slot
   local card lock cur slot="${3:-}"
