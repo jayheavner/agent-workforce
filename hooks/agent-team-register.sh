@@ -230,11 +230,16 @@ register_heartbeat() { # $1 project-dir $2 slug [slot]
 # already belong to a FRESH claim on the same slug whose writer acquired it in the
 # microseconds after the dead card was taken, so it is never unlinked by name. The
 # session recorded in the dying card is read before the card goes, and the slot file
-# is taken only when it records that same session. An unreadable card names no
-# session, so its slot is left to a TTL displacement rather than guessed at. Crash
-# debris is swept last.
+# is taken only when it records that same session AND the same `opened` stamp — the
+# card's per-incarnation field. The session id alone is not enough: a resumed session
+# keeps its id, so between this reap taking the dead card and unlinking its slot, that
+# same session can have claimed the slug afresh and its writer can have taken the slot
+# — and a take authorised by session id alone would then strip a LIVE writer's
+# exclusion, after which a second writer is granted a slot nobody released. An
+# unreadable card names neither field, so its slot is left to a TTL displacement rather
+# than guessed at. Crash debris is swept last.
 register_reap() { # $1 project-dir
-  local proj key dir card slug reason sess
+  local proj key dir card slug reason sess opened
   proj="$(register_project_root "$1")" || return 5
   key="$(register_project_key "$proj")" || return 5
   dir="$(register_root)/$key"
@@ -249,8 +254,10 @@ register_reap() { # $1 project-dir
       reason=unreadable-timecard
     fi
     sess="$(jq -r '.session // empty' "$card" 2>/dev/null)"
+    opened="$(jq -r '.opened // empty' "$card" 2>/dev/null)"
     register_take_dead_card "$card" || continue
-    register_writer_take_matching "$(register_writer_lock_path "$card")" session "$sess" || :
+    register_writer_take_matching "$(register_writer_lock_path "$card")" \
+      session "$sess" opened "$opened" || :
     printf 'reaped %s %s\n' "$slug" "$reason"
   done
   register_sweep_debris "$dir"

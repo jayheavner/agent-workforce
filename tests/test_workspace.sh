@@ -312,6 +312,29 @@ case_remove_refuses_bad_slug() {
   return 0
 }
 
+# A change's writer slot cannot outlive the change. `integrate` already tears it
+# down; `remove` released the card and left `writers/<slug>.json` behind, so the next
+# claim on that slug was refused a writer until the TTL expired — and a fresh writer
+# that happened to reuse the same slot name silently "re-acquired" the dead change's
+# slot file instead of creating its own.
+case_remove_tears_down_writer_slot() {
+  fixture remove-slot || { printf 'fixture setup failed'; return 1; }
+  claimed_change slotted sess-slot || { printf 'fixture change failed'; return 1; }
+  local card lock out rc
+  card="$(bash "$REG" card-path "$PROJ" slotted)"
+  lock="$(dirname "$card")/writers/$(basename "$card")"
+  bash "$REG" writer-acquire "$PROJ" slotted 'builder#1' >/dev/null 2>&1 \
+    || { printf 'could not acquire the fixture writer slot'; return 1; }
+  [ -f "$lock" ] || { printf 'expected the fixture slot file at %s' "$lock"; return 1; }
+  git -C "$PROJ" merge --no-ff --no-edit change/slotted >/dev/null 2>&1 \
+    || { printf 'fixture merge failed'; return 1; }
+  out="$(ws remove "$PROJ" slotted)"; rc=$?
+  [ "$rc" -eq 0 ] || { printf 'expected exit 0 removing a merged change; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  [ -f "$lock" ] && { printf 'expected the writer slot removed with the change; observed it still at %s' "$lock"; return 1; }
+  [ -f "$card" ] && { printf 'expected the timecard released; observed it still at %s' "$card"; return 1; }
+  return 0
+}
+
 case_remove_reports_failed_release() {
   fixture remove-foreign || { printf 'fixture setup failed'; return 1; }
   local out rc card fpid fstart
@@ -356,6 +379,7 @@ run_case 'a conflicted merge aborts and leaves the claim intact' case_conflicted
 run_case 'remove refuses an unmerged change' case_remove_refuses_unmerged
 run_case 'ensure exits 7 when the register library is missing' case_ensure_without_register_library
 run_case 'remove refuses a malformed slug' case_remove_refuses_bad_slug
+run_case 'remove tears down the writer slot' case_remove_tears_down_writer_slot
 run_case 'remove reports failure when the card cannot be released' case_remove_reports_failed_release
 
 printf 'passed=%s failed=%s\n' "$PASSED" "$FAILED"

@@ -175,6 +175,32 @@ case_reap_sweeps_rewrite_debris() {
   expect_there "$cp" 'the live card untouched by the sweep'
 }
 
+# A stranded take token for the slot's CURRENT state blocks its holder's own release
+# — safe, and self-healing one reap later, because the sweep collects the token. What
+# was wrong was the message: it named the caller itself as the writer standing in its
+# way, which reads as a guard defect rather than as "try again after the next reap".
+case_release_blocked_by_token_names_the_token() {
+  fixture release-token || return 1
+  local lock token out rc
+  must claim "$PROJ" tokened sess-token || return 1
+  must writer-acquire "$PROJ" tokened 'builder#1' || return 1
+  lock="$(slot_path tokened)"
+  token="$(take_token_path "$lock" "$(digest16 "$lock")")"
+  printf '{"pid":1,"pid_start":"long ago"}\n' > "$token" || return 1
+  reg writer-release "$PROJ" tokened 'builder#1'
+  expect_rc 3 "$rc" 'the release refused while a take token for these bytes stands' "$out" || return 1
+  case "$out" in
+    *"builder#1 is still the writer"*) ;;
+    *) printf 'expected the refusal to say the slot is STILL the caller%ss, not held against it; observed %s' \
+         "'" "$out"; return 1 ;;
+  esac
+  case "$out" in
+    *reap*) ;;
+    *) printf 'expected the refusal to name the reap that clears the token; observed %s' "$out"; return 1 ;;
+  esac
+  expect_there "$lock" 'the slot file kept, since nothing was authorised to take it'
+}
+
 run_case 'claim survives the hook process that created it' case_claim_survives_hook_process
 run_case 'claim is reaped only after the session process exits' case_reaped_after_session_exit
 run_case 'a recycled pid with a different start time is reaped' case_recycled_pid_reaped
@@ -184,5 +210,7 @@ run_case 'two projects may hold the same slug at once' case_two_projects_one_slu
 run_case 'a malformed slug is refused' case_malformed_slug_refused
 run_case 'an unknown field survives a heartbeat' case_unknown_field_survives_heartbeat
 run_case 'reap sweeps rewrite debris left by a dead process' case_reap_sweeps_rewrite_debris
+run_case 'a release blocked by a stranded take token names the token, not the caller' \
+  case_release_blocked_by_token_names_the_token
 
 report_totals

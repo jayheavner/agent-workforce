@@ -226,6 +226,12 @@ workspace_remove() { # $1 project-root $2 slug [$3 session-id]
   # The release verdict is the caller's business, not something to swallow: a claim
   # that survives its workspace is a slug held by nothing.
   [ -n "$card" ] || return 0
+  # The writer slot cannot outlive the change it belonged to. The gate above has
+  # already established that the claim is this caller's own, so the slot goes with it
+  # whoever holds it — exactly as integrate does. Left behind, `writers/<slug>.json`
+  # refused the next claim on this slug a writer until its TTL expired, and a writer
+  # that reused the same slot name silently "re-acquired" the removed change's file.
+  register_writer_teardown "$1" "$2" >/dev/null 2>&1
   register_release "$1" "$2" "${3:-}" || {
     rc=$?
     [ "$rc" -eq 1 ] && return 0     # already released: the slug is free, as intended

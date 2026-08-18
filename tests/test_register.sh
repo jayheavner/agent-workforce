@@ -249,9 +249,11 @@ case_reap_keeps_new_claim_slot() {
   lock2="$(slot_path together)"
   mkdir -p "$(dirname "$lock")" || return 1
   # handover's slot belongs to the NEW claim's session; together's belongs to the
-  # dead one, so exactly one of them may go.
+  # dead one — same session AND same incarnation, which is what authorises the take
+  # — so exactly one of them may go.
   printf '{"slot":"builder#new","session":"sess-fresh","heartbeat":%s}\n' "$now" > "$lock"
-  printf '{"slot":"builder#1","session":"sess-also-dead","heartbeat":%s}\n' "$now" > "$lock2"
+  printf '{"slot":"builder#1","session":"sess-also-dead","opened":"%s","heartbeat":%s}\n' \
+    "$(jq -r '.opened' "$cp2")" "$now" > "$lock2"
   reg reap "$PROJ"
   expect_gone "$cp" 'the dead card handover reaped' || return 1
   expect_there "$lock" "the new claim's slot left alone by the reap" || return 1
@@ -259,6 +261,29 @@ case_reap_keeps_new_claim_slot() {
     || return 1
   expect_gone "$cp2" 'the dead card together reaped' || return 1
   expect_gone "$lock2" "the reaped claim's own slot removed with it"
+}
+
+# A session keeps its id across a resume, so the session id alone cannot say WHICH
+# incarnation of that session a slot belongs to. The sequence this case pins: the
+# pre-resume process dies, the resumed session — same id, new process — claims the
+# slug again and its writer takes the slot, and only then does a reap get to the dead
+# card. Authorising the slot take by session id alone hands that reap the LIVE claim's
+# slot, after which a second writer is granted one nobody released. The card's
+# `opened` stamp is per incarnation, so the take is authorised by both.
+case_reap_keeps_resumed_session_slot() {
+  fixture reap-resumed || return 1
+  local cp lock now out rc
+  now="$(date +%s)"
+  cp="$(dead_card resumed sess-same)" || { printf 'fixture card: %s' "$cp"; return 1; }
+  lock="$(slot_path resumed)"
+  mkdir -p "$(dirname "$lock")" || return 1
+  # Same session id as the dying card, a different incarnation of it.
+  printf '{"slot":"builder#1","session":"sess-same","opened":"2026-08-18T00:00:00Z","heartbeat":%s}\n' \
+    "$now" > "$lock"
+  reg reap "$PROJ"
+  expect_gone "$cp" 'the pre-resume card reaped' || return 1
+  expect_there "$lock" "the resumed session's fresh writer slot left alone" || return 1
+  expect_jq "$lock" '.slot == "builder#1"' 'the fresh slot still recording its writer'
 }
 
 run_case 'claim succeeds and prints the card path' case_claim_prints_path
@@ -273,5 +298,6 @@ run_case 'writer release by the holding slot succeeds' case_writer_release_by_ho
 run_case 'writer release naming a different slot is refused' case_writer_release_foreign_slot_refused
 run_case 'a card behind an abandoned token is reaped on a later pass' case_abandoned_token_reaped_later
 run_case "reap leaves a new claim's writer slot alone" case_reap_keeps_new_claim_slot
+run_case "reap leaves a resumed session's fresh writer slot alone" case_reap_keeps_resumed_session_slot
 
 report_totals

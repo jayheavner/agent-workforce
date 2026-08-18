@@ -203,9 +203,15 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot
   register_ensure_dir "$(dirname "$lock")" || return 5
   now="$(date +%s)"
   ttl="$(register_config_int writer_ttl_seconds 900)"
+  # The slot records BOTH halves of whose it is: the session, and that session's
+  # `opened` stamp — the one field on the card that changes on every incarnation of
+  # it. A session keeps its id across a resume, so the id alone cannot tell a
+  # pre-resume claim's slot from the slot the resumed session's writer just took, and
+  # the reap authorises its slot take against both (register_reap).
   json="$(jq -cn --arg slot "$3" --argjson hb "$now" \
     --arg sess "$(jq -r '.session // empty' "$card" 2>/dev/null)" \
-    '{slot:$slot,session:$sess,heartbeat:$hb}')" || return 5
+    --arg opened "$(jq -r '.opened // empty' "$card" 2>/dev/null)" \
+    '{slot:$slot,session:$sess,opened:$opened,heartbeat:$hb}')" || return 5
   if register_writer_slot_create "$lock" "$json"; then
     register_writer_record "$card" "$3" "$now"
     return
@@ -244,19 +250,30 @@ register_writer_slot_create() { # $1 slot-file $2 json
   ( set -o noclobber; printf '%s\n' "$2" > "$1" ) 2>/dev/null
 }
 
-# Take the slot file away only when the value it RECORDS is the one the caller
-# claims authority from: the holding slot's own name on the release path, the
-# reaped card's session on the reap path. The bytes are pinned first, the field is
-# read from the pinned bytes, and the removal is the same digest-checked take every
-# other removal in the register goes through — so a slot file that another process
-# replaced between the read and the removal is left alone rather than destroyed.
+# Take the slot file away only when the values it RECORDS are the ones the caller
+# claims authority from: the holding slot's own name on the release path, the reaped
+# card's session AND that card's `opened` stamp on the reap path. The bytes are pinned
+# first, the fields are read from the pinned bytes, and the removal is the same
+# digest-checked take every other removal in the register goes through — so a slot
+# file that another process replaced between the read and the removal is left alone
+# rather than destroyed. A second field/value pair is optional and, when given, must
+# ALSO match; an empty wanted value never matches at all, since `// empty` would
+# otherwise equate "the field is absent" with "the caller named nothing" and hand a
+# slot file to a caller that could not identify it.
 # Exit 0 when the path was taken, 1 when it was not this caller's to take.
-register_writer_take_matching() { # $1 slot-file $2 json-field $3 wanted-value
-  local pin="$1.pin.$$" rc=1
+register_writer_take_matching() { # $1 slot-file $2 field $3 value [$4 field $5 value]
+  local pin="$1.pin.$$" rc=1 matched=1
   [ -f "$1" ] || return 1
+  [ -n "${3:-}" ] || return 1
   rm -f "$pin"
   ln "$1" "$pin" 2>/dev/null || return 1
-  if [ "$(jq -r --arg f "$2" '.[$f] // empty' "$pin" 2>/dev/null)" = "$3" ]; then
+  [ "$(jq -r --arg f "$2" '.[$f] // empty' "$pin" 2>/dev/null)" = "$3" ] || matched=0
+  if [ -n "${4:-}" ]; then
+    [ -n "${5:-}" ] \
+      && [ "$(jq -r --arg f "$4" '.[$f] // empty' "$pin" 2>/dev/null)" = "$5" ] \
+      || matched=0
+  fi
+  if [ "$matched" -eq 1 ]; then
     register_take_file "$1" "$(register_digest_file "$pin" 2>/dev/null)" && rc=0
   fi
   rm -f "$pin"
@@ -273,7 +290,7 @@ register_writer_take_matching() { # $1 slot-file $2 json-field $3 wanted-value
 # slot, so a slot granted to someone else in the meantime keeps its record.
 # Exit 2 when no slot is named, 3 when the slot named is not the holder.
 register_writer_release() { # $1 project-dir $2 slug $3 slot
-  local card lock slot="${3:-}"
+  local card lock cur slot="${3:-}"
   [ -n "$slot" ] || {
     printf 'register: writer-release needs the slot that holds it, so a foreign process cannot drop the holder exclusion. Usage: writer-release <project-dir> <slug> <slot>\n' >&2
     return 2
@@ -281,8 +298,19 @@ register_writer_release() { # $1 project-dir $2 slug $3 slot
   card="$(register_resolve_card "$1" "$2")" || return $?
   lock="$(register_writer_lock_path "$card")"
   if [ -f "$lock" ] && ! register_writer_take_matching "$lock" slot "$slot"; then
+    cur="$(jq -r '.slot // empty' "$lock" 2>/dev/null)"
+    # The caller IS the holder, and what stopped the take is a stranded removal token
+    # for the slot file's current bytes. Saying "held by <caller>, so <caller> may not
+    # release it" named the caller as its own obstacle, which reads as a defect rather
+    # than as the one-cycle wait it is.
+    if [ -n "$cur" ] && [ "$cur" = "$slot" ]; then
+      printf 'register: %s is still the writer of %s and the slot file is unchanged, but a stranded removal token for its current state stands beside it at %s, so the file cannot be taken away yet. Nothing is lost — every reap sweeps an abandoned token, after which this same release succeeds. Repair: bash %s/agent-team-register.sh reap %s, then writer-release %s %s %s\n' \
+        "$slot" "$2" "$(dirname "$lock")" \
+        "${REGISTER_SELF_DIR:-$(dirname "${BASH_SOURCE[0]}")}" "$1" "$1" "$2" "$slot" >&2
+      return 3
+    fi
     printf 'register: the writer slot for %s is held by %s, so %s may not release it\n' \
-      "$2" "$(jq -r '.slot // "an unnamed writer"' "$lock" 2>/dev/null)" "$slot" >&2
+      "$2" "${cur:-an unnamed writer}" "$slot" >&2
     return 3
   fi
   register_writer_unrecord "$card" "$slot"
