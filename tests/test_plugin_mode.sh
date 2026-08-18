@@ -8,14 +8,18 @@ ROUTER="$REPO/hooks/agent-team-plugin-router.sh"
 TMPDIR_T="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_T"' EXIT
 
-# A real linked worktree: the dispatch guard now refuses a builder aimed at a
-# directory that does not exist, because a builder cannot create one.
+# A real git project: a builder dispatch now declares the CHANGE it works on, and the
+# dispatch guard claims that change and builds its worktree as a side effect — so the
+# payload needs a project to claim in, the worktree directory has to be ignored, and the
+# claim needs a register of this test's own rather than the machine's.
 PLUGIN_REPO="$TMPDIR_T/proj"
 mkdir -p "$PLUGIN_REPO/.claude/worktrees"
 git -C "$PLUGIN_REPO" init -q
-git -C "$PLUGIN_REPO" -c user.email=t@example.com -c user.name=Test commit -q --allow-empty -m init
-PLUGIN_WT="$PLUGIN_REPO/.claude/worktrees/widget-b1"
-git -C "$PLUGIN_REPO" worktree add -q --detach "$PLUGIN_WT" HEAD
+printf '.claude/worktrees/\n' > "$PLUGIN_REPO/.gitignore"
+git -C "$PLUGIN_REPO" add -A
+git -C "$PLUGIN_REPO" -c user.email=t@example.com -c user.name=Test commit -q -m init
+export AGENT_TEAM_REGISTER_DIR="$TMPDIR_T/register"
+export AGENT_TEAM_TELEMETRY_DIR="$TMPDIR_T/telemetry"
 
 PASS=0
 FAIL=0
@@ -85,8 +89,9 @@ bash_payload() { # $1 role, $2 command
     '{agent_type:$r,tool_name:"Bash",tool_input:{command:$c}}'
 }
 agent_payload() { # $1 role, $2 subagent type [$3 prompt]
-  jq -cn --arg r "$1" --arg t "$2" --arg p "${3:-}" \
-    '{agent_type:$r,tool_name:"Agent",tool_input:{subagent_type:$t,prompt:$p}}'
+  jq -cn --arg r "$1" --arg t "$2" --arg p "${3:-}" --arg cwd "$PLUGIN_REPO" \
+    '{agent_type:$r,tool_name:"Agent",cwd:$cwd,session_id:"sess-plugin-mode",
+      tool_input:{subagent_type:$t,prompt:$p}}'
 }
 
 expect_rc 0 secrets "$(bash_payload builder 'sam deploy')" \
@@ -109,7 +114,7 @@ grep -q "role=executor ran=npm install left-pad" "$TMPDIR_T/audit.log" \
 expect_rc 2 dispatch "$(agent_payload orchestrator general-purpose)" \
   "orchestrator dispatch guard was not enforced"
 expect_rc 0 dispatch "$(agent_payload 'agent-workforce:orchestrator' 'agent-workforce:builder' 'Build it.
-WORKTREE: '"$PLUGIN_WT"'
+CHANGE: widget
 ACCEPTANCE CRITERIA
 - [ ] AC-1 (mechanical): widget renders. Check: `python3 -m pytest tests/test_widget.py || echo "why: widget test failed"` -> expects exit 0.')" \
   "namespaced orchestrator could not dispatch a namespaced specialist"
