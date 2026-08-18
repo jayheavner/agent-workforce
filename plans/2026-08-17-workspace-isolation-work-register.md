@@ -78,6 +78,16 @@ so `policy:dependency-freshness` pins nothing in this plan.
   `tests/acceptance/test_workspace_isolation.sh` (the directory `tests/acceptance/`
   does not exist yet; creating it also activates the worktree guard's existing
   read-only-acceptance-suite rule, `agent-team-worktree-guard.sh:184`–`:201`).
+- **Files created, added 2026-08-18 after checking the tree against this list** — four the
+  implementation created that this scope did not name, all of them splits taken for the
+  project's file-size discipline and none of them new behaviour:
+  `hooks/agent-team-dispatch-change.sh` (the dispatch guard's workspace half, sourced by the
+  guard — see Task 4), `tests/lib/dispatch-guard-fixture.sh`,
+  `tests/lib/dispatch-guard-change-cases.sh`, and `tests/lib/dispatch-guard-lane-cases.sh`
+  (the fixture and the two case groups `tests/test_dispatch_guard.sh` sources). The new hook
+  file is already through all five installer touchpoints and carries its own `bash -n` line —
+  verified 2026-08-18 at `install.sh:127`, `:198`–`:199`, `:592`, `:670`, `:730`, and `:776` —
+  so nothing is owed there; the three test files are not installed.
 - **Files modified:** `hooks/agent-team-dispatch-guard.sh`,
   `hooks/agent-team-worktree-guard.sh`, `hooks/agent_team_closeout.py`,
   `tools/worktree-hygiene.sh`, `install.sh`, `policy/KEYS.md`, `README.md`,
@@ -118,6 +128,47 @@ so `policy:dependency-freshness` pins nothing in this plan.
    timecard's `.writer` field survives, but only as a **mirror**: the operator view and the
    staleness heartbeat read it, and it is never what `register_writer_acquire` decides
    against. See Task 2, `register_writer_acquire` and `register_writer_release`.
+   *Amended 2026-08-18, third pass (Task 4's review, BLOCK 3 — the hole was in this plan,
+   not in the code):* **a writer slot is released by the next dispatch for that change, not
+   by the agent that held it.** Nothing released a slot on normal completion, so the
+   ordinary sequence on one change — a builder, then a verifier, then an executor to
+   integrate — was refused for up to the 900-second TTL: with `builder#0` held, an executor
+   declaring the same slug was refused (*"held by builder#0, 78s old, TTL 900s"*). That is
+   the false-refusal failure this plan calls its worst, and it would have fired on the first
+   real task after landing. The release point is `dispatch_change_gate` itself, immediately
+   before it acquires: when the register already holds a slot for this change **and no
+   dispatch for this change is still in flight in this session's transcript**, that slot is
+   released with the exact slot string *read from the slot file*, and this dispatch then
+   acquires its own. Why there, and not in the agent that finishes: a `SubagentStop` hook
+   knows it is done but cannot prove *which* slot is its own — the name is `<role>#<n>` with
+   `<n>` counted from a transcript, the review established that count is not reproducible,
+   and so a stopping `builder#0` cannot tell its own slot from a `builder#1` that displaced
+   it and is still writing; and a stopping agent has to work out which change it held
+   through `resolve_change`, which yields `ambiguous` exactly when the session holds two
+   claims, which is when the release matters most. The acquiring guard needs neither fact:
+   the slug is in the dispatch it is processing, and "is any agent still working in this
+   change" is a question its own transcript answers structurally, by the presence or absence
+   of a tool result against each dispatch that declared this slug. Two costs, stated rather
+   than hidden. A slot outlives its writer until the next dispatch for that change (or until
+   `workspace_integrate` tears the claim down, or a reap takes it with a dead card), so
+   `hygiene --register` can show a holder no agent is behind — operator-visible staleness,
+   never a refusal, because the next dispatch clears it. And the release is only as good as
+   the transcript: an unreadable one declines to release rather than guessing, which leaves
+   the pre-existing TTL wait in place for that case. See Task 4's amendment.
+   *Same pass, the same hole one step over:* the slot was acquired by **every** dispatch
+   that declared a change, including roles that hold no writing tools at all — so a verifier
+   and a reviewer dispatched together on one change, the ordinary shape after a build, would
+   have had the second one refused for a writing turn neither of them can take. This
+   decision's own words are "at most one live **writer**", so the slot is now taken only by
+   the roles that can write: `WRITER_SLOT_ROLES` = builder, test-author, architect, scribe,
+   executor, deployer. Verified against frontmatter on 2026-08-18: builder, test-author,
+   architect and scribe hold `Write`/`Edit`; executor and deployer hold `Bash` and mutate git
+   through it; verifier, reviewer, debugger and ops hold no write tool
+   (`agents/verifier.md:6`, `agents/reviewer.md:7`, `agents/debugger.md:7`,
+   `agents/ops.md:7`) and are refused git mutation by decision 11's table; researcher and
+   ticketer deny the tools outright. A judge still declares its change — that is its
+   selector under decision 12 — and still has its claim resolved and its tree adopted; it
+   simply never holds the writing turn. See Task 4's amendment.
 2. **Workspace administration is a hook side effect, not an orchestrator command.**
    The orchestrator declares `CHANGE: <slug>` in a dispatch; the dispatch guard claims
    the timecard, creates or adopts the worktree, and rewrites nothing else. This resolves
@@ -296,6 +347,16 @@ so `policy:dependency-freshness` pins nothing in this plan.
   this change. The register gate (Stage 2, Task 5) makes its shell harmless first;
   removing the tool is a separate, reviewable step so a regression in the gate does not
   blind the orchestrator at the same moment.
+- **Whether the current dispatch's own Agent block is already in the session transcript when
+  `PreToolUse` fires.** *(New, 2026-08-18.)* Not verified, and the implementation's own
+  comment assumes it is not while the writer slot's numbering would be consistent either way.
+  Nothing in this plan rests on the answer: `change_dispatches_in_flight` (Task 4's amendment)
+  drops at most one in-flight candidate whose prompt is byte-identical to the payload's, which
+  is correct under both timings. Task 4 records a `note` on every kept and every released
+  slot, so the first orchestrated task after landing answers the question from the guard log
+  rather than from assumption — a log with releases in it says the self-exclusion is working;
+  a log of nothing but `kept: 1 dispatch(es) declaring it are still in flight` on sequential
+  dispatches says the prompt is not recorded verbatim and the exclusion needs a different key.
 - **Whether a subagent's hook payload carries the parent session's id.** Not verified, and
   deliberately not depended on: decision 5's two-branch membership test holds either way.
   Task 4 records which branch actually fired in the guard log (`detail` field
@@ -491,6 +552,21 @@ also pinning it."
   `refs/heads/change/<slug>`).
 - `register_valid_slug <slug>` → exit 0 when the slug matches
   `^[a-z0-9][a-z0-9._-]{0,63}$` and contains no `..`; else exit 6.
+  *Corrected 2026-08-18 (found by Task 4's review):* that rule admits slugs from which the
+  derived ref name is illegal, and the validator then contradicts its own message. `foo.lock`
+  and any slug ending in `.` pass it, so the claim is written, `git worktree add` fails with
+  git's raw complaint, and the guard releases the claim it just wrote — recoverable, but it
+  churns one claim per attempt and refuses for a reason the message never states. The
+  validator must **also** refuse a trailing `.` and a `.lock` suffix, which is one line:
+  `case "$1" in *..* | *. | *.lock) return 6 ;; esac`. Those two are the complete residue:
+  every other rule `git check-ref-format` enforces on one path component — a leading `.`, a
+  path separator, `@{`, a bare `@`, a backslash, whitespace, and the characters `~ ^ : ? * [`
+  — is already impossible under the character class above. The test's oracle is git itself:
+  for each candidate slug, `register_valid_slug` and
+  `git check-ref-format "refs/heads/$(register_ref_name "$slug")"` must agree, so the two
+  cannot drift. The validator keeps the pure-shell form rather than shelling out to git,
+  because it is called on paths where no repository has been resolved yet and must not
+  depend on a subprocess.
 - `register_session_process` → prints `<pid>` and `<start-string>` on one line separated
   by a tab: the **session's long-lived harness process**, found by walking ancestry
   upward from `$PPID`. At each step, `ps -p <pid> -o ppid=` gives the parent and
@@ -554,6 +630,21 @@ also pinning it."
   **pid branch only**; a caller whose payload session id differs from its own process (Task
   4's dispatch guard releasing a card it just wrote; Task 8's closeout, via
   `workspace_integrate`) must pass that id explicitly or the pid branch is all it gets.
+- **NOTE, and Tasks 5 through 9 depend on it: a slot name is transcript-derived and is
+  therefore not reproducible, so any release must READ the slot file rather than recompute
+  `<role>#<n>`.** The `<n>` in a slot name is the count of prior dispatches of that role for
+  that slug in the *payload's transcript* at the moment the slot was acquired (Task 4). That
+  count is not a stable function of the world: a dispatch that was denied still occupies an
+  index, an unreadable transcript yields `0`, and whether the harness has already written the
+  current dispatch's own Agent block to the transcript when `PreToolUse` fires is not a
+  verified fact. A caller that reconstructs the name can therefore name a slot that is not
+  the one on disk — and `register_writer_release` refuses a name it does not find (exit 3),
+  by design. So every release path in this plan reads `.slot` out of
+  `<register-root>/<project-key>/writers/<slug>.json` and passes back exactly those bytes.
+  The path itself is derived, not stored: `register_writer_lock_path <card>` returns it, and a
+  caller outside the register library builds it as `writers/` beside the card path that
+  `agent-team-register.sh card-path` prints. Recorded here, in the writer-slot interface,
+  because it is a constraint on every later reader of this register and not only on Task 4.
 - `register_writer_acquire <project-root> <slug> <slot>` → creates the writer slot file
   `<register-root>/<project-key>/writers/<slug>.json` (`{"slot":<slot>,"session":<session-id>,
   "heartbeat":<epoch>}`) under `noclobber` — the same atomic exclusive create the claim
@@ -774,6 +865,19 @@ block at `:286`–`:470` (which today comprises the `GIT_SERIALIZED_ROLES` scan 
 checks at `:305`–`:397`, and the transcript collision scan at `:399`–`:469`); add the
 constants beside `:21`–`:25`. Test `tests/test_dispatch_guard.sh`.
 
+*Recorded 2026-08-18, verified against the implementation this task committed, because the
+paragraph above no longer says where the code is.* The workspace half did not stay inside
+the guard: it lives in a new file, `hooks/agent-team-dispatch-change.sh`, which the guard
+sources from its own directory (`hooks/agent-team-dispatch-guard.sh:60`–`:62`) and then
+calls as `dispatch_change_gate` (`:311`), refusing the dispatch outright when that function
+is undefined (`:304`–`:309`). The constants stayed in the guard (`:20`–`:29` and `:48`). The
+test file split the same way: `tests/test_dispatch_guard.sh` sources
+`tests/lib/dispatch-guard-fixture.sh`, `tests/lib/dispatch-guard-change-cases.sh`, and
+`tests/lib/dispatch-guard-lane-cases.sh`, so the suite is still one command. Both splits
+were taken for the project's file-size discipline and neither changes any behaviour this
+task specifies. Below, "the guard" means `dispatch_change_gate` in
+`hooks/agent-team-dispatch-change.sh`.
+
 **Interfaces consumed.** `register_claim`, `register_holder`, `register_mine`,
 `register_ready`, `register_release`, `register_reap`, `register_writer_acquire`,
 `register_project_root`, `register_valid_slug`, `workspace_ensure`.
@@ -785,9 +889,30 @@ constants beside `:21`–`:25`. Test `tests/test_dispatch_guard.sh`.
   dispatch must declare a change for. The debugger and ops **may** declare one and it is
   honoured when present, because their Bash rule (Task 5) refuses git mutation outside a
   claimed tree; a diagnosis that will commit declares its change like anything else.
+- `readonly WRITER_SLOT_ROLES="builder test-author architect scribe executor deployer"`
+  *(added 2026-08-18, decision 1's third-pass amendment)* — the roles that take the writer
+  slot. Every declaring dispatch still claims the change and gets its tree; only a role in
+  this set holds the writing turn. A judge (verifier, reviewer) and a diagnostic role
+  (debugger, ops) hold no write tool and are refused git mutation, so taking the slot from
+  them would refuse honest work for a turn they cannot use: two judges dispatched together
+  on one change is the ordinary shape after a build, and the second one was being blocked by
+  the first. The set is a superset of `CHANGE_REQUIRED_ROLES` by exactly the architect and
+  the scribe, who write documents inside the claimed tree under decision 7.
 - The retired `WORKTREE:` marker is refused, not ignored: a dispatch carrying a
   `WORKTREE:` line is blocked with a message naming `CHANGE: <slug>` as its replacement,
   so a stale habit produces one clear correction instead of a silently unenforced line.
+  *Corrected 2026-08-18 (found by Task 4's review):* **detection is the marker's presence at
+  the start of a line, never a non-empty capture after it.** The implementation extracted
+  everything after the prefix and refused only when that remainder was non-empty, so a bare
+  `WORKTREE:` line — no path — was silently ignored, which is the one outcome this rule
+  exists to forbid ("refused, never ignored"). The remainder is not part of the decision at
+  all: the message names the prefix and its replacement and quotes no path. The corrected
+  test is a two-arm `case` on the prompt, matching the marker at the very start of the prompt
+  or immediately after a newline —
+  `case "$PROMPT" in "$RETIRED_WORKTREE_PREFIX"* | *$'\n'"$RETIRED_WORKTREE_PREFIX"*) ... esac`
+  — which needs no subprocess and no regular expression, so the literal cannot be
+  misinterpreted. The same shape governs the retired `PARALLEL_SAFE` literal, which is
+  already detected by presence (`*"$RETIRED_PARALLEL_SAFE"*`) and needs no change.
 - The old `PARALLEL_SAFE: no git mutation in this dispatch` literal is likewise refused
   with a message naming the new literal, because the meaning changed: it now asserts the
   dispatch **writes nothing at all**, and Task 5 verifies that rather than trusting it.
@@ -809,17 +934,283 @@ hook just wrote and refuse with git's own message — SHOULD 10's window A, so a
 tree creation never leaves a `claiming` card behind a live pid; on success,
 `register_ready` and `register_writer_acquire "<role>#<n>"`, where `<n>` is the count of
 prior dispatches of this role for this slug in the payload's transcript, so two builders
-repairing one change hold distinct slot names. Should this guard ever release a writer
-slot (`register_writer_release`), the third argument — the exact slot string it acquired
-with — is required, not optional (2026-08-17, Stage 1's code review, third pass): a caller
-that omits it or reconstructs the slot name differently is refused rather than allowed to
-release a slot it does not name correctly.
+repairing one change hold distinct slot names. When this guard releases a writer
+slot (`register_writer_release`), the third argument — the exact slot string, read from the
+slot file — is required, not optional (2026-08-17, Stage 1's code review, third pass): a
+caller that omits it or reconstructs the slot name differently is refused rather than
+allowed to release a slot it does not name correctly. Two clauses of that sequence are
+amended by the subsection below: the acquire happens only for a role in
+`WRITER_SLOT_ROLES`, and a release step runs immediately before it.
 
 Same-session resumption (SHOULD 10, both windows): when `register_claim` returns exit 0
 against an **existing** card this session is a member of, the guard does not refuse. A
 card in `state: claiming` is resumed — `workspace_ensure` then `register_ready` — and a
 card in `state: ready` is verified by `workspace_ensure`'s adoption path. One failed
 dispatch therefore cannot brick a slug for the session's life.
+
+#### Amendment, 2026-08-18: the release point of the writer slot (decision 1, third pass)
+
+This subsection is the whole specification of BLOCK 3's repair. It adds two functions to
+`hooks/agent-team-dispatch-change.sh`, one constant to
+`hooks/agent-team-dispatch-guard.sh`, and one sentence to the writer-slot refusal message.
+It changes no exit code, no marker literal, no stage boundary, and no existing commit.
+
+**Where it runs.** Inside `dispatch_change_gate`, in the block that already runs for a
+declared change: after the `register_ready` call and before the writer-slot naming and
+acquire. That position is load-bearing three ways. The reap at the top of the same hook run
+has already swept an abandoned removal token, which is the one thing that makes
+`register_writer_release` fail against a slot the caller does name correctly — so by the time
+the release runs, that obstacle is gone. The claim has already succeeded (exit 0), so the
+change is established as this session's before anything is removed. And `DISPLACED_SLOT` is
+read *after* the release, so a slot this guard released is not then reported as a TTL
+displacement: a release is routine, a displacement is a control that stopped enforcing, and
+the log must not confuse them.
+
+**What authorises the removal.** Not the slot's name, and not the identity of the agent that
+holds it — neither is reproducible. The authorisation is a property of the whole change: *no
+dispatch that declared this slug is still in flight in this session's transcript.* If no
+agent of this session is still running against this change, then whatever slot file survives
+is behind nobody, whatever it is called. The claim path has already established the change is
+this session's, so no foreign session's slot is reachable from here.
+
+```bash
+# How many dispatches for this change are still running, as this session's own transcript
+# records them. A dispatch is in flight when its Agent tool_use block carries no tool result
+# yet; a background launch stub is not a result (the same shape the worktree guard already
+# uses). THIS dispatch is not evidence of another live agent, and whether the harness has
+# already written its Agent block to the transcript when PreToolUse fires is NOT a verified
+# fact — so at most ONE in-flight candidate whose prompt is byte-identical to this payload's,
+# the last of them, is dropped. That is right under both timings: with this dispatch's own
+# block present it is the last such candidate and is dropped; with it absent, one identical
+# live sibling is dropped and a second is not, so a duplicated dispatch still finds a live
+# writer and is refused. Prints an integer, or `unknown` when there is no transcript to read.
+change_dispatches_in_flight() { # $1 slug -> integer | unknown
+  { [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; } || { printf 'unknown'; return 0; }
+  local n
+  n="$(
+    jq -rs --arg marker "$CHANGE_MARKER_PREFIX" --arg slug "$1" --arg self "$PROMPT" '
+      def declaration:
+        (.input.prompt // "")
+        | [ splits("\n") ]
+        | map(select(startswith($marker)))
+        | if length == 0 then ""
+          else (.[0] | ltrimstr($marker) | sub("^[ \t]+"; "") | sub("[ \t]+$"; "")) end;
+      [ .[] ] as $entries
+      | ( [ $entries[] | .. | objects
+            | select(.type? == "tool_result" and .tool_use_id != null)
+            | select( ([.content] | flatten
+                       | map(if type == "object" then (.text // "") else tostring end)
+                       | join(" "))
+                      | contains("Async agent launched successfully") | not )
+            | .tool_use_id ] ) as $resolved
+      | ( [ $entries[] | .. | objects
+            | select(.type? == "tool_use" and .name? == "Agent")
+            | { id: .id, prompt: (.input.prompt // ""), slug: declaration }
+            | select(.slug == $slug)
+            | select( .id as $i | ($resolved | index($i)) | not ) ] ) as $flight
+      | ( [ $flight | to_entries[] | select(.value.prompt == $self) | .key ] | last ) as $me
+      | ( if $me == null then $flight else ($flight | del(.[$me])) end ) | length
+    ' "$TRANSCRIPT" 2>/dev/null
+  )"
+  case "$n" in '' | *[!0-9]*) printf 'unknown' ;; *) printf '%s' "$n" ;; esac
+}
+
+# A slot nobody is behind is released here, by the next dispatch for the same change. The
+# slot string is READ from the slot file, never recomputed: `<role>#<n>` comes from a
+# transcript count that is not reproducible (Task 2's NOTE), and register_writer_release
+# refuses a name it does not find. Every outcome is a `note` — a routine release is not a
+# control failing open, and a DECLINED release is the evidence that answers the one timing
+# question this design leaves open.
+release_resolved_writer_slot() { # $1 project-root $2 slug
+  { [ -n "${SLOT_FILE:-}" ] && [ -f "$SLOT_FILE" ]; } || return 0
+  local held flight rc
+  held="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
+  [ -n "$held" ] || return 0
+  flight="$(change_dispatches_in_flight "$2")"
+  if [ "$flight" = unknown ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 kept: this session's transcript could not be read, so no dispatch could be shown finished"
+    return 0
+  fi
+  if [ "$flight" -gt 0 ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 kept: $flight dispatch(es) declaring it are still in flight"
+    return 0
+  fi
+  register_writer_release "$1" "$2" "$held" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 released: its dispatch has resolved and none is in flight"
+  else
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 could not be released (register exit $rc); the acquire decides on the TTL instead"
+  fi
+  return 0
+}
+```
+
+**The five answers a builder would otherwise have to invent.**
+
+- *What it reads.* `$SLOT_FILE`, `$PROMPT`, and `$TRANSCRIPT` — all three already set by
+  `dispatch_change_gate` before the claim (`$SLOT_FILE` from the card path), and read as
+  globals, because this file deliberately runs in the guard's own variable space rather than
+  declaring everything local. Nothing else, and no file outside the register.
+- *What it writes.* Nothing but the removal of the slot file, performed by
+  `register_writer_release`, plus `note` lines in the guard log. It never touches the
+  timecard: nulling the card's `.writer` mirror is `register_writer_release`'s own last step.
+- *When the slot is already gone.* Return 0 and log nothing. A missing slot file, or one
+  whose `.slot` is empty, is the normal state of a change whose last dispatch integrated it
+  or whose card was reaped; it is not an anomaly and must not produce a refusal or a log line.
+- *When the slot belongs to a different agent.* Two cases, and they resolve differently. A
+  slot held by a dispatch that is still in flight is **kept** — that is the `flight > 0`
+  branch, and the acquire that follows then refuses this dispatch, which is the writer slot
+  working. A slot held by an agent that is *not* in flight is released whatever its name and
+  whatever role's name it carries, because "not in flight" is exactly the claim that nobody is
+  behind it. The residual, stated rather than hidden: if the orchestrator issues a
+  **byte-identical** dispatch prompt for the same change while the first is still live, and
+  the harness has not yet written the second dispatch's Agent block to the transcript, the
+  self-exclusion drops the live sibling and this dispatch releases a slot a live writer still
+  holds. That window needs a duplicate prompt to the character, and every release is logged as
+  a note naming the slot, so it leaves a record rather than a mystery.
+- *How a test proves it.* Steps 6 through 10 below: four cases in
+  `tests/test_dispatch_guard.sh`, each asserting the observable state of the slot file and, for
+  the two decision branches, the guard-log note that records which branch fired.
+
+**The role gate.** The slot-naming and acquire block is wrapped so only a writer takes a
+slot; the release above runs for every declaring dispatch, because "nobody is working in this
+change" is a role-independent fact and a judge's dispatch clearing a finished builder's slot
+is a correct outcome, not an overreach.
+
+```bash
+    WRITER_ROLE=0
+    for wrole in $WRITER_SLOT_ROLES; do
+      if [ "$TYPE" = "$wrole" ]; then WRITER_ROLE=1; break; fi
+    done
+    release_resolved_writer_slot "$PROJECT_ROOT" "$DECLARED_CHANGE"
+    if [ "$WRITER_ROLE" -eq 1 ]; then
+      # ... the existing PRIOR_ROLE_DISPATCHES count, WRITER_SLOT, DISPLACED_SLOT read,
+      # register_writer_acquire, refusal, and displacement fail-open, unchanged ...
+    fi
+```
+
+**One sentence added to the writer-slot refusal message**, because after this amendment a
+refusal means a writer really is in flight and the automatic escape is worth naming (AC-14):
+after the two existing escapes, *"Its slot is also released automatically by the next dispatch
+for this change once that agent's own dispatch has finished, so a sequence of dispatches on
+one change needs nothing done by hand."* No literal, code, or exit status in that message
+changes.
+
+**Does TTL displacement remain necessary? Yes, and it is now the crash path only.** It is the
+only thing that frees a slot when the holder's dispatch cannot be shown to have finished:
+an agent killed or lost without its dispatch ever recording a tool result, a transcript that
+cannot be read, and a release that failed for any register reason. It fires exactly where it
+fires today — inside `register_writer_acquire`, when the slot's heartbeat (the card mirror
+preferred, the slot file's own as fallback) is older than `writer_ttl_seconds` (900), or when
+the card's session process is dead — and each firing is still recorded as a fail-open. What
+changes is its meaning: before this amendment a displacement was the routine end of every
+dispatch, so the fail-open records were noise; after it, a displacement is a signal that the
+release path did not run, and that is worth reading.
+
+**The four cases, in full** — added to `tests/lib/dispatch-guard-change-cases.sh`, which
+`tests/test_dispatch_guard.sh` sources, so the suite is still one command. They use that
+file's existing fixture helpers (`dg_fixture`, `dg_payload`, `run`, `run_case`,
+`change_prompt`, `slot_path`, `prior_dispatch_transcript`, `$CRITERIA_BODY`, `$GUARD_LOG`)
+unchanged. This block sits at the left margin on purpose: each payload's `CHANGE:` line has
+to start at column one or the marker is not at the start of a line and nothing is declared.
+
+```bash
+# What "finished" looks like on disk: one dispatch AND its tool result.
+resolved_dispatch_transcript() { # $1 path $2 role $3 slug
+  { jq -cn --arg r "$2" --arg p "CHANGE: $3" \
+      '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"toolu_done_1",name:"Agent",input:{subagent_type:$r,prompt:$p}}]}}'
+    jq -cn '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"toolu_done_1",content:[{type:"text",text:"WORKFORCE_REPORT: builder | complete"}]}]}}'
+  } > "$1"
+}
+
+# The demonstrated defect, inverted into a case: builder then executor on ONE change.
+case_resolved_slot_released_before_acquire() {
+  dg_fixture release-resolved || { printf 'fixture setup failed'; return 1; }
+  local tr="$FX/transcript.jsonl" line
+  run "$(dg_payload builder "$(change_prompt handoff)" sess-handoff "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the builder allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "builder#0"' "$(slot_path handoff)" >/dev/null 2>&1 \
+    || { printf 'expected builder#0 holding the slot; observed %s' "$(head -c 200 "$(slot_path handoff)" 2>/dev/null)"; return 1; }
+  resolved_dispatch_transcript "$tr" builder handoff || return 1
+  run "$(dg_payload executor "Integrate it.
+CHANGE: handoff
+" sess-handoff "$PROJ" "$tr")"
+  [ "$RC" -eq 0 ] || { printf 'expected the executor allowed after the builder finished; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "executor#0"' "$(slot_path handoff)" >/dev/null 2>&1 \
+    || { printf 'expected the executor holding the slot; observed %s' "$(head -c 200 "$(slot_path handoff)" 2>/dev/null)"; return 1; }
+  line="$(jq -rc 'select(.verdict == "note" and (.detail | test("released")))' "$GUARD_LOG" 2>/dev/null | tail -n1)"
+  case "$line" in
+    *"builder#0"*) return 0 ;;
+    *) printf 'expected a note recording the released slot builder#0; observed %s' "${line:-none}"; return 1 ;;
+  esac
+}
+
+# The exclusion still holds while somebody is behind the slot, and the log says why.
+case_in_flight_slot_kept() {
+  dg_fixture keep-in-flight || { printf 'fixture setup failed'; return 1; }
+  local tr="$FX/transcript.jsonl" line
+  run "$(dg_payload builder "$(change_prompt busy-tree)" sess-keep "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the builder allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  prior_dispatch_transcript "$tr" builder busy-tree || return 1
+  run "$(dg_payload executor "Integrate it.
+CHANGE: busy-tree
+" sess-keep "$PROJ" "$tr")"
+  [ "$RC" -eq 2 ] || { printf 'expected the executor refused while the builder is in flight; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "builder#0"' "$(slot_path busy-tree)" >/dev/null 2>&1 \
+    || { printf 'expected builder#0 still holding the slot; observed %s' "$(head -c 200 "$(slot_path busy-tree)" 2>/dev/null)"; return 1; }
+  line="$(jq -rc 'select(.verdict == "note" and (.detail | test("kept")))' "$GUARD_LOG" 2>/dev/null | tail -n1)"
+  case "$line" in
+    *"in flight"*) return 0 ;;
+    *) printf 'expected a note recording the slot kept for an in-flight dispatch; observed %s' "${line:-none}"; return 1 ;;
+  esac
+}
+
+# No transcript is no evidence, and no evidence releases nothing: the pre-existing TTL wait
+# stands rather than a guess removing a live writer's exclusion.
+case_unreadable_transcript_releases_nothing() {
+  dg_fixture no-transcript || { printf 'fixture setup failed'; return 1; }
+  run "$(dg_payload builder "$(change_prompt sealed)" sess-sealed "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the builder allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  run "$(dg_payload executor "Integrate it.
+CHANGE: sealed
+" sess-sealed "$PROJ" "$FX/absent.jsonl")"
+  [ "$RC" -eq 2 ] || { printf 'expected the executor refused with no transcript to read; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "builder#0"' "$(slot_path sealed)" >/dev/null 2>&1 \
+    || { printf 'expected the slot untouched; observed %s' "$(head -c 200 "$(slot_path sealed)" 2>/dev/null)"; return 1; }
+  return 0
+}
+
+# A judge holds no writing turn, so it is neither refused for one nor granted one. This is
+# the case that fails if WRITER_SLOT_ROLES is forgotten.
+case_judge_takes_no_writer_slot() {
+  dg_fixture judge-no-slot || { printf 'fixture setup failed'; return 1; }
+  local tr="$FX/transcript.jsonl"
+  run "$(dg_payload builder "$(change_prompt judged)" sess-judge "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the builder allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  prior_dispatch_transcript "$tr" builder judged || return 1
+  run "$(dg_payload verifier "Verify it.
+CHANGE: judged
+$CRITERIA_BODY" sess-judge "$PROJ" "$tr")"
+  [ "$RC" -eq 0 ] || { printf 'expected the verifier allowed beside a live builder; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "builder#0"' "$(slot_path judged)" >/dev/null 2>&1 \
+    || { printf 'expected the builder still holding the only writing turn; observed %s' "$(head -c 200 "$(slot_path judged)" 2>/dev/null)"; return 1; }
+  return 0
+}
+
+run_case "a resolved dispatch's writer slot is released before the next one acquires" \
+  case_resolved_slot_released_before_acquire
+run_case "an in-flight dispatch's writer slot is kept and the refusal stands" \
+  case_in_flight_slot_kept
+run_case 'an unreadable transcript releases no writer slot' \
+  case_unreadable_transcript_releases_nothing
+run_case 'a judge dispatch declaring a change takes no writer slot' \
+  case_judge_takes_no_writer_slot
+```
 
 **Steps.**
 1. [ ] Add cases to `tests/test_dispatch_guard.sh` with these labels: `a builder dispatch
@@ -842,6 +1233,34 @@ dispatch therefore cannot brick a slug for the session's life.
    collision scan that the register replaces.
 4. [ ] Run `bash tests/test_dispatch_guard.sh` — expect pass.
 5. [ ] `git commit -am "feat(dispatch): a change declaration claims its workspace and the hook builds it"`
+
+**Steps 6–10 (the 2026-08-18 amendment above; steps 1–5 are already committed).** These
+extend the same two files. The acceptance suite's Stage 2 label list is deliberately
+unchanged, so the separately-authored bar does not move under the test-author; the four new
+labels live in the unit tier and are worded so a later revision of the criteria block can
+count them verbatim.
+
+6. [ ] Add the four cases and the one helper printed in full under *"The four cases, in
+   full"* in the amendment subsection above to `tests/lib/dispatch-guard-change-cases.sh`
+   (sourced by `tests/test_dispatch_guard.sh`), copying them from there and not from here:
+   that block is deliberately at the left margin, because a `CHANGE:` line indented by even
+   one space is not at the start of a line, is therefore not a declaration, and would make
+   every one of these cases fail for the wrong reason.
+7. [ ] Run `bash tests/test_dispatch_guard.sh` — expect the four new labels to print `FAIL`
+   (the first two and the fourth for the wrong reason: today the executor is refused, the
+   note is absent, and the verifier is refused for a slot it cannot use) and every
+   pre-existing case, including `two live writers on one change are refused` and `a second
+   writer slot after the TTL is granted and logged as a fail-open`, to still print `PASS`.
+8. [ ] Implement: add `WRITER_SLOT_ROLES` to `hooks/agent-team-dispatch-guard.sh` beside the
+   other readonly constants; add `change_dispatches_in_flight` and
+   `release_resolved_writer_slot` to `hooks/agent-team-dispatch-change.sh`; call the release
+   after `register_ready` and gate the acquire on the role, exactly as the amendment shows;
+   add the one sentence to the writer-slot refusal message.
+9. [ ] Run `bash tests/test_dispatch_guard.sh` — expect `failed=0` with all four new labels
+   passing. Then run `bash tests/test_worktree_guard.sh` and
+   `bash tests/test_install_touchpoints.sh` — both unaffected, both must stay green, which is
+   what proves this repair touched nothing else.
+10. [ ] `git commit -am "fix(dispatch): the next dispatch releases a finished writer's slot, and only writers take one"`
 
 ### Task 5: the worktree guard resolves and gates from the register
 
@@ -1241,7 +1660,17 @@ case labels it printed. A dropped case counts zero and fails its criterion.
   `register_root` and `register_project_key`; SHOULD 10 in Task 4's resumption paragraph
   and AC-5; SHOULD 11 in Task 5's full enumeration of the rewritten test section; SHOULD 12
   in AC-12; SHOULD 13 in `register_alive` including the EPERM note; SHOULD 14 in decision
-  10; SHOULD 15 in decision 1's amendment and `register_writer_acquire`. NOTE 16's stale
+  10; SHOULD 15 in decision 1's amendment and `register_writer_acquire`. Task 4's review
+  (2026-08-18): its BLOCK 3 — nothing released a writer slot on normal completion — in
+  decision 1's third-pass amendment and Task 4's amendment subsection with steps 6–10, proved
+  by the four new labels in `tests/test_dispatch_guard.sh`; its slug-validator finding in Task
+  2's `register_valid_slug`; its bare-`WORKTREE:` finding in Task 4's retired-marker interface
+  text. Stated as a limit rather than hidden: none of AC-1 through AC-14 counts the four new
+  labels, because that criteria block is frozen by the scope of this amendment and the
+  acceptance suite's own label list is deliberately left alone so the test-author's bar does
+  not move under it; the unit tier carries the proof, and the labels are worded so a later
+  revision of the criteria can count them verbatim. AC-9's two labels still cover the writer
+  slot's exclusivity and its TTL, both of which this amendment leaves in place. NOTE 16's stale
   references are corrected throughout (the orchestrator's creation rule is at `:123`–`:137`,
   not `:48`–`:52`; thirteen agent documents, not twelve; the README rows are `:105`–`:107`;
   AC-6 names the verifier). NOTE 17's three constraints are in decision 3 and Task 2. NOTE
