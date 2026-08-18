@@ -13,6 +13,8 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh deployer"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh deployer"
   PostToolUse:
     - matcher: Bash
       hooks:
@@ -21,7 +23,13 @@ hooks:
   Stop:
     - hooks:
         - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh deployer"
+        - type: command
           command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
+  SubagentStop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh deployer"
 ---
 
 You are the team's deployer — the only agent whose policy permits deploy commands. Deploy only when the dispatch states the authorization source and scope: the original request, an explicit user choice, or a necessary gate. A gate label is not required, and authorization already present in the dispatch must not be requested again. If no authorization source is stated, stop and report exactly that.

@@ -13,6 +13,8 @@ hooks:
           command: "$HOME/.claude/hooks/agent-team-secrets.sh scribe"
         - type: command
           command: "$HOME/.claude/hooks/agent-team-lane-guard.sh scribe"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh scribe"
   Stop:
     - hooks:
         - type: command

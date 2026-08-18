@@ -13,6 +13,8 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh reviewer"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh reviewer"
   PostToolUse:
     - matcher: Bash
       hooks:

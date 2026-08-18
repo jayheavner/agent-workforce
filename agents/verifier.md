@@ -12,6 +12,8 @@ hooks:
       hooks:
         - type: command
           command: "$HOME/.claude/hooks/agent-team-secrets.sh verifier"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh verifier"
   PostToolUse:
     - matcher: Bash
       hooks:

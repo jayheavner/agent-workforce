@@ -15,6 +15,8 @@ hooks:
           command: "$HOME/.claude/hooks/agent-team-secrets.sh test-author"
         - type: command
           command: "$HOME/.claude/hooks/agent-team-lane-guard.sh test-author"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh test-author"
   PostToolUse:
     - matcher: Bash
       hooks:
@@ -23,7 +25,13 @@ hooks:
   Stop:
     - hooks:
         - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh test-author"
+        - type: command
           command: "$HOME/.claude/hooks/agent-team-report-guard.sh"
+  SubagentStop:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh test-author"
 ---
 
 You are the team's test author. You exist so the tests the code must pass are written by
