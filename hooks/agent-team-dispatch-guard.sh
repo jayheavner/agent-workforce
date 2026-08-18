@@ -24,6 +24,14 @@ readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: this dispatch writes nothing"
 # change like anything else — because their Bash rule refuses git mutation outside a
 # claimed tree.
 readonly CHANGE_REQUIRED_ROLES="builder test-author executor deployer"
+# Roles that take the WRITING TURN in a change. Every declaring dispatch still claims the
+# change and gets its tree; only a role in this set holds the slot. A judge (verifier,
+# reviewer) and a diagnostic role (debugger, ops) hold no write tool and are refused git
+# mutation, so taking the slot from them would refuse honest work for a turn they cannot
+# use — two judges dispatched together after a build is the ordinary shape, and the second
+# was being blocked by the first. A superset of CHANGE_REQUIRED_ROLES by exactly the
+# architect and the scribe, who write documents inside the claimed tree.
+readonly WRITER_SLOT_ROLES="builder test-author architect scribe executor deployer"
 # The two retired declarations, kept only so they can be REFUSED by name.
 readonly RETIRED_WORKTREE_PREFIX="WORKTREE:"
 readonly RETIRED_PARALLEL_SAFE="PARALLEL_SAFE: no git mutation in this dispatch"
@@ -208,6 +216,85 @@ human_override_paths() { # -> released paths, one per line
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[`"'"'"']//g'
 }
 
+# How many dispatches for this change are still running, as this session's own transcript
+# records them. A dispatch is in flight when its Agent tool_use block carries no tool result
+# yet; a background launch stub is not a result (the same shape the worktree guard already
+# uses). THIS dispatch is not evidence of another live agent, and whether the harness has
+# already written its Agent block to the transcript when PreToolUse fires is NOT a verified
+# fact — so at most ONE in-flight candidate whose prompt is byte-identical to this payload's,
+# the last of them, is dropped. That is right under both timings: with this dispatch's own
+# block present it is the last such candidate and is dropped; with it absent, one identical
+# live sibling is dropped and a second is not, so a duplicated dispatch still finds a live
+# writer and is refused. Prints an integer, or `unknown` when there is no transcript to read.
+#
+# It lives here rather than in agent-team-dispatch-change.sh, beside human_override_paths,
+# because this file is where the guard keeps its transcript readers and where the size
+# discipline leaves room; dispatch_change_gate calls it exactly as it already calls that one.
+change_dispatches_in_flight() { # $1 slug -> integer | unknown
+  { [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; } || { printf 'unknown'; return 0; }
+  local n
+  n="$(
+    jq -rs --arg marker "$CHANGE_MARKER_PREFIX" --arg slug "$1" --arg self "$PROMPT" '
+      def declaration:
+        (.input.prompt // "")
+        | [ splits("\n") ]
+        | map(select(startswith($marker)))
+        | if length == 0 then ""
+          else (.[0] | ltrimstr($marker) | sub("^[ \t]+"; "") | sub("[ \t]+$"; "")) end;
+      [ .[] ] as $entries
+      | ( [ $entries[] | .. | objects
+            | select(.type? == "tool_result" and .tool_use_id != null)
+            | select( ([.content] | flatten
+                       | map(if type == "object" then (.text // "") else tostring end)
+                       | join(" "))
+                      | contains("Async agent launched successfully") | not )
+            | .tool_use_id ] ) as $resolved
+      | ( [ $entries[] | .. | objects
+            | select(.type? == "tool_use" and .name? == "Agent")
+            | { id: .id, prompt: (.input.prompt // ""), slug: declaration }
+            | select(.slug == $slug)
+            | select( .id as $i | ($resolved | index($i)) | not ) ] ) as $flight
+      | ( [ $flight | to_entries[] | select(.value.prompt == $self) | .key ] | last ) as $me
+      | ( if $me == null then $flight else ($flight | del(.[$me])) end ) | length
+    ' "$TRANSCRIPT" 2>/dev/null
+  )"
+  case "$n" in '' | *[!0-9]*) printf 'unknown' ;; *) printf '%s' "$n" ;; esac
+}
+
+# A slot nobody is behind is released here, by the next dispatch for the same change. The
+# slot string is READ from the slot file, never recomputed: `<role>#<n>` comes from a
+# transcript count that is not reproducible, and register_writer_release refuses a name it
+# does not find. Every outcome is a `note` — a routine release is not a control failing
+# open, and a DECLINED release is the evidence that answers the one timing question this
+# design leaves open.
+release_resolved_writer_slot() { # $1 project-root $2 slug
+  { [ -n "${SLOT_FILE:-}" ] && [ -f "$SLOT_FILE" ]; } || return 0
+  local held flight rc
+  held="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
+  [ -n "$held" ] || return 0
+  flight="$(change_dispatches_in_flight "$2")"
+  if [ "$flight" = unknown ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 kept: this session's transcript could not be read, so no dispatch could be shown finished"
+    return 0
+  fi
+  if [ "$flight" -gt 0 ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 kept: $flight dispatch(es) declaring it are still in flight"
+    return 0
+  fi
+  register_writer_release "$1" "$2" "$held" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 released: its dispatch has resolved and none is in flight"
+  else
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 could not be released (register exit $rc); the acquire decides on the TTL instead"
+  fi
+  return 0
+}
+
 TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
@@ -294,22 +381,6 @@ $REFUSED
 EOF
 fi
 
-# --- workspace isolation: the declaration claims the change, the hook builds it.
-# The unit of isolation is the CHANGE, so this guard no longer checks a path somebody
-# else was supposed to have created: it claims the change in the work register and then
-# creates or adopts its worktree. What replaced the old transcript collision scan is the
-# register's writer slot — two live writers in one change are decided by a file on disk,
-# never by re-reading conversation history, which is the 2026-08-04 defect where one
-# malformed declaration poisoned every later builder. The mechanics are one file over, in
-# agent-team-dispatch-change.sh, and they are not optional: without them no dispatch can
-# be checked for workspace isolation at all.
-if ! command -v dispatch_change_gate >/dev/null 2>&1; then
-  guard_log dispatch "$TYPE" block "dispatch change library missing"
-  printf 'agent-team dispatch guard: agent-team-dispatch-change.sh is missing beside this guard, so no dispatch can be checked for workspace isolation and no change can be claimed — the install is incomplete. Blocking rather than failing open; re-run: bash install.sh\n' >&2
-  exit 2
-fi
-dispatch_change_gate
-
 # T12: dispatch-count budget ratchet. Missing/invalid config fails to the
 # strict side (checkpoint 10). Count is ALL Agent dispatches so far
 # (resolved + unresolved) in the transcript; this incoming dispatch would be
@@ -349,5 +420,28 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ "$DISPATCH_CHECKPOINT" -gt 
     esac
   fi
 fi
+
+# --- workspace isolation: the declaration claims the change, the hook builds it.
+# The unit of isolation is the CHANGE, so this guard no longer checks a path somebody
+# else was supposed to have created: it claims the change in the work register and then
+# creates or adopts its worktree. What replaced the old transcript collision scan is the
+# register's writer slot — two live writers in one change are decided by a file on disk,
+# never by re-reading conversation history, which is the 2026-08-04 defect where one
+# malformed declaration poisoned every later builder. The mechanics are one file over, in
+# agent-team-dispatch-change.sh, and they are not optional: without them no dispatch can
+# be checked for workspace isolation at all.
+#
+# It runs LAST, after every read-only check above, because it is the only part of this
+# guard with SIDE EFFECTS: it claims the change, builds the worktree, and takes the
+# writing turn. Ordered before the budget ratchet, a checkpoint-blocked dispatch left a
+# claim, a tree and a phantom writer slot behind, and the honest retry was then refused by
+# a writer that had never run. The ratchet is read-only, so ordering it first costs
+# nothing; every check that can refuse this dispatch has already had its say.
+if ! command -v dispatch_change_gate >/dev/null 2>&1; then
+  guard_log dispatch "$TYPE" block "dispatch change library missing"
+  printf 'agent-team dispatch guard: agent-team-dispatch-change.sh is missing beside this guard, so no dispatch can be checked for workspace isolation and no change can be claimed — the install is incomplete. Blocking rather than failing open; re-run: bash install.sh\n' >&2
+  exit 2
+fi
+dispatch_change_gate
 
 exit 0

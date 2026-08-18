@@ -227,46 +227,66 @@ dispatch_change_gate() {
         "the timecard for $DECLARED_CHANGE could not be marked ready, though its worktree exists"
     fi
 
+    # A slot nobody is behind goes here, before the next one is named. The position is
+    # load-bearing: the reap at the top of this run has already swept the one obstacle a
+    # correctly named release can hit, the claim has succeeded so the change is
+    # established as this session's, and DISPLACED_SLOT is read AFTER the release, so a
+    # slot this guard released is never then reported as a TTL displacement — a release is
+    # routine, a displacement is a control that stopped enforcing. It runs for EVERY
+    # declaring dispatch, judge included: "nobody is working in this change" is a
+    # role-independent fact, and a judge clearing a finished builder's slot is correct.
+    WRITER_ROLE=0
+    for wrole in $WRITER_SLOT_ROLES; do
+      if [ "$TYPE" = "$wrole" ]; then
+        WRITER_ROLE=1
+        break
+      fi
+    done
+    release_resolved_writer_slot "$PROJECT_ROOT" "$DECLARED_CHANGE"
+
     # The writer slot is named per dispatch of a role in a change, so two builders
     # repairing one change hold distinct names and the second is refused while the first
     # is live. <n> is how many dispatches of this role for this slug the transcript
-    # already holds; this dispatch is not in it yet, so the first one is #0.
-    PRIOR_ROLE_DISPATCHES=0
-    if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-      PRIOR_ROLE_DISPATCHES="$(
-        jq -rs --arg role "$TYPE" --arg marker "$CHANGE_MARKER_PREFIX" --arg slug "$DECLARED_CHANGE" '
-          [ .[]
-            | ((.message.content // []) | if type == "array" then . else [] end)[]
-            | select(.type == "tool_use" and .name == "Agent")
-            | (((.input.subagent_type // "") | sub("^agent-workforce:"; "")) as $r
-               | ((.input.prompt // "")
-                  | [ splits("\n") ]
-                  | map(select(startswith($marker)))
-                  | if length == 0 then ""
-                    else (.[0] | ltrimstr($marker) | sub("^[ \t]+"; "") | sub("[ \t]+$"; "")) end) as $s
-               | select($r == $role and $s == $slug))
-          ] | length
-        ' "$TRANSCRIPT" 2>/dev/null
-      )"
-      case "$PRIOR_ROLE_DISPATCHES" in '' | *[!0-9]*) PRIOR_ROLE_DISPATCHES=0 ;; esac
-    fi
-    WRITER_SLOT="$TYPE#$PRIOR_ROLE_DISPATCHES"
-    # Read before acquiring: a grant that displaced somebody is a control that stopped
-    # enforcing, and it must be recorded as loudly as a refusal.
-    DISPLACED_SLOT=""
-    [ -n "$SLOT_FILE" ] && DISPLACED_SLOT="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
-    WRITER_OUT="$(register_writer_acquire "$PROJECT_ROOT" "$DECLARED_CHANGE" "$WRITER_SLOT" 2>&1)"
-    WRITER_RC=$?
-    if [ "$WRITER_RC" -ne 0 ]; then
-      guard_log dispatch "$TYPE" block "writer slot $WRITER_SLOT for $DECLARED_CHANGE refused"
-      printf 'agent-team dispatch guard: the change "%s" already has a live writer, and one change admits one writer at a time — the worktree is shared, the writing turn is not. The register said:\n%s\nTwo escapes. Wait for that writer to finish: its own agent frees the slot with\n  bash %s writer-release %s %s <the slot it holds>\nOr let it lapse: a writer that died without releasing the slot is displaced automatically once its heartbeat is older than writer_ttl_seconds in %s/agent-team-register.json, and the next dispatch is granted it. The worktree %s is already built either way — nothing needs creating.\n' \
-        "$DECLARED_CHANGE" "$WRITER_OUT" "$REGISTER_CLI" "$PROJECT_ROOT" "$DECLARED_CHANGE" \
-        "$GUARD_DIR" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
-      exit 2
-    fi
-    if [ -n "$DISPLACED_SLOT" ] && [ "$DISPLACED_SLOT" != "$WRITER_SLOT" ]; then
-      guard_log dispatch "$TYPE" fail-open \
-        "writer slot for $DECLARED_CHANGE displaced from $DISPLACED_SLOT after its TTL; $WRITER_SLOT holds it now"
+    # already holds; this dispatch is not in it yet, so the first one is #0. Only a role
+    # that holds the writing turn takes one.
+    if [ "$WRITER_ROLE" -eq 1 ]; then
+      PRIOR_ROLE_DISPATCHES=0
+      if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+        PRIOR_ROLE_DISPATCHES="$(
+          jq -rs --arg role "$TYPE" --arg marker "$CHANGE_MARKER_PREFIX" --arg slug "$DECLARED_CHANGE" '
+            [ .[]
+              | ((.message.content // []) | if type == "array" then . else [] end)[]
+              | select(.type == "tool_use" and .name == "Agent")
+              | (((.input.subagent_type // "") | sub("^agent-workforce:"; "")) as $r
+                 | ((.input.prompt // "")
+                    | [ splits("\n") ]
+                    | map(select(startswith($marker)))
+                    | if length == 0 then ""
+                      else (.[0] | ltrimstr($marker) | sub("^[ \t]+"; "") | sub("[ \t]+$"; "")) end) as $s
+                 | select($r == $role and $s == $slug))
+            ] | length
+          ' "$TRANSCRIPT" 2>/dev/null
+        )"
+        case "$PRIOR_ROLE_DISPATCHES" in '' | *[!0-9]*) PRIOR_ROLE_DISPATCHES=0 ;; esac
+      fi
+      WRITER_SLOT="$TYPE#$PRIOR_ROLE_DISPATCHES"
+      # Read before acquiring: a grant that displaced somebody is a control that stopped
+      # enforcing, and it must be recorded as loudly as a refusal.
+      DISPLACED_SLOT=""
+      [ -n "$SLOT_FILE" ] && DISPLACED_SLOT="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
+      WRITER_OUT="$(register_writer_acquire "$PROJECT_ROOT" "$DECLARED_CHANGE" "$WRITER_SLOT" 2>&1)"
+      WRITER_RC=$?
+      if [ "$WRITER_RC" -ne 0 ]; then
+        guard_log dispatch "$TYPE" block "writer slot $WRITER_SLOT for $DECLARED_CHANGE refused"
+        printf 'agent-team dispatch guard: the change "%s" already has a live writer, and one change admits one writer at a time — the worktree is shared, the writing turn is not. The register said:\n%s\nTwo escapes. Wait for that writer to finish: its own agent frees the slot with\n  bash %s writer-release %s %s <the slot it holds>\nIts slot is also released automatically by the next dispatch for this change once that agent'"'"'s own dispatch has finished, so a sequence of dispatches on one change needs nothing done by hand. Or let it lapse: a writer that died without releasing the slot is displaced automatically once its heartbeat is older than writer_ttl_seconds in %s/agent-team-register.json, and the next dispatch is granted it. The worktree %s is already built either way — nothing needs creating.\n' \
+          "$DECLARED_CHANGE" "$WRITER_OUT" "$REGISTER_CLI" "$PROJECT_ROOT" "$DECLARED_CHANGE" \
+          "$GUARD_DIR" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
+        exit 2
+      fi
+      if [ -n "$DISPLACED_SLOT" ] && [ "$DISPLACED_SLOT" != "$WRITER_SLOT" ]; then
+        guard_log dispatch "$TYPE" fail-open \
+          "writer slot for $DECLARED_CHANGE displaced from $DISPLACED_SLOT after its TTL; $WRITER_SLOT holds it now"
+      fi
     fi
   fi
 }

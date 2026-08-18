@@ -165,6 +165,14 @@ EIGHTEEN_PRIOR="$(write_resolved_dispatches_transcript 18)"
 expect_allow "$(agent_json_with_transcript scribe "$EIGHTEEN_PRIOR" "write the status note")" \
   "19th dispatch attempt without ack allows (next checkpoint is 20)"
 
+# --- the writing turn -------------------------------------------------------
+# When a change's writer slot is released, kept, or never taken, and what a dispatch the
+# checkpoint above refuses leaves behind. Sourced after both the change cases (whose
+# prior_dispatch_transcript these reuse) and the ratchet section above (whose
+# write_resolved_dispatches_transcript the checkpoint case reuses).
+# shellcheck source=tests/lib/dispatch-guard-writer-cases.sh
+. "$HERE/lib/dispatch-guard-writer-cases.sh"
+
 # --- lane routing -----------------------------------------------------------
 # shellcheck source=tests/lib/dispatch-guard-lane-cases.sh
 . "$HERE/lib/dispatch-guard-lane-cases.sh"
