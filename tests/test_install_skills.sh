@@ -6,6 +6,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$HERE/.."
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); }
+okl()  { PASS=$((PASS+1)); printf 'PASS [%s]\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
 export AGENT_TEAM_SKIP_INSTALL_TEST=1
@@ -157,6 +158,26 @@ if bash "$REPO/install.sh" --profile "$HOME/.claude-work" >/dev/null 2>&1 \
   ok
 else
   bad "explicit alternate-profile install/check did not succeed"
+fi
+
+# 12) the skill mirror describes the workspace mechanism that actually exists.
+# skills/project-policy/SKILL.md is what an agent resolves policy:workspace-isolation
+# against, so retired prose there hands a future agent the rule the guards refuse:
+# the unit of isolation is the change, its worktree is claimed in the work register and
+# built by the dispatch guard from a `CHANGE: <slug>` declaration, and the old
+# per-builder path declaration is refused by name.
+mirror_retired="$(grep -rniE 'create (its|your) own unique git worktree|one unique worktree per builder|WORKTREE:|own unique (git )?worktree|each builder (works|made|creates)' "$REPO/skills" 2>/dev/null)"
+mirror_missing=""
+for phrase in 'work register' 'CHANGE: <slug>' 'dispatch guard' 'derived'; do
+  grep -qF "$phrase" "$REPO/skills/project-policy/SKILL.md" \
+    || mirror_missing="$mirror_missing '$phrase'"
+done
+grep -qF 'work register' "$REPO/skills/agent-workforce/references/roles.md" \
+  || mirror_missing="$mirror_missing 'work register in roles.md'"
+if [ -z "$mirror_retired" ] && [ -z "$mirror_missing" ]; then
+  okl 'the skill mirror describes the change workspace, not the retired per-builder tree'
+else
+  bad "skill mirror carries the retired per-builder worktree rule (retired prose: ${mirror_retired:-none}) (missing mechanism words:${mirror_missing:- none})"
 fi
 
 echo "install-skills tests: PASS=$PASS FAIL=$FAIL"

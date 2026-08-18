@@ -22,8 +22,12 @@ plans, status notes) unless the human explicitly opted out. Stage only the task'
 `git add -A`, never baseline dirt — use the repository's commit convention, record the hash.
 Beyond the commit, integrate per the resolved `policy:closeout-integration` path (`commit`,
 `push`, `pr`, or `pr-merge` — resolved or asked once at intake); that answer is the only
-push/PR/merge authority, and it is never re-asked at the end. Integrate every builder worktree's
-branch this task created, then remove only clean, merged branches or worktrees this task created;
+push/PR/merge authority, and it is never re-asked at the end. State every change this session
+still holds in the work register and its disposition — integrated into a named ref, kept for a
+tracker reference, or abandoned. Integration is a dispatched command, never something the closeout
+hook performs: `agent-team-workspace.sh integrate <project> <slug> <ref> <session>` merges the
+change, removes its worktree, deletes its ref, and releases its timecard in one step. Take down
+only workspaces this task created;
 `bin/agent-workforce-closeout --repo <checkout> --base <base> --format text` is the
 read-only audit when in doubt. Never delete by age or touch anything the task did not create.
 

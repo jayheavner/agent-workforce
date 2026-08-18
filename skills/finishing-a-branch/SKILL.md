@@ -55,11 +55,13 @@ branch this work didn't create.
 
 ## Cleanup
 
-After integration is confirmed — not before: delete the merged local
-branch and remove the worktree that was created for this work (resolve
-`policy:workspace-isolation` for where work happens; under the standard
-policy each builder made its own, so remove each one this task created and
-leave every other worktree as found). Then report the end state — base
+After integration is confirmed — not before: take down the workspace that
+was created for this work (resolve `policy:workspace-isolation` for where
+work happens; under the standard policy the change owns the workspace, and
+`agent-team-workspace.sh integrate` already merged it, removed the worktree,
+deleted `refs/heads/change/<slug>` and released the timecard — so verify that
+end state rather than deleting anything by hand, and leave every other
+worktree as found). Then report the end state — base
 branch, landed commit, worktrees removed, and anything left uncommitted
 and why.
 
