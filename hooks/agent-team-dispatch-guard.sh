@@ -269,18 +269,22 @@ change_dispatches_in_flight() { # $1 slug -> integer | unknown
 # design leaves open.
 release_resolved_writer_slot() { # $1 project-root $2 slug
   { [ -n "${SLOT_FILE:-}" ] && [ -f "$SLOT_FILE" ]; } || return 0
-  local held flight rc
+  # CHANGE_FLIGHT is deliberately NOT local: the acquire that follows needs the very same
+  # count, to refuse displacing a writer whose own dispatch is still running, and a second
+  # parse of the transcript on a PreToolUse path buys nothing. It is set before the early
+  # return, so a slot file with no readable name still leaves the fact behind.
+  local held rc
+  CHANGE_FLIGHT="$(change_dispatches_in_flight "$2")"
   held="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
   [ -n "$held" ] || return 0
-  flight="$(change_dispatches_in_flight "$2")"
-  if [ "$flight" = unknown ]; then
+  if [ "$CHANGE_FLIGHT" = unknown ]; then
     guard_log dispatch "$TYPE" note \
       "writer slot $held for $2 kept: this session's transcript could not be read, so no dispatch could be shown finished"
     return 0
   fi
-  if [ "$flight" -gt 0 ]; then
+  if [ "$CHANGE_FLIGHT" -gt 0 ]; then
     guard_log dispatch "$TYPE" note \
-      "writer slot $held for $2 kept: $flight dispatch(es) declaring it are still in flight"
+      "writer slot $held for $2 kept: $CHANGE_FLIGHT dispatch(es) declaring it are still in flight"
     return 0
   fi
   register_writer_release "$1" "$2" "$held" >/dev/null 2>&1

@@ -198,3 +198,130 @@ run_case 'a sibling dispatch on one change is refused the writing turn' \
   case_sibling_dispatch_refused_the_writing_turn
 run_case "the same dispatch re-entering its own writer slot is granted" \
   case_same_dispatch_reenters_its_own_slot
+
+# --- a displacement is never quieter than a refusal --------------------------
+# A slot planted by hand: the holder's name, the dispatch that took it, a heartbeat as old
+# as the case needs. Session and `opened` come from the card, so the slot reads as this
+# claim's own incarnation and the DISPATCH is the only fact separating the two.
+plant_writer_slot() { # $1 card $2 slot $3 dispatch $4 age-seconds
+  local lock
+  lock="$(dirname "$1")/writers/$(basename "$1")"
+  mkdir -p "$(dirname "$lock")" || return 1
+  jq -c --arg slot "$2" --arg disp "$3" --argjson hb "$(( $(date +%s) - $4 ))" \
+    '{slot:$slot,session:.session,opened:.opened,dispatch:$disp,heartbeat:$hb}' "$1" > "$lock"
+}
+
+# How many fail-opens the guard recorded about ONE change: the log is the suite's one file,
+# so a case counts only the lines naming its own slug.
+fail_opens_naming() { # $1 slug -> count
+  [ -f "$GUARD_LOG" ] || { printf 0; return 0; }
+  jq -rs --arg s "$1" \
+    '[ .[] | select(.verdict == "fail-open" and (.detail | contains($s))) ] | length' \
+    "$GUARD_LOG" 2>/dev/null
+}
+
+# A card planted live with a lapsed slot beside it: where every displacement case starts.
+lapsed_slot_fixture() { # $1 fixture $2 slug $3 session $4 slot $5 dispatch -> sets CARD
+  dg_fixture "$1" || { printf 'fixture setup failed'; return 1; }
+  CARD="$(write_card "$2" "$3" "$$" "$(ps -p "$$" -o lstart=)" ready)" \
+    || { printf 'could not plant the fixture card: %s' "$CARD"; return 1; }
+  plant_writer_slot "$CARD" "$4" "$5" 5000 || { printf 'could not plant the slot'; return 1; }
+}
+
+# A DISPLACEMENT NOBODY RECORDED. The slot name is `<role>#<n>` counted from a transcript,
+# so the likeliest collision is two dispatches computing the SAME name: with no transcript
+# to count from this dispatch computes `builder#0` and the lapsed holder is `builder#0` too.
+# The record was keyed on the name, so it stayed silent exactly there — while the dispatch
+# digest, which exists because the name cannot tell two dispatches apart, said plainly that
+# the slot had changed hands.
+case_same_name_displacement_recorded() {
+  local line
+  lapsed_slot_fixture same-name-displace collided sess-collide 'builder#0' 0123456789abcdef || return 1
+  run "$(dg_payload builder "$(change_prompt collided)" sess-collide "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the lapsed slot displaced and the dispatch allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.slot == "builder#0" and .dispatch != "0123456789abcdef"' "$(slot_path collided)" >/dev/null 2>&1 \
+    || { printf 'expected this dispatch recorded as the holder; observed %s' "$(head -c 200 "$(slot_path collided)" 2>/dev/null)"; return 1; }
+  line="$(last_fail_open)"
+  case "$line" in *0123456789abcdef*) ;; *) printf 'expected a fail-open naming the displaced dispatch; observed %s' "${line:-none}"; return 1 ;; esac
+  case "$line" in *collided*) return 0 ;; *) printf 'expected the fail-open to name the change; observed %s' "$line"; return 1 ;; esac
+}
+
+# The boundary that record must not cross: one dispatch whose guard runs twice is the same
+# writer re-entering its own slot — same name, same digest, nothing taken from anybody, and
+# a fail-open there is a false alarm in a log whose value is that a fail-open means one.
+case_reentry_records_no_fail_open() {
+  local payload after
+  dg_fixture reentry-quiet || { printf 'fixture setup failed'; return 1; }
+  payload="$(dg_payload builder "$(change_prompt quiet-reentry)" sess-quiet "$PROJ" "")"
+  run "$payload"
+  [ "$RC" -eq 0 ] || { printf 'expected the first run allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  run "$payload"
+  [ "$RC" -eq 0 ] || { printf 'expected the identical payload allowed as re-entry; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  after="$(fail_opens_naming quiet-reentry)"
+  [ "$after" = "0" ] || { printf 'expected no fail-open for a re-entry; observed %s: %s' "$after" \
+    "$(jq -rc 'select(.verdict == "fail-open")' "$GUARD_LOG" | tail -n1)"; return 1; }
+  return 0
+}
+
+# THE FIFTEEN-MINUTE WRITER. Nothing refreshes a heartbeat during work, so a slot lapses
+# while its holder is honestly building, and the TTL then handed the writing turn to a
+# second dispatch on the same change. The gate holds the fact that settles it — the holder's
+# dispatch is unresolved in this session's transcript — and a timeout is for a writer nobody
+# is behind, never for a live one.
+case_in_flight_writer_not_displaced_by_ttl() {
+  local tr
+  lapsed_slot_fixture live-writer-ttl grinding sess-grind 'builder#1' aaaabbbbccccdddd || return 1
+  tr="$FX/transcript.jsonl"
+  prior_dispatch_transcript "$tr" builder grinding || return 1
+  run "$(dg_payload builder "$(change_prompt grinding)" sess-grind "$PROJ" "$tr")"
+  [ "$RC" -eq 2 ] || { printf 'expected the second writer refused while the holder is in flight; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.dispatch == "aaaabbbbccccdddd"' "$(slot_path grinding)" >/dev/null 2>&1 \
+    || { printf 'expected the in-flight holder still recorded; observed %s' "$(head -c 200 "$(slot_path grinding)" 2>/dev/null)"; return 1; }
+  case "$OUT" in *'in flight'*) return 0 ;; *) printf 'expected the refusal to say the holder is still in flight; observed %s' "$OUT"; return 1 ;; esac
+}
+
+# And the crash path that must stay open: the holder's dispatch has RESOLVED, so nobody is
+# behind the lapsed slot and the change must not be wedged by it. This is the case that
+# fails if "never displace a live writer" is read as "never displace".
+case_resolved_stale_slot_still_displaceable() {
+  local tr gone
+  lapsed_slot_fixture resolved-stale crashed sess-crash 'builder#9' eeeeffff00001111 || return 1
+  tr="$FX/transcript.jsonl"
+  resolved_dispatch_transcript "$tr" builder crashed || return 1
+  run "$(dg_payload builder "$(change_prompt crashed)" sess-crash "$PROJ" "$tr")"
+  [ "$RC" -eq 0 ] || { printf 'expected the lapsed slot recovered once its dispatch resolved; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  jq -e '.dispatch != "eeeeffff00001111"' "$(slot_path crashed)" >/dev/null 2>&1 \
+    || { printf 'expected the new dispatch holding the slot; observed %s' "$(head -c 200 "$(slot_path crashed)" 2>/dev/null)"; return 1; }
+  gone="$(jq -rs '[ .[] | select(.detail | contains("builder#9")) ] | length' "$GUARD_LOG" 2>/dev/null)"
+  [ "${gone:-0}" -ge 1 ] || { printf 'expected the log to record that builder#9 stopped holding the slot'; return 1; }
+  return 0
+}
+
+# Where the record has to land. A message on stderr reaches one agent and is gone; the
+# fail-open has to accumulate somewhere an operator can count it. The directory asserted
+# against is the fixture's own, inside this run's temporary tree — never the machine's.
+case_displacement_fail_open_reaches_the_log() {
+  lapsed_slot_fixture logged-displacement log-sink sess-logged 'builder#0' 2222333344445555 || return 1
+  case "$AGENT_TEAM_TELEMETRY_DIR" in "$WORK"/*) ;;
+    *) printf 'the fixture telemetry directory %s is not inside this run own tree %s' "$AGENT_TEAM_TELEMETRY_DIR" "$WORK"; return 1 ;; esac
+  [ "$GUARD_LOG" = "$AGENT_TEAM_TELEMETRY_DIR/guard-blocks.jsonl" ] \
+    || { printf 'expected the guard log at %s; observed %s' "$AGENT_TEAM_TELEMETRY_DIR/guard-blocks.jsonl" "$GUARD_LOG"; return 1; }
+  run "$(dg_payload builder "$(change_prompt log-sink)" sess-logged "$PROJ" "")"
+  [ "$RC" -eq 0 ] || { printf 'expected the lapsed slot displaced and the dispatch allowed; observed exit=%s out=%s' "$RC" "$OUT"; return 1; }
+  [ "$(fail_opens_naming log-sink)" -ge 1 ] \
+    || { printf 'expected a fail-open naming this change in %s; observed none' "$GUARD_LOG"; return 1; }
+  grep -q 2222333344445555 "$AGENT_TEAM_TELEMETRY_DIR/guard-blocks.jsonl" \
+    || { printf 'expected the displaced dispatch named in the log file itself'; return 1; }
+  return 0
+}
+
+run_case 'a displacement of a same-named slot from another dispatch is recorded as a fail-open' \
+  case_same_name_displacement_recorded
+run_case 'the same dispatch re-entering its own writer slot records no fail-open' \
+  case_reentry_records_no_fail_open
+run_case 'a writer slot held by an in-flight dispatch is not displaced by the TTL' \
+  case_in_flight_writer_not_displaced_by_ttl
+run_case 'a stale slot whose dispatch resolved is still displaceable' \
+  case_resolved_stale_slot_still_displaceable
+run_case 'the displacement fail-open is written to the guard log' \
+  case_displacement_fail_open_reaches_the_log

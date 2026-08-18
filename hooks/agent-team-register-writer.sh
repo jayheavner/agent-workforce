@@ -4,27 +4,22 @@
 # rests on it.
 #
 # Why this is its own file. The register's other two halves decide things by reading
-# state (whose claim is this, is that process still alive). Everything here decides a
-# fact that two processes are actively contending for — may I remove this timecard,
-# may I write in this change — and a contended fact can never be settled by a read
-# followed by a write. Every decision in this file is therefore made by an operation
-# the operating system performs indivisibly: an exclusive create (`>` under
-# `noclobber`, which Bash opens with O_CREAT|O_EXCL) or a hard link that pins bytes
-# so they cannot change under a judgment.
-#
-# Sourcing defines functions only; this file has no side effects and no CLI. It is
-# sourced by agent-team-register.sh alongside agent-team-register-lib.sh, and it uses
-# that library's liveness, rewrite, and card-validity helpers.
-#
-# Exit codes shared with the register: 1 no such card, 3 held, 5 register unusable.
+# state (whose claim is this, is that process alive). Everything here decides a fact two
+# processes actively contend for — may I remove this timecard, may I write in this
+# change — which a read followed by a write can never settle. So every decision here is
+# one indivisible operation: an exclusive create (`>` under `noclobber`, which Bash opens
+# with O_CREAT|O_EXCL) or a hard link pinning bytes so they cannot change under a
+# judgment. Sourcing defines functions only — no side effects, no CLI; the register sources
+# it beside agent-team-register-lib.sh and uses that library's liveness, rewrite and
+# card-validity helpers. Exit codes are the register's: 1 no such card, 3 held, 5 unusable.
 
-# The age reported for a slot with no usable heartbeat at all: older than any TTL a
-# config could name, because a slot nobody is refreshing is exactly what a TTL is
-# for. Kept as a constant so no comparison has to special-case an empty string.
+# The age reported for a slot with no usable heartbeat at all: older than any TTL a config
+# could name, since a slot nobody refreshes is what a TTL is for. A constant, so no
+# comparison special-cases an empty string.
 REGISTER_AGE_INFINITE=2147483647
 
-# Sixteen hex characters of a file's content SHA-256: the identity of the exact
-# bytes a caller judged, so a removal can be refused when those bytes have changed.
+# Sixteen hex characters of a file's content SHA-256: the identity of the exact bytes a
+# caller judged, so a removal is refused once those bytes have changed.
 register_digest_file() { # $1 path
   local h=""
   if command -v shasum >/dev/null 2>&1; then
@@ -36,9 +31,9 @@ register_digest_file() { # $1 path
   printf '%s' "${h:0:16}"
 }
 
-# The right to remove a specific state of a specific path, won the same way a claim
-# is won: an atomic exclusive create. The token names the taker's process so an
-# abandoned one is never mistaken for a holder.
+# The right to remove a specific state of a specific path, won the same way a claim is won:
+# an atomic exclusive create. The token names the taker's process, so an abandoned one is
+# never mistaken for a holder.
 register_take_token_claim() { # $1 token
   ( set -o noclobber
     printf '{"pid":%s,"pid_start":"%s"}\n' "$$" \
@@ -53,27 +48,25 @@ register_take_token_live() { # $1 token
   register_alive "$pid" "$start"
 }
 
-# Remove a file EXACTLY ONCE, on behalf of a judgment the caller has already made
-# about the bytes whose digest it passes. Concurrency is the whole point: N
-# processes can all judge one dead timecard dead in the same instant, and if each of
-# them then unlinks the path, the later unlinks land on the FRESH card the first one
-# created and every one of them believes it won. So the right to remove THOSE BYTES
-# is itself won by an exclusive create of a token named after them: exactly one
-# process can hold it, the losers refuse and re-read the path, and the holder
-# re-checks the bytes before unlinking, so a path that changed hands meanwhile is
-# never touched.
+# Remove a file EXACTLY ONCE, on behalf of a judgment the caller has already made about
+# the bytes whose digest it passes. Concurrency is the whole point: N processes can all
+# judge one dead timecard dead in the same instant, and if each then unlinks the path, the
+# later unlinks land on the FRESH card the first one created and every one of them
+# believes it won. So the right to remove THOSE BYTES is itself won by an exclusive create
+# of a token named after them: exactly one process holds it, the losers refuse and re-read
+# the path, and the holder re-checks the bytes before unlinking, so a path that changed
+# hands meanwhile is never touched.
 #
 # A LOST create is a refusal, full stop, even when the token's taker is gone. The
-# obvious-looking recovery — judge the taker dead, remove the token, create a fresh
-# one — is the very check-then-act this function exists to abolish, and it hands the
-# same digest to two takers: both fail the create, both judge the taker dead, the
-# first removes and re-creates, the second's removal then takes the FIRST's fresh
-# token and it re-creates in turn, so two processes hold "the" exclusive take and
-# the later unlink lands on whatever the winner has already put at the path. So an
-# abandoned token is left to register_sweep_debris (in agent-team-register-lib.sh,
-# because a sweep is authorised by liveness rather than by contention), which every
-# reap runs last: the token goes as debris and the path is taken on the next pass,
-# one cycle later.
+# obvious-looking recovery — judge the taker dead, remove the token, create a fresh one —
+# is the very check-then-act this function abolishes, and it hands one digest to two
+# takers: both fail the create, both judge the taker dead, the first removes and
+# re-creates, the second's removal takes the FIRST's fresh token and it re-creates in
+# turn, so two processes hold "the" exclusive take and the later unlink lands on whatever
+# the winner has put at the path. An abandoned token is therefore left to
+# register_sweep_debris (in agent-team-register-lib.sh: a sweep is authorised by liveness,
+# not by contention), which every reap runs last — the token goes as debris and the path
+# is taken one cycle later.
 register_take_file() { # $1 path $2 digest-of-the-judged-bytes
   local path="$1" want="${2:-}" token
   [ -n "$want" ] || return 1
@@ -89,11 +82,10 @@ register_take_file() { # $1 path $2 digest-of-the-judged-bytes
   return 1
 }
 
-# Take a dead timecard away, and refuse to touch a live one. The card is first hard
-# linked to a private name: every rewrite creates a NEW file and moves it over the
-# card, so the linked bytes can no longer change under us, and the verdict, the
-# digest, and the removal therefore all describe one state of one card instead of
-# three separate reads a racer can slip between.
+# Take a dead timecard away, and refuse to touch a live one. The card is first hard linked
+# to a private name: every rewrite creates a NEW file and moves it over the card, so the
+# linked bytes cannot change under us and the verdict, the digest and the removal describe
+# one state of one card rather than three reads a racer can slip between.
 register_take_dead_card() { # $1 card
   local card="$1" pin="$1.pin.$$" rc=1
   rm -f "$pin"
@@ -107,18 +99,16 @@ register_take_dead_card() { # $1 card
   return "$rc"
 }
 
-# The writer slot's own file. It lives in a SUBDIRECTORY of the project's register
-# directory so that no card glob can see it and no legal slug can ever collide with
-# it: `writers/<slug>.json` beside `<slug>.json`.
+# The writer slot's own file, in a SUBDIRECTORY of the project's register directory so no
+# card glob can see it and no legal slug can collide with it: `writers/<slug>.json`.
 register_writer_lock_path() { # $1 card
   printf '%s/writers/%s' "$(dirname "$1")" "$(basename "$1")"
 }
 
-# How old the evidence for a held slot is. The CARD's writer heartbeat is what a
-# heartbeat call refreshes, so it is preferred whenever it names the same slot; the slot
-# file's own heartbeat is the fallback, which is what makes a slot created milliseconds
-# ago read as fresh before the card mirror has landed. No usable heartbeat reads as
-# infinitely old.
+# How old the evidence for a held slot is. The CARD's writer heartbeat is what a heartbeat
+# call refreshes, so it is preferred whenever it names the same slot; the slot file's own
+# heartbeat is the fallback, which is what makes a slot created milliseconds ago read as
+# fresh before the card mirror has landed. No usable heartbeat reads as infinitely old.
 register_writer_age() { # $1 card $2 slot-file $3 holder-slot $4 now
   local hb
   hb="$(jq -r --arg s "$3" '
@@ -129,17 +119,17 @@ register_writer_age() { # $1 card $2 slot-file $3 holder-slot $4 now
   printf '%s' "$(($4 - hb))"
 }
 
-# The card's mirror of the slot: what the operator view and the staleness heartbeat
-# read. The slot file decides occupancy; this only records it.
+# The card's mirror of the slot: what the operator view and the staleness heartbeat read.
+# The slot file decides occupancy; this only records it.
 register_writer_record() { # $1 card $2 slot $3 now
   register_write_merged "$1" \
     '.writer = {slot:$slot, session:.session, heartbeat:$hb} | .heartbeat = $hb' \
     --arg slot "$2" --argjson hb "$3"
 }
 
-# Displacing a stale slot is a removal, so it goes through the same take: pin the
-# bytes, re-judge THOSE bytes, and only then take the path away. Never unlink on a
-# judgment formed before a jq call that another process could have written through.
+# Displacing a stale slot is a removal, so it goes through the same take: pin the bytes,
+# re-judge THOSE bytes, and only then take the path away. Never unlink on a judgment formed
+# before a jq call another process could have written through.
 register_writer_displace() { # $1 card $2 slot-file $3 ttl $4 now
   local pin="$2.stale.$$" cur age rc=1
   rm -f "$pin"
@@ -163,27 +153,31 @@ register_writer_displace() { # $1 card $2 slot-file $3 ttl $4 now
 #
 # The slot also carries its own liveness — a heartbeat and a TTL — because a builder
 # subagent that dies mid-task does not kill the session process the card records, so pid
-# liveness alone could never free the slot. Granted when the slot file does not exist,
-# when it is already this dispatch's, when the holder's heartbeat is older than
-# writer_ttl_seconds, or when the card's session process is dead. A TTL displacement is
-# a fail-open, recorded as one by the caller.
-register_writer_acquire() { # $1 project-dir $2 slug $3 slot [$4 dispatch id]
-  local card lock now ttl cur age json
+# liveness alone could never free the slot. Granted when the slot file does not exist, when
+# it is already this dispatch's, or when the holder has lapsed (heartbeat older than
+# writer_ttl_seconds, or session process dead) AND no dispatch of this change is known to
+# be in flight — the fifth argument, which is what keeps a timeout meant for a crashed
+# writer off a live one. A displacement is a fail-open, recorded as one by the caller.
+register_writer_acquire() { # $1 project-dir $2 slug $3 slot [$4 dispatch id] [$5 in flight]
+  local card lock now ttl cur age json flight
   card="$(register_resolve_card "$1" "$2")" || return $?
   lock="$(register_writer_lock_path "$card")"
   register_ensure_dir "$(dirname "$lock")" || return 5
   now="$(date +%s)"
   ttl="$(register_config_int writer_ttl_seconds 900)"
-  # The slot records whose it is: the session, and that session's `opened` stamp — the
-  # one card field that changes on every incarnation of it. A session keeps its id
-  # across a resume, so the id alone cannot tell a pre-resume claim's slot from the one
-  # the resumed session's writer just took; the reap authorises its take against both.
-  # The optional fourth argument is the one fact that separates two dispatches of the
-  # same role, in the same session, on the same claim incarnation: an identifier of the
-  # DISPATCH that took the slot. Without it both compute the slot name `<role>#0` —
-  # what happens whenever the transcript cannot be read — and the re-entry branch below
-  # granted both the writing turn. Optional so a caller that cannot identify its
-  # dispatch keeps working; what it loses is only the ability to prove re-entry.
+  # A timeout displaces a writer NOBODY is behind. The caller may know that somebody is:
+  # the dispatch guard counts the dispatches of this change its transcript still shows
+  # unresolved, and passes that count here. Nothing refreshes a heartbeat during work, so a
+  # lapsed heartbeat is NOT evidence of a dead writer — an honest build past the TTL reads
+  # exactly like a crash, and the slot then guarded only the first quarter of an hour. An
+  # absent or non-numeric count is 0: a caller holding no such evidence keeps the plain TTL
+  # behaviour rather than a change nobody can recover.
+  flight="${5:-0}"
+  case "$flight" in '' | *[!0-9]*) flight=0 ;; esac
+  # The slot records whose it is: the session, the card's `opened` stamp (the one field that
+  # changes on every incarnation of the claim) and, from the optional fourth argument, an
+  # identifier of the DISPATCH that took it — the only fact separating two dispatches of one
+  # role in one session on one claim incarnation, as register_writer_slot_is_ours explains.
   json="$(jq -cn --arg slot "$3" --argjson hb "$now" --arg disp "${4:-}" \
     --arg sess "$(jq -r '.session // empty' "$card" 2>/dev/null)" \
     --arg opened "$(jq -r '.opened // empty' "$card" 2>/dev/null)" \
@@ -206,6 +200,11 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot [$4 dispatch id]
     return
   fi
   age="$(register_writer_age "$card" "$lock" "$cur" "$now")"
+  if [ "$age" -gt "$ttl" ] && [ "$flight" -gt 0 ] && register_card_live "$card"; then
+    printf 'register: the writer slot for %s is held by %s, whose dispatch is still in flight (%ss since its last heartbeat, TTL %ss), so the timeout does not displace it\n' \
+      "$2" "${cur:-an unnamed writer}" "$age" "$ttl" >&2
+    return 3
+  fi
   if [ "$age" -le "$ttl" ] && register_card_live "$card"; then
     printf 'register: the writer slot for %s is held by %s (%ss old, TTL %ss)\n' \
       "$2" "${cur:-an unnamed writer}" "$age" "$ttl" >&2
@@ -222,14 +221,14 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot [$4 dispatch id]
 }
 
 # Does the slot file record THIS incarnation of the claim — the session and the card's
-# current `opened` stamp — AND, when either side names one, this same dispatch? A
-# matching slot NAME is not identity: the name is `<role>#<n>` counted from a
-# transcript, so two dispatches whose transcript cannot be read both compute
-# `builder#0`, and session plus `opened` do not separate them either, since two
-# dispatches of one session against one claim incarnation share both. The dispatch
-# identifier is the third fact and the only one that differs, so a slot recording one
-# is never re-entered by a caller naming a different one or naming none: that is a
-# sibling asking for a turn somebody else holds. Unreadable either side is a NO.
+# current `opened` stamp — AND, when either side names one, this same dispatch? A matching
+# slot NAME is not identity: the name is `<role>#<n>` counted from a transcript, so two
+# dispatches whose transcript cannot be read both compute `builder#0`, and session plus
+# `opened` do not separate them either, since two dispatches of one session against one
+# claim incarnation share both. The dispatch identifier is the third fact and the only one
+# that differs, so a slot recording one is never re-entered by a caller naming a different
+# one or naming none: that is a sibling asking for a turn somebody else holds. Unreadable
+# either side is a NO.
 register_writer_slot_is_ours() { # $1 card $2 slot-file [$3 dispatch id]
   local want got disp
   want="$(jq -r '[(.session // ""), (.opened // "")] | @tsv' "$1" 2>/dev/null)"
@@ -239,20 +238,19 @@ register_writer_slot_is_ours() { # $1 card $2 slot-file [$3 dispatch id]
   [ -z "$disp" ] || [ "$disp" = "${3:-}" ]
 }
 
-# The one operation that decides occupancy. The noclobber is set HERE, in this
-# subshell, and the redirection is `>`, which Bash opens with O_CREAT|O_EXCL.
+# The one operation that decides occupancy. The noclobber is set HERE, in this subshell,
+# and the redirection is `>`, which Bash opens with O_CREAT|O_EXCL.
 register_writer_slot_create() { # $1 slot-file $2 json
   ( set -o noclobber; printf '%s\n' "$2" > "$1" ) 2>/dev/null
 }
 
 # Take the slot file away only when the values it RECORDS are the ones the caller claims
 # authority from: the holding slot's own name on the release path, the reaped card's
-# session AND `opened` stamp on the reap path. The bytes are pinned first, the fields are
-# read from the pinned bytes, and the removal is the same digest-checked take every other
-# removal goes through — so a slot file another process replaced between the read and the
-# removal is left alone rather than destroyed. A second field/value pair is optional and,
-# when given, must ALSO match; an empty wanted value never matches, since `// empty` would
-# equate "the field is absent" with "the caller named nothing".
+# session AND `opened` stamp on the reap path. The bytes are pinned first, the fields read
+# from the pinned bytes, and the removal is the same digest-checked take as every other —
+# so a slot file another process replaced between the read and the removal is left alone.
+# A second field/value pair is optional and, when given, must ALSO match; an empty wanted
+# value never matches, since `// empty` equates "field absent" with "caller named nothing".
 # Exit 0 when the path was taken, 1 when it was not this caller's to take.
 register_writer_take_matching() { # $1 slot-file $2 field $3 value [$4 field $5 value]
   local pin="$1.pin.$$" rc=1 matched=1
@@ -276,10 +274,10 @@ register_writer_take_matching() { # $1 slot-file $2 field $3 value [$4 field $5 
 # Releasing the slot is a REMOVAL of the one file that decides occupancy, so it is
 # authorised like every other removal: the caller names the slot it holds, and only that
 # slot's own file may be taken. A release that took no slot name and unlinked the path
-# unconditionally let ANY process — a foreign session, or another subagent of the same
-# session — drop the holder's exclusion, after which a third acquirer was granted a slot
-# two processes believed they held. The card's mirror is nulled only after a successful
-# take, and only while it still names this slot.
+# unconditionally let ANY process — a foreign session, or another subagent of the same one
+# — drop the holder's exclusion, after which a third acquirer was granted a slot two
+# processes believed they held. The card's mirror is nulled only after a successful take,
+# and only while it still names this slot.
 # Exit 2 when no slot is named, 3 when the slot named is not the holder.
 register_writer_release() { # $1 project-dir $2 slug $3 slot
   local card lock cur slot="${3:-}"
@@ -308,8 +306,8 @@ register_writer_release() { # $1 project-dir $2 slug $3 slot
   register_writer_unrecord "$card" "$slot"
 }
 
-# The card's mirror stops naming a slot that no longer holds one. Conditional on the
-# slot: the mirror is only ever this slot's to clear.
+# The card's mirror stops naming a slot that no longer holds one. Conditional on the slot:
+# the mirror is only ever this slot's to clear.
 register_writer_unrecord() { # $1 card $2 slot
   register_write_merged "$1" \
     'if (.writer | type) == "object" and .writer.slot == $slot then .writer = null else . end' \
@@ -317,12 +315,11 @@ register_writer_unrecord() { # $1 card $2 slot
   return 0
 }
 
-# Tearing the whole change down, which is a different act from a slot holder
-# stepping out of it: workspace_integrate has already established that the claim is
-# the caller's own and is removing the claim itself, so the slot goes with it
-# whoever holds it — there is no change left for a holder to write in. Unconditional
-# BY DESIGN; the slot-scoped path is register_writer_release, which refuses a
-# foreign slot.
+# Tearing the whole change down, a different act from a slot holder stepping out of it:
+# workspace_integrate has already established that the claim is the caller's own and is
+# removing the claim itself, so the slot goes with it whoever holds it — there is no
+# change left for a holder to write in. Unconditional BY DESIGN; the slot-scoped path is
+# register_writer_release, which refuses a foreign slot.
 register_writer_teardown() { # $1 project-dir $2 slug
   local card
   card="$(register_resolve_card "$1" "$2")" || return $?

@@ -292,21 +292,35 @@ dispatch_change_gate() {
       DISPATCH_ID="$(printf '%s' "$PROMPT" | { shasum -a 256 2>/dev/null || sha256sum 2>/dev/null; } | awk '{print $1}')"
       DISPATCH_ID="${DISPATCH_ID:0:16}"
       # Read before acquiring: a grant that displaced somebody is a control that stopped
-      # enforcing, and it must be recorded as loudly as a refusal.
+      # enforcing, and it must be recorded as loudly as a refusal. Existence of the FILE is
+      # what makes it a displacement — a slot whose JSON cannot be read is still a slot
+      # somebody was behind — and BOTH the name and the dispatch digest are kept, because
+      # the name alone cannot tell two dispatches apart: that is why the digest exists, and
+      # keying the record on the name alone made a displacement silent in exactly the case
+      # the digest was added for. CHANGE_FLIGHT, already counted by the release above, goes
+      # to the acquire so it refuses to displace a writer whose dispatch is still running.
+      HELD_BEFORE=0
       DISPLACED_SLOT=""
-      [ -n "$SLOT_FILE" ] && DISPLACED_SLOT="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
-      WRITER_OUT="$(register_writer_acquire "$PROJECT_ROOT" "$DECLARED_CHANGE" "$WRITER_SLOT" "$DISPATCH_ID" 2>&1)"
+      DISPLACED_DISPATCH=""
+      if [ -n "$SLOT_FILE" ] && [ -f "$SLOT_FILE" ]; then
+        HELD_BEFORE=1
+        DISPLACED_SLOT="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
+        DISPLACED_DISPATCH="$(jq -r '.dispatch // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
+      fi
+      WRITER_OUT="$(register_writer_acquire "$PROJECT_ROOT" "$DECLARED_CHANGE" "$WRITER_SLOT" \
+        "$DISPATCH_ID" "${CHANGE_FLIGHT:-unknown}" 2>&1)"
       WRITER_RC=$?
       if [ "$WRITER_RC" -ne 0 ]; then
         guard_log dispatch "$TYPE" block "writer slot $WRITER_SLOT for $DECLARED_CHANGE refused"
-        printf 'agent-team dispatch guard: the change "%s" already has a live writer, and one change admits one writer at a time — the worktree is shared, the writing turn is not. The register said:\n%s\nTwo escapes. Wait for that writer to finish: its own agent frees the slot with\n  bash %s writer-release %s %s <the slot it holds>\nIts slot is also released automatically by the next dispatch for this change once that agent'"'"'s own dispatch has finished, so a sequence of dispatches on one change needs nothing done by hand. Or let it lapse: a writer that died without releasing the slot is displaced automatically once its heartbeat is older than writer_ttl_seconds in %s/agent-team-register.json, and the next dispatch is granted it. The worktree %s is already built either way — nothing needs creating.\n' \
+        printf 'agent-team dispatch guard: the change "%s" already has a live writer, and one change admits one writer at a time — the worktree is shared, the writing turn is not. The register said:\n%s\nTwo escapes. Wait for that writer to finish: its own agent frees the slot with\n  bash %s writer-release %s %s <the slot it holds>\nIts slot is also released automatically by the next dispatch for this change once that agent'"'"'s own dispatch has finished, so a sequence of dispatches on one change needs nothing done by hand. Or let it lapse: a writer that died without releasing the slot is displaced automatically once its heartbeat is older than writer_ttl_seconds in %s/agent-team-register.json AND no dispatch of this change is still in flight — a lapsed heartbeat alone never displaces a writer whose dispatch is still running, because nothing refreshes a heartbeat during work. The worktree %s is already built either way — nothing needs creating.\n' \
           "$DECLARED_CHANGE" "$WRITER_OUT" "$REGISTER_CLI" "$PROJECT_ROOT" "$DECLARED_CHANGE" \
           "$GUARD_DIR" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
         exit 2
       fi
-      if [ -n "$DISPLACED_SLOT" ] && [ "$DISPLACED_SLOT" != "$WRITER_SLOT" ]; then
+      if [ "$HELD_BEFORE" -eq 1 ] && { [ "$DISPLACED_SLOT" != "$WRITER_SLOT" ] \
+        || [ "$DISPLACED_DISPATCH" != "$DISPATCH_ID" ]; }; then
         guard_log dispatch "$TYPE" fail-open \
-          "writer slot for $DECLARED_CHANGE displaced from $DISPLACED_SLOT after its TTL; $WRITER_SLOT holds it now"
+          "writer slot for $DECLARED_CHANGE displaced from ${DISPLACED_SLOT:-an unnamed slot} (dispatch ${DISPLACED_DISPATCH:-none recorded}) because its slot had lapsed — heartbeat past writer_ttl_seconds, or its session gone — with no dispatch of this change in flight; $WRITER_SLOT (dispatch ${DISPATCH_ID:-none recorded}) holds it now"
       fi
     fi
   fi
