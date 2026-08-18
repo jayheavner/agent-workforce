@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-worktree-rules.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent-team-register-writer.sh agent-team-workspace.sh agent-team-dispatch-change.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-worktree-rules.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent-team-register-writer.sh agent-team-workspace.sh agent-team-dispatch-change.sh agent_team_closeout.py agent_team_closeout_paths.py agent_team_closeout_ledger.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
 # --- version-pinned hook builds (2026-08-04) ------------------------------------
 # Every hook is wired to one fixed path, and the harness re-reads that file on
 # every tool call — so installing a repair used to rewrite the rules under every
@@ -218,6 +218,12 @@ bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed 
 [ -f "$REPO/hooks/agent_team_closeout.py" ] || fail "hooks/agent_team_closeout.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/agent_team_closeout.py" || fail "closeout hook failed Python syntax validation"
+[ -f "$REPO/hooks/agent_team_closeout_paths.py" ] || fail "hooks/agent_team_closeout_paths.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent_team_closeout_paths.py" || fail "closeout path reader failed Python syntax validation"
+[ -f "$REPO/hooks/agent_team_closeout_ledger.py" ] || fail "hooks/agent_team_closeout_ledger.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent_team_closeout_ledger.py" || fail "closeout ledger failed Python syntax validation"
 [ -f "$REPO/hooks/debug_run_archiver.py" ] || fail "hooks/debug_run_archiver.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/debug_run_archiver.py" || fail "debug-run archiver failed Python syntax validation"
@@ -554,6 +560,8 @@ PREEXISTING_RGUARD=0
 PREEXISTING_LINT=0
 PREEXISTING_DEFAULTS=0
 PREEXISTING_CLOSEOUT=0
+PREEXISTING_CLOSEOUTPATHS=0
+PREEXISTING_CLOSEOUTLEDGER=0
 PREEXISTING_COSTREPORT=0
 PREEXISTING_BUDGETS=0
 PREEXISTING_LANES=0
@@ -583,6 +591,8 @@ PREEXISTING_DISPATCHCHANGE=0
 [ -f "$HOOKS_DIR/lint_acceptance_checks.py" ] && { cp "$HOOKS_DIR/lint_acceptance_checks.py" "$BACKUP/"; PREEXISTING_LINT=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
+[ -f "$HOOKS_DIR/agent_team_closeout_paths.py" ] && { cp "$HOOKS_DIR/agent_team_closeout_paths.py" "$BACKUP/"; PREEXISTING_CLOSEOUTPATHS=1; }
+[ -f "$HOOKS_DIR/agent_team_closeout_ledger.py" ] && { cp "$HOOKS_DIR/agent_team_closeout_ledger.py" "$BACKUP/"; PREEXISTING_CLOSEOUTLEDGER=1; }
 [ -f "$HOOKS_DIR/cost_report.py" ] && { cp "$HOOKS_DIR/cost_report.py" "$BACKUP/"; PREEXISTING_COSTREPORT=1; }
 [ -f "$HOOKS_DIR/agent-team-budgets.json" ] && { cp "$HOOKS_DIR/agent-team-budgets.json" "$BACKUP/"; PREEXISTING_BUDGETS=1; }
 [ -f "$HOOKS_DIR/agent-team-lanes.json" ] && { cp "$HOOKS_DIR/agent-team-lanes.json" "$BACKUP/"; PREEXISTING_LANES=1; }
@@ -657,6 +667,8 @@ restore() {
       agent-team-process-assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
+      agent_team_closeout_paths.py) cp "$b" "$HOOKS_DIR/" ;;
+      agent_team_closeout_ledger.py) cp "$b" "$HOOKS_DIR/" ;;
       cost_report.py) cp "$b" "$HOOKS_DIR/" ;;
       session_start.py) cp "$b" "$HOOKS_DIR/" ;;
       debug_run_archiver.py) cp "$b" "$HOOKS_DIR/" ;;
@@ -716,6 +728,8 @@ cleanup_fresh() {
   [ "$PREEXISTING_LINT" -eq 0 ] && rm -f "$HOOKS_DIR/lint_acceptance_checks.py"
   [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
   [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
+  [ "$PREEXISTING_CLOSEOUTPATHS" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout_paths.py"
+  [ "$PREEXISTING_CLOSEOUTLEDGER" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout_ledger.py"
   [ "$PREEXISTING_COSTREPORT" -eq 0 ] && rm -f "$HOOKS_DIR/cost_report.py"
   [ "$PREEXISTING_BUDGETS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-budgets.json"
   [ "$PREEXISTING_LANES" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lanes.json"
@@ -759,6 +773,8 @@ if ! cp "$REPO/hooks/agent-team-report-guard.sh" "$HOOKS_DIR/"; then restore; cl
 if ! cp "$REPO/hooks/agent-team-worktree-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "worktree guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-worktree-rules.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "worktree command rules copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent_team_closeout_paths.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout path reader copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent_team_closeout_ledger.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout ledger copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/cost_report.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost report tool copy failed; rolled back"; fi
