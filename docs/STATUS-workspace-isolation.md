@@ -14,7 +14,7 @@ A change-based workspace lock backed by a filesystem-serialised creation operati
 
 **Stage 3 (lifecycle):** closeout hook integration to release finished slots, and session start integration to refuse a departing agent's claim it cannot identify.
 
-Tests span eleven suites with 598 total cases (dispatch guard 101, worktree guard 118, agent frontmatter 169, installer touchpoints 192, register 15, register lifecycle 10, register races 4, register concurrency 1, workspace 16, closeout hook 6, worktree hygiene 11, codex profiles 24, lane guard 52, hook pin 29 — totals checked against actual test output).
+Every one of the 35 shell suites under `tests/` passes, and `python3 -m pytest tests/ -q` reports 82 passed. The fourteen suites most directly exercised by this change account for 748 cases between them (dispatch guard 101, worktree guard 118, agent frontmatter 169, installer touchpoints 192, register 15, register lifecycle 10, register races 4, register concurrency 1, workspace 16, closeout hook 6, worktree hygiene 11, codex profiles 24, lane guard 52, hook pin 29 — totals checked against actual test output).
 
 ## What the plan-review process caught
 
@@ -58,7 +58,7 @@ One of the orchestrator's own acceptance checks was mis-written — a case-insen
 
 **Acceptance suite (red-first discipline):** A test author wrote the 35-case suite from the plan and committed it red (`passed=0 failed=35`) before any implementation existed. No builder was permitted to edit it thereafter. Re-run from the shared checkout after integration: `passed=35 failed=0`.
 
-**Full test suite run:** Every shell suite in `tests/` passes. `python3 -m pytest tests/ -q` reports `82 passed`. Full list of test counts per `tests/test_*.sh` output: dispatch guard 101/101, worktree guard 118/118, agent frontmatter 169/169, installer touchpoints 192/192, register 15/15, register lifecycle 10/10, register races 4/4, register concurrency 1/1, workspace 16/16, closeout hook 6/6, worktree hygiene 11/11, codex profiles 24/24, lane guard 52/52, hook pin 29/29.
+**Full test suite run:** Every one of the 35 shell suites under `tests/` passes — a different count from the 35 cases inside the single acceptance suite noted above. `python3 -m pytest tests/ -q` reports `82 passed`. Individual pass/fail counts for the fourteen suites most directly exercised by this change, per `tests/test_*.sh` output: dispatch guard 101/101, worktree guard 118/118, agent frontmatter 169/169, installer touchpoints 192/192, register 15/15, register lifecycle 10/10, register races 4/4, register concurrency 1/1, workspace 16/16, closeout hook 6/6, worktree hygiene 11/11, codex profiles 24/24, lane guard 52/52, hook pin 29/29.
 
 **Machine state isolation:** The machine's real register directory `~/.claude/state/agent-workforce-register` does not exist — nothing in the task touched live machine state.
 
@@ -70,7 +70,7 @@ One of the orchestrator's own acceptance checks was mis-written — a case-insen
 
 **False-refusal ceiling (AC-12):** Deferred by construction to the first orchestrated task after this lands. It is measured by reading the guard log for blocks attributable to an unresolvable workspace after the landing timestamp, and cannot be checked in the task that landed it.
 
-**Not live yet:** The new mechanism is not active until the human runs the installer. Session hooks are pinned to the pre-change build, and role documents are copied flat at install time. The first session launched after installation is the first one running the new mutual-exclusion mechanism.
+**Not live yet:** The new mechanism is not active until the next launch of the launcher, `bin/agent-workforce` — and no human action is required to reach that launch. On every launch, unless `--no-install` is passed, the launcher fetches `origin` and fast-forwards a clean checkout, then compares a checksum of every installed file under `agents/`, `hooks/`, and `skills/` against its own manifest and installs the current checkout itself when anything differs, refusing to launch at all if that install fails. Session hooks are pinned to the pre-change build, and role documents are copied flat at install time, so a session already running keeps the rules it started with regardless. The first session launched after this landed on `origin/main` is the first one running the new mutual-exclusion mechanism, because that launch is the one that performs the install.
 
 **Residual windows:** Two atomic-operation gaps are documented in the code and genuinely unclosable in portable shell: unlink is by name, rename is unconditional, link is create-only, and atomic-exchange is not reachable from shell.
 

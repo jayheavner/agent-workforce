@@ -381,9 +381,25 @@ is load-bearing and is stated rather than left to inference.
   the pinned guard still enforces the old rules — BLOCK 4's trap, inside one session.
 - **The last stage boundary at which this session can still safely dispatch a builder is
   the end of Stage 3** — that is, all of them — *because* nothing is installed
-  mid-session. The boundary that actually matters is not a stage: it is the install. The
-  install is the human's step, after Stage 3 reaches `origin/main`, and the first session
-  launched after it is the first session running the new mechanism.
+  mid-session. The boundary that actually matters is not a stage: it is the next launch of
+  the launcher, `bin/agent-workforce`.
+  *Corrected 2026-08-18 (verified by reading `bin/agent-workforce:161`–`:170`):* the
+  sentence originally here said "the install is the human's step." That is false. On every
+  launch, unless `--no-install` is passed, the launcher fetches `origin` and fast-forwards
+  the checkout when it is clean (`bin/agent-workforce:161`–`:163`), then compares a
+  checksum of every installed file under `agents/`, `hooks/`, and `skills/` against the
+  checksums recorded in its own manifest, also treating any added or removed file as stale
+  (`bin/agent-workforce:165`). When anything differs, it prints that the profile is stale
+  and runs `install.sh` itself (`bin/agent-workforce:166`–`:167`); if that install fails it
+  refuses to launch rather than run a half-updated team, and only then does it print a
+  manual command as a recovery path (`bin/agent-workforce:168`–`:170`). No human runs
+  anything. What stays true is the reason nothing changes mid-session, stated two bullets
+  above: hooks are pinned to the build resolved at a session's first hook call, and
+  `agents/*.md` is copied flat at install time, so a session already running keeps the
+  rules it started with regardless of what a later launch installs. The first session
+  launched after Stage 3 reaches `origin/main` is therefore the first session running the
+  new mechanism — because that next launch is the one that performs the install, not
+  because a human performed a step.
 - **The new mechanism is therefore not proved end-to-end by this task.** That proof is
   AC-11, deferred by construction to the first orchestrated task after landing and
   verified in that task's closeout.
