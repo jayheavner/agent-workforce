@@ -33,11 +33,12 @@ requirements verbatim — version floors, naming rules, platform requirements �
 one line each. Always include the resolved workspace-isolation policy: resolve
 `policy:workspace-isolation` from the project policy and state the resolved
 value and its source — project policy / user policy / judgment default — and
-quote it verbatim in the header. Where no policy defines it: every builder
-creates its own unique git worktree inside the project folder before touching
-any code, and works only there. Plan tasks so that concurrently buildable
-tasks touch disjoint files — each one names its own worktree, and no task
-depends on another task's uncommitted work. Every task implicitly includes
+quote it verbatim in the header. Where no policy defines it: the work gets one
+worktree per change inside the project folder, created before any code is
+touched, and every dispatch on that change works only there. Plan tasks so that
+concurrently buildable tasks touch disjoint files — separate changes carry
+separate worktrees, tasks on one change share its worktree and take its writing
+turn one at a time, and no task depends on another task's uncommitted work. Every task implicitly includes
 that section.
 
 ## Tasks

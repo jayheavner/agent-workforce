@@ -42,6 +42,12 @@ for h in $HOOK_FILES; do
       ;;
     *.json)
       jq empty "$HERE/../hooks/$h" 2>/dev/null && ok || no "$h is valid JSON"
+      # A shell hook gets `bash -n` before it is installed; a JSON hook needs the
+      # same courtesy from `jq empty`, or a malformed config installs silently and
+      # the guard that reads it falls back to a default nobody asked for. Found by
+      # review on 2026-08-17: the register's config was validated by nothing.
+      grep -qF "jq empty \"\$REPO/hooks/$h\"" "$INSTALL" \
+        && ok || no "install.sh validates $h as JSON before installing it"
       ;;
   esac
 done

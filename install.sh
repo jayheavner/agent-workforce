@@ -124,7 +124,7 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 frontmatter_value() { # $1 file, $2 key
   awk -v key="$2" '/^---$/{n++; next} n==1 && $1==key":"{sub($1"[[:space:]]*", ""); print; exit}' "$1"
 }
-HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent_team_closeout.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json"
+HOOK_FILES="agent-team-secrets.sh agent-team-audit.sh agent-team-cost.sh agent-team-dispatch-guard.sh agent-team-interrupt-guard.sh agent-team-report-guard.sh agent-team-worktree-guard.sh agent-team-worktree-rules.sh agent-team-lane-guard.sh agent-team-lane-paths.sh agent-team-guard-log.sh agent-team-plugin-router.sh agent-team-pin.sh agent-team-register.sh agent-team-register-lib.sh agent-team-register-writer.sh agent-team-workspace.sh agent-team-dispatch-change.sh agent_team_closeout.py agent_team_closeout_paths.py agent_team_closeout_ledger.py debug_run_archiver.py session_start.py cost_report.py model-rates.json agent-model-defaults.json agent-team-budgets.json agent-team-lanes.json agent-team-register.json"
 # --- version-pinned hook builds (2026-08-04) ------------------------------------
 # Every hook is wired to one fixed path, and the harness re-reads that file on
 # every tool call — so installing a repair used to rewrite the rules under every
@@ -179,12 +179,32 @@ bash -n "$REPO/hooks/agent-team-interrupt-guard.sh" || fail "interrupt guard fai
 bash -n "$REPO/hooks/agent-team-report-guard.sh" || fail "report guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-worktree-guard.sh" ] || fail "hooks/agent-team-worktree-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-worktree-guard.sh" || fail "worktree guard failed bash -n"
+# The worktree guard reads what a shell command is trying to do from this one file;
+# without it the guard blocks every command it is asked about, so it is checked here.
+[ -f "$REPO/hooks/agent-team-worktree-rules.sh" ] || fail "hooks/agent-team-worktree-rules.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-worktree-rules.sh" || fail "worktree command rules failed bash -n"
 [ -f "$REPO/hooks/agent-team-lane-guard.sh" ] || fail "hooks/agent-team-lane-guard.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-lane-guard.sh" || fail "lane guard failed bash -n"
 [ -f "$REPO/hooks/agent-team-lane-paths.sh" ] || fail "hooks/agent-team-lane-paths.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-lane-paths.sh" || fail "lane path rules failed bash -n"
 [ -f "$REPO/hooks/agent-team-guard-log.sh" ] || fail "hooks/agent-team-guard-log.sh is missing from repo"
 bash -n "$REPO/hooks/agent-team-guard-log.sh" || fail "guard block log failed bash -n"
+# The work register and its library decide who owns a change; a broken one would
+# refuse or admit every claim on the machine, so both are checked before install.
+[ -f "$REPO/hooks/agent-team-register.sh" ] || fail "hooks/agent-team-register.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-register.sh" || fail "work register failed bash -n"
+[ -f "$REPO/hooks/agent-team-register-lib.sh" ] || fail "hooks/agent-team-register-lib.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-register-lib.sh" || fail "work register library failed bash -n"
+[ -f "$REPO/hooks/agent-team-register-writer.sh" ] || fail "hooks/agent-team-register-writer.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-register-writer.sh" || fail "work register writer slot failed bash -n"
+# The dispatch guard sources its workspace half from beside itself, so a missing or
+# broken one means no dispatch can be checked for workspace isolation at all.
+[ -f "$REPO/hooks/agent-team-dispatch-change.sh" ] || fail "hooks/agent-team-dispatch-change.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-dispatch-change.sh" || fail "dispatch change gate failed bash -n"
+# The workspace library is the one component that runs a mutating git command, so
+# a syntax error in it would be a broken merge rather than a broken message.
+[ -f "$REPO/hooks/agent-team-workspace.sh" ] || fail "hooks/agent-team-workspace.sh is missing from repo"
+bash -n "$REPO/hooks/agent-team-workspace.sh" || fail "change workspace library failed bash -n"
 # The pin resolver is what every wired hook goes through. A broken one would take
 # every guard on the machine down with it, so it is validated before anything is
 # touched, exactly like the guards it fronts.
@@ -198,6 +218,12 @@ bash -n "$REPO/hooks/agent-team-plugin-router.sh" || fail "plugin router failed 
 [ -f "$REPO/hooks/agent_team_closeout.py" ] || fail "hooks/agent_team_closeout.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/agent_team_closeout.py" || fail "closeout hook failed Python syntax validation"
+[ -f "$REPO/hooks/agent_team_closeout_paths.py" ] || fail "hooks/agent_team_closeout_paths.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent_team_closeout_paths.py" || fail "closeout path reader failed Python syntax validation"
+[ -f "$REPO/hooks/agent_team_closeout_ledger.py" ] || fail "hooks/agent_team_closeout_ledger.py is missing from repo"
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+  "$REPO/hooks/agent_team_closeout_ledger.py" || fail "closeout ledger failed Python syntax validation"
 [ -f "$REPO/hooks/debug_run_archiver.py" ] || fail "hooks/debug_run_archiver.py is missing from repo"
 python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
   "$REPO/hooks/debug_run_archiver.py" || fail "debug-run archiver failed Python syntax validation"
@@ -243,6 +269,15 @@ jq -e '["acceptance_suite_paths", "doc_paths"]
              and (all(.[]; type == "string" and length > 0 and (startswith("/") | not)))))' \
   --argjson lanes "$(cat "$REPO/hooks/agent-team-lanes.json")" -n >/dev/null \
   || fail "agent-team-lanes.json: .acceptance_suite_paths and .doc_paths must each be a non-empty array of relative paths"
+# The register's config carries the writer TTL and the stale-claim warning window.
+# A malformed one would install silently and every read of it would fall back to a
+# default nobody chose, so it is validated here like every other JSON config.
+[ -f "$REPO/hooks/agent-team-register.json" ] || fail "hooks/agent-team-register.json is missing from repo"
+jq empty "$REPO/hooks/agent-team-register.json" || fail "agent-team-register.json is not valid JSON"
+# Dispatch budgets were in the same position: shipped as configuration, validated by
+# nothing.
+[ -f "$REPO/hooks/agent-team-budgets.json" ] || fail "hooks/agent-team-budgets.json is missing from repo"
+jq empty "$REPO/hooks/agent-team-budgets.json" || fail "agent-team-budgets.json is not valid JSON"
 
 [ -f "$REPO/tools/agent-team-scoreboard.sh" ] || fail "tools/agent-team-scoreboard.sh is missing from repo"
 bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed bash -n"
@@ -525,13 +560,22 @@ PREEXISTING_RGUARD=0
 PREEXISTING_LINT=0
 PREEXISTING_DEFAULTS=0
 PREEXISTING_CLOSEOUT=0
+PREEXISTING_CLOSEOUTPATHS=0
+PREEXISTING_CLOSEOUTLEDGER=0
 PREEXISTING_COSTREPORT=0
 PREEXISTING_BUDGETS=0
 PREEXISTING_LANES=0
 PREEXISTING_LANEGUARD=0
 PREEXISTING_LANEPATHS=0
+PREEXISTING_WTRULES=0
 PREEXISTING_GUARDLOG=0
 PREEXISTING_PIN=0
+PREEXISTING_REGISTER=0
+PREEXISTING_REGISTERLIB=0
+PREEXISTING_REGISTERWRITER=0
+PREEXISTING_REGISTERCONF=0
+PREEXISTING_WORKSPACE=0
+PREEXISTING_DISPATCHCHANGE=0
 [ -f "$HOOKS_DIR/agent-team-secrets.sh" ] && { cp "$HOOKS_DIR/agent-team-secrets.sh" "$BACKUP/"; PREEXISTING_SECRETS=1; }
 [ -f "$HOOKS_DIR/agent-team-audit.sh" ] && { cp "$HOOKS_DIR/agent-team-audit.sh" "$BACKUP/"; PREEXISTING_AUDIT=1; }
 [ -f "$HOOKS_DIR/agent-team-plugin-router.sh" ] && { cp "$HOOKS_DIR/agent-team-plugin-router.sh" "$BACKUP/"; PREEXISTING_ROUTER=1; }
@@ -543,9 +587,12 @@ PREEXISTING_PIN=0
 [ -f "$HOOKS_DIR/agent-team-interrupt-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-interrupt-guard.sh" "$BACKUP/"; PREEXISTING_IGUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-report-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-report-guard.sh" "$BACKUP/"; PREEXISTING_RGUARD=1; }
 [ -f "$HOOKS_DIR/agent-team-worktree-guard.sh" ] && { cp "$HOOKS_DIR/agent-team-worktree-guard.sh" "$BACKUP/"; PREEXISTING_WTGUARD=1; }
+[ -f "$HOOKS_DIR/agent-team-worktree-rules.sh" ] && { cp "$HOOKS_DIR/agent-team-worktree-rules.sh" "$BACKUP/"; PREEXISTING_WTRULES=1; }
 [ -f "$HOOKS_DIR/lint_acceptance_checks.py" ] && { cp "$HOOKS_DIR/lint_acceptance_checks.py" "$BACKUP/"; PREEXISTING_LINT=1; }
 [ -f "$HOOKS_DIR/agent-model-defaults.json" ] && { cp "$HOOKS_DIR/agent-model-defaults.json" "$BACKUP/"; PREEXISTING_DEFAULTS=1; }
 [ -f "$HOOKS_DIR/agent_team_closeout.py" ] && { cp "$HOOKS_DIR/agent_team_closeout.py" "$BACKUP/"; PREEXISTING_CLOSEOUT=1; }
+[ -f "$HOOKS_DIR/agent_team_closeout_paths.py" ] && { cp "$HOOKS_DIR/agent_team_closeout_paths.py" "$BACKUP/"; PREEXISTING_CLOSEOUTPATHS=1; }
+[ -f "$HOOKS_DIR/agent_team_closeout_ledger.py" ] && { cp "$HOOKS_DIR/agent_team_closeout_ledger.py" "$BACKUP/"; PREEXISTING_CLOSEOUTLEDGER=1; }
 [ -f "$HOOKS_DIR/cost_report.py" ] && { cp "$HOOKS_DIR/cost_report.py" "$BACKUP/"; PREEXISTING_COSTREPORT=1; }
 [ -f "$HOOKS_DIR/agent-team-budgets.json" ] && { cp "$HOOKS_DIR/agent-team-budgets.json" "$BACKUP/"; PREEXISTING_BUDGETS=1; }
 [ -f "$HOOKS_DIR/agent-team-lanes.json" ] && { cp "$HOOKS_DIR/agent-team-lanes.json" "$BACKUP/"; PREEXISTING_LANES=1; }
@@ -553,6 +600,12 @@ PREEXISTING_PIN=0
 [ -f "$HOOKS_DIR/agent-team-lane-paths.sh" ] && { cp "$HOOKS_DIR/agent-team-lane-paths.sh" "$BACKUP/"; PREEXISTING_LANEPATHS=1; }
 [ -f "$HOOKS_DIR/agent-team-guard-log.sh" ] && { cp "$HOOKS_DIR/agent-team-guard-log.sh" "$BACKUP/"; PREEXISTING_GUARDLOG=1; }
 [ -f "$HOOKS_DIR/agent-team-pin.sh" ] && { cp "$HOOKS_DIR/agent-team-pin.sh" "$BACKUP/"; PREEXISTING_PIN=1; }
+[ -f "$HOOKS_DIR/agent-team-register.sh" ] && { cp "$HOOKS_DIR/agent-team-register.sh" "$BACKUP/"; PREEXISTING_REGISTER=1; }
+[ -f "$HOOKS_DIR/agent-team-register-lib.sh" ] && { cp "$HOOKS_DIR/agent-team-register-lib.sh" "$BACKUP/"; PREEXISTING_REGISTERLIB=1; }
+[ -f "$HOOKS_DIR/agent-team-register-writer.sh" ] && { cp "$HOOKS_DIR/agent-team-register-writer.sh" "$BACKUP/"; PREEXISTING_REGISTERWRITER=1; }
+[ -f "$HOOKS_DIR/agent-team-register.json" ] && { cp "$HOOKS_DIR/agent-team-register.json" "$BACKUP/"; PREEXISTING_REGISTERCONF=1; }
+[ -f "$HOOKS_DIR/agent-team-workspace.sh" ] && { cp "$HOOKS_DIR/agent-team-workspace.sh" "$BACKUP/"; PREEXISTING_WORKSPACE=1; }
+[ -f "$HOOKS_DIR/agent-team-dispatch-change.sh" ] && { cp "$HOOKS_DIR/agent-team-dispatch-change.sh" "$BACKUP/"; PREEXISTING_DISPATCHCHANGE=1; }
 
 # Skills files are nested (skills/<name>/<relpath>), unlike the flat agents/
 # and hooks/ trees above, so they get their own backup loop keyed by relative
@@ -609,10 +662,13 @@ restore() {
       agent-team-interrupt-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-report-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-worktree-guard.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-worktree-rules.sh) cp "$b" "$HOOKS_DIR/" ;;
       lint_acceptance_checks.py) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-process-assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       process_assurance.py) cp "$b" "$HOOKS_DIR/" ;;
       agent_team_closeout.py) cp "$b" "$HOOKS_DIR/" ;;
+      agent_team_closeout_paths.py) cp "$b" "$HOOKS_DIR/" ;;
+      agent_team_closeout_ledger.py) cp "$b" "$HOOKS_DIR/" ;;
       cost_report.py) cp "$b" "$HOOKS_DIR/" ;;
       session_start.py) cp "$b" "$HOOKS_DIR/" ;;
       debug_run_archiver.py) cp "$b" "$HOOKS_DIR/" ;;
@@ -625,6 +681,12 @@ restore() {
       agent-team-lane-paths.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-guard-log.sh) cp "$b" "$HOOKS_DIR/" ;;
       agent-team-pin.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-register.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-register-lib.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-register-writer.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-register.json) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-workspace.sh) cp "$b" "$HOOKS_DIR/" ;;
+      agent-team-dispatch-change.sh) cp "$b" "$HOOKS_DIR/" ;;
       *.md) cp "$b" "$CLAUDE_DIR/agents/" ;;
     esac
   done
@@ -666,6 +728,8 @@ cleanup_fresh() {
   [ "$PREEXISTING_LINT" -eq 0 ] && rm -f "$HOOKS_DIR/lint_acceptance_checks.py"
   [ "$PREEXISTING_DEFAULTS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-model-defaults.json"
   [ "$PREEXISTING_CLOSEOUT" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout.py"
+  [ "$PREEXISTING_CLOSEOUTPATHS" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout_paths.py"
+  [ "$PREEXISTING_CLOSEOUTLEDGER" -eq 0 ] && rm -f "$HOOKS_DIR/agent_team_closeout_ledger.py"
   [ "$PREEXISTING_COSTREPORT" -eq 0 ] && rm -f "$HOOKS_DIR/cost_report.py"
   [ "$PREEXISTING_BUDGETS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-budgets.json"
   [ "$PREEXISTING_LANES" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lanes.json"
@@ -674,11 +738,18 @@ cleanup_fresh() {
   [ "$PREEXISTING_AUDIT" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-audit.sh"
   [ "$PREEXISTING_ROUTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-plugin-router.sh"
   [ "$PREEXISTING_WTGUARD" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-worktree-guard.sh"
+  [ "$PREEXISTING_WTRULES" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-worktree-rules.sh"
   [ "$PREEXISTING_SESSIONSTART" -eq 0 ] && rm -f "$HOOKS_DIR/session_start.py"
   [ "$PREEXISTING_ARCHIVER" -eq 0 ] && rm -f "$HOOKS_DIR/debug_run_archiver.py"
   [ "$PREEXISTING_LANEPATHS" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-lane-paths.sh"
   [ "$PREEXISTING_GUARDLOG" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-guard-log.sh"
   [ "$PREEXISTING_PIN" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-pin.sh"
+  [ "$PREEXISTING_REGISTER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register.sh"
+  [ "$PREEXISTING_REGISTERLIB" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register-lib.sh"
+  [ "$PREEXISTING_REGISTERWRITER" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register-writer.sh"
+  [ "$PREEXISTING_REGISTERCONF" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-register.json"
+  [ "$PREEXISTING_WORKSPACE" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-workspace.sh"
+  [ "$PREEXISTING_DISPATCHCHANGE" -eq 0 ] && rm -f "$HOOKS_DIR/agent-team-dispatch-change.sh"
   while IFS= read -r rel; do
     rel="${rel#./}"
     case " $PREEXISTING_SKILLS " in
@@ -700,7 +771,10 @@ if ! cp "$REPO/hooks/agent-team-dispatch-guard.sh" "$HOOKS_DIR/"; then restore; 
 if ! cp "$REPO/hooks/agent-team-interrupt-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "interrupt guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-report-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "report guard copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent-team-worktree-guard.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "worktree guard copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-worktree-rules.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "worktree command rules copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/agent_team_closeout.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout hook copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent_team_closeout_paths.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout path reader copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent_team_closeout_ledger.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "closeout ledger copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/debug_run_archiver.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "debug-run archiver copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/session_start.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "session-start hook copy failed; rolled back"; fi
 if ! cp "$REPO/hooks/cost_report.py" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "cost report tool copy failed; rolled back"; fi
@@ -716,6 +790,15 @@ if ! cp "$REPO/hooks/agent-team-guard-log.sh" "$HOOKS_DIR/"; then restore; clean
 # The pin resolver is the one file that is NOT version-pinned: it is what resolves
 # the pin, so every shim sources it from the flat hooks dir by a stable path.
 if ! cp "$REPO/hooks/agent-team-pin.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "hook pin resolver copy failed; rolled back"; fi
+# The work register, its two libraries, and its config travel together: the
+# register sources both libraries from beside itself and reads the config from
+# beside itself, so a partial copy would leave a register that refuses every claim.
+if ! cp "$REPO/hooks/agent-team-register.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-register-lib.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register library copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-register-writer.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register writer slot copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-register.json" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "work register config copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-workspace.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "change workspace library copy failed; rolled back"; fi
+if ! cp "$REPO/hooks/agent-team-dispatch-change.sh" "$HOOKS_DIR/"; then restore; cleanup_fresh; fail "dispatch change gate copy failed; rolled back"; fi
 for rel in $RETIRED_SKILLS; do
   if ! rm -f "$CLAUDE_DIR/skills/$rel"; then restore; cleanup_fresh; fail "could not retire removed skill file $rel; rolled back"; fi
 done

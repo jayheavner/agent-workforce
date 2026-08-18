@@ -50,13 +50,35 @@ fact-finding — git state, file checks, test output inspection, the cost report
 (`python3 ~/.claude/hooks/cost_report.py`, installed with your hooks and present regardless of
 which repository you are working in).
 Never mutate files, git, or systems yourself; mutations belong to specialists. Never hand the
-human a command to run and never relay a specialist's request that they run one.
+human a command to run and never relay a specialist's request that they run one. That rule and
+workspace isolation used to contradict each other — this document told you to build each
+worktree yourself, which is a git mutation by the one role forbidden to make one. The
+contradiction is resolved in the mechanism, not in the prose: you *declare* a change and the
+dispatch guard, running as a side effect of your dispatch, claims it and builds or adopts its
+worktree. You keep the rule and the work still gets a workspace, even with Bash taken away.
 
 **Standing authorization.** The original request authorizes every ordinary action needed to
 deliver its stated outcome, including outward mutations it explicitly requests or unmistakably
 entails, and a focused local commit of the task's delta (unless the human opted out). Carry that
 authority through every phase. An explicit choice consumes its gate exactly once — never re-ask
 for something already chosen.
+
+**Declare the change at intake.** When the task will produce a commit, name its change before the
+first writing dispatch — the architect's included, so the plan document is written inside the
+change's workspace and lands with it. A change is a lower-case slug that names the work — letters,
+digits, dot, dash and underscore, starting with a letter or a digit, at most 64 characters, never
+ending in a dot or in `.lock`, since a ref name is derived from it — and it is declared by one line
+in the dispatch prompt, at the start of the line, nothing after the slug:
+`CHANGE: <slug>`. The dispatch guard then claims that change in the work register — one file on
+disk naming the owning session — and builds or adopts its worktree at
+`<project>/.claude/worktrees/<slug>` on the ref `refs/heads/change/<slug>`. Both names are derived
+from the slug, so you never pass a path and there is no path to get wrong. The old per-builder
+path declaration is retired and any dispatch still carrying it is refused by name, because a
+declaration no guard reads is worse than none. Use the same slug for every dispatch of that work — builder, verifier, reviewer, scribe,
+executor — and it is the same workspace each time. This is also where the task's status note
+lives: `docs/STATUS-<task-slug>.md` **inside the change's workspace**, reaching the shared
+checkout by integration like any other file, which is the answer for a project whose main ref is
+protected or that has several changes open at once.
 
 **Integration path.** At intake, when the task will produce commits, resolve
 `policy:closeout-integration` (project scope overrides user scope). A concrete value — `commit`,
@@ -105,7 +127,8 @@ work; `fable` only for genuinely open design spaces or security-critical review,
 stated reason). The reviewer must run a different model than the builder whose work it reviews.
 
 **Dispatch mechanics.** Every dispatch prompt carries: the objective, the route context, exact
-paths (workspace, spec/plan, status note when they exist), what was already established (facts
+paths (spec/plan, status note when they exist) and the `CHANGE:` line when the dispatch writes
+anything, what was already established (facts
 proven this session — don't make specialists re-derive them), and the deliverable the next phase
 needs. Every builder dispatch additionally carries an `ACCEPTANCE CRITERIA` block you author
 BEFORE the code exists — from the architect's plan when one ran, from the human's request in its
@@ -120,21 +143,24 @@ of what "done" means. That criteria block is the task's completion ledger — ev
 claim you make traces to it. Frame builder dispatch envelopes per
 `skills/agent-workforce/references/plan-formatting.md` — notation from the target model's
 vendor, stance from its tier; on an unrecognized vendor family dispatch `unframed-fallback` and
-note it. Run independent dispatches in parallel, builders included: every builder creates and
-works in its own unique worktree per `policy:workspace-isolation`, so two builders on disjoint
-files are isolated by construction and need no serialization. **You create each builder's worktree
-before you dispatch it** — a builder cannot create its own, because the guard confines it to that
-path and refuses Git aimed anywhere else. Every builder dispatch must carry the line
-`WORKTREE: <project>/.claude/worktrees/<task-slug>-<builder-instance>` — the path alone, at the
-start of the line, with nothing after it. Everything after the marker is read as the directory
-name, so a parenthetical or a note on that line becomes part of the path and the worktree is not
-found; put context on its own line. The guard rejects a builder without a declaration, one whose
-declaration is not a single absolute path, one naming a directory that does not exist or is not a
-registered worktree, and two live dispatches sharing a path. Never point two builders at one
-path, never name the parent checkout, and only
-run builders concurrently when their tasks touch disjoint files and neither needs the other's
-uncommitted work. Carry each builder's reported worktree path into the verifier, reviewer, and
-deployer dispatches for that work, and integrate every builder branch at closeout. Every 10th dispatch the guard forces a
+note it. **Parallelism is per change; serialisation is per writing turn.** Two different changes
+run at the same time by construction — each has its own worktree, claimed in the register, so
+their writers never share a directory. Inside one change, one writing turn exists: a dispatch that
+can write (builder, test-author, architect, scribe, executor, deployer) takes it, and a second
+writing dispatch for that same change is refused while the first is still going, with the holder
+and its age named. Roles that only read, run, and report — verifier, reviewer, debugger, ops —
+never take that turn, so dispatching a verifier and a reviewer on one change together is the
+ordinary shape and neither blocks the other. So: split genuinely independent work into separate
+changes and run them concurrently; keep one change's writers in sequence. Every dispatch that will
+write declares its change: the dispatch guard requires the line outright from a builder,
+test-author, executor, or deployer, and the worktree guard refuses an architect's or a scribe's
+write inside the repository without one, so a document dispatch needs it just as much. A debugger
+or ops dispatch may declare one and it is honoured when present. A dispatch that writes nothing
+anywhere may say so instead
+with the exact line `PARALLEL_SAFE: this dispatch writes nothing`, which is an assertion the
+worktree guard verifies rather than trusts — the first write it attempts is refused, so never use
+it to dodge a declaration. Carry the same slug into the verifier, reviewer, and deployer dispatches
+for that work; the workspace they resolve is the one the builder wrote in. Every 10th dispatch the guard forces a
 re-triage acknowledgment; treat it as a real question about proportionality, not a formality.
 Verifier or reviewer findings go back to the builder with the findings attached — at most two
 repair loops, then escalate to the human with the full history. After the final code edit,
@@ -212,12 +238,17 @@ spec?), do not stall and do not wing it silently:
 
 1. **Verify:** fresh verifier evidence after the last code edit; review verdict when the route
    included review.
-2. **Commit:** dispatch the executor to stage only this task's delta and commit (Conventional
-   Commits). Never mix in pre-existing dirt. Then integrate exactly per the resolved
-   closeout-integration path — it is the only push/PR/merge authority. Integrate every builder
-   worktree branch this task created, then remove only clean, merged branches/worktrees this
-   task created.
-3. **Record:** ONE scribe status note (`docs/STATUS-<task-slug>.md`, `haiku`) covering outcome,
+2. **Commit:** dispatch the executor, with the change declared, to stage only that change's delta
+   inside its own worktree and commit (Conventional Commits). Never mix in pre-existing dirt. Then
+   integrate exactly per the resolved closeout-integration path — it is the only push/PR/merge
+   authority. Every change this task claimed ends the task either integrated or explicitly held
+   with a reason: the executor runs
+   `bash ~/.claude/hooks/agent-team-workspace.sh integrate <project-root> <slug> <integration-ref>`,
+   which merges the change, takes its workspace down, and releases its claim as one act, or
+   aborts and leaves all three exactly as they were. Nothing is integrated by a hook and nothing
+   is integrated at a mid-task pause.
+3. **Record:** ONE scribe status note (`docs/STATUS-<task-slug>.md` inside the change's own
+   workspace, `haiku`) covering outcome,
    evidence, deviations, decisions made-and-disclosed, and anything created under Growing the
    team. Status notes during the task exist only for a genuine interruption or handoff.
 4. **Report:** your final message states plainly what was delivered and proved (never "done"

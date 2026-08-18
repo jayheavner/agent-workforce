@@ -11,18 +11,30 @@
 set -u
 
 readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deployer executor researcher ops scribe ticketer test-author"
-# Git-mutating dispatches are policed per TARGET, not per role: a dispatch that
-# declares its own worktree collides only with another live dispatch in the
-# same worktree, so builders in distinct worktrees run concurrently
-# (policy:workspace-isolation). A git-mutating dispatch that declares nothing
-# still serializes — an undeclared target cannot be proven disjoint from the
-# shared checkout. MUTATING_ROLES in the closeout hook serves baseline-capture
-# logic and is a different set — do not conflate the two.
-readonly GIT_SERIALIZED_ROLES="builder executor deployer test-author"
-# Roles that MUST declare a worktree: the policy gives every builder its own.
-readonly WORKTREE_REQUIRED_ROLES="builder"
-readonly WORKTREE_MARKER_PREFIX="WORKTREE:"
-readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: no git mutation in this dispatch"
+# The unit of isolation is the CHANGE, not the agent: a dispatch declares one, and this
+# guard claims it in the work register and builds or adopts its worktree
+# (policy:workspace-isolation). Two live writers in one change are decided by the
+# register's writer slot — a durable file — never by re-reading the transcript, which is
+# what the retired collision scan did. MUTATING_ROLES in the closeout hook serves
+# baseline-capture logic and is a different set — do not conflate the two.
+readonly CHANGE_MARKER_PREFIX="CHANGE:"
+readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: this dispatch writes nothing"
+# Roles that MUST declare a change: everything that writes. The debugger and ops MAY
+# declare one and it is honoured when present — a diagnosis that will commit claims its
+# change like anything else — because their Bash rule refuses git mutation outside a
+# claimed tree.
+readonly CHANGE_REQUIRED_ROLES="builder test-author executor deployer"
+# Roles that take the WRITING TURN in a change. Every declaring dispatch still claims the
+# change and gets its tree; only a role in this set holds the slot. A judge (verifier,
+# reviewer) and a diagnostic role (debugger, ops) hold no write tool and are refused git
+# mutation, so taking the slot from them would refuse honest work for a turn they cannot
+# use — two judges dispatched together after a build is the ordinary shape, and the second
+# was being blocked by the first. A superset of CHANGE_REQUIRED_ROLES by exactly the
+# architect and the scribe, who write documents inside the claimed tree.
+readonly WRITER_SLOT_ROLES="builder test-author architect scribe executor deployer"
+# The two retired declarations, kept only so they can be REFUSED by name.
+readonly RETIRED_WORKTREE_PREFIX="WORKTREE:"
+readonly RETIRED_PARALLEL_SAFE="PARALLEL_SAFE: no git mutation in this dispatch"
 readonly BUDGETS_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-budgets.json"
 readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"
 # A specialist that refuses work as outside its lane says so in a line the
@@ -49,6 +61,13 @@ command -v guard_log >/dev/null 2>&1 || guard_log() { :; }
 # enforces it, so a path outside every lane there cannot be owned by a role here.
 # shellcheck source=/dev/null
 [ -r "$(dirname "$0")/agent-team-lane-paths.sh" ] && . "$(dirname "$0")/agent-team-lane-paths.sh"
+# The workspace half of this guard — claiming a change in the work register and building
+# or adopting its worktree — is one file over, so both stay inside the project's
+# file-size discipline. A missing library is a broken install and is refused at the call
+# site, never silently skipped.
+# shellcheck source=hooks/agent-team-dispatch-change.sh
+[ -r "$(dirname "$0")/agent-team-dispatch-change.sh" ] \
+  && . "$(dirname "$0")/agent-team-dispatch-change.sh"
 
 readonly DEFAULT_DISPATCH_CHECKPOINT=10
 
@@ -197,6 +216,89 @@ human_override_paths() { # -> released paths, one per line
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[`"'"'"']//g'
 }
 
+# How many dispatches for this change are still running, as this session's own transcript
+# records them. A dispatch is in flight when its Agent tool_use block carries no tool result
+# yet; a background launch stub is not a result (the same shape the worktree guard already
+# uses). THIS dispatch is not evidence of another live agent, and whether the harness has
+# already written its Agent block to the transcript when PreToolUse fires is NOT a verified
+# fact — so at most ONE in-flight candidate whose prompt is byte-identical to this payload's,
+# the last of them, is dropped. That is right under both timings: with this dispatch's own
+# block present it is the last such candidate and is dropped; with it absent, one identical
+# live sibling is dropped and a second is not, so a duplicated dispatch still finds a live
+# writer and is refused. Prints an integer, or `unknown` when there is no transcript to read.
+#
+# It lives here rather than in agent-team-dispatch-change.sh, beside human_override_paths,
+# because this file is where the guard keeps its transcript readers and where the size
+# discipline leaves room; dispatch_change_gate calls it exactly as it already calls that one.
+change_dispatches_in_flight() { # $1 slug -> integer | unknown
+  { [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; } || { printf 'unknown'; return 0; }
+  local n
+  n="$(
+    jq -rs --arg marker "$CHANGE_MARKER_PREFIX" --arg slug "$1" --arg self "$PROMPT" '
+      def declaration:
+        (.input.prompt // "")
+        | [ splits("\n") ]
+        | map(select(startswith($marker)))
+        | if length == 0 then ""
+          else (.[0] | ltrimstr($marker) | sub("^[ \t]+"; "") | sub("[ \t]+$"; "")) end;
+      [ .[] ] as $entries
+      | ( [ $entries[] | .. | objects
+            | select(.type? == "tool_result" and .tool_use_id != null)
+            | select( ([.content] | flatten
+                       | map(if type == "object" then (.text // "") else tostring end)
+                       | join(" "))
+                      | contains("Async agent launched successfully") | not )
+            | .tool_use_id ] ) as $resolved
+      | ( [ $entries[] | .. | objects
+            | select(.type? == "tool_use" and .name? == "Agent")
+            | { id: .id, prompt: (.input.prompt // ""), slug: declaration }
+            | select(.slug == $slug)
+            | select( .id as $i | ($resolved | index($i)) | not ) ] ) as $flight
+      | ( [ $flight | to_entries[] | select(.value.prompt == $self) | .key ] | last ) as $me
+      | ( if $me == null then $flight else ($flight | del(.[$me])) end ) | length
+    ' "$TRANSCRIPT" 2>/dev/null
+  )"
+  case "$n" in '' | *[!0-9]*) printf 'unknown' ;; *) printf '%s' "$n" ;; esac
+}
+
+# A slot nobody is behind is released here, by the next dispatch for the same change. The
+# slot string is READ from the slot file, never recomputed: `<role>#<n>` comes from a
+# transcript count that is not reproducible, and register_writer_release refuses a name it
+# does not find. Every outcome is a `note` — a routine release is not a control failing
+# open, and a DECLINED release is the evidence that answers the one timing question this
+# design leaves open.
+release_resolved_writer_slot() { # $1 project-root $2 slug
+  { [ -n "${SLOT_FILE:-}" ] && [ -f "$SLOT_FILE" ]; } || return 0
+  # CHANGE_FLIGHT is deliberately NOT local: the acquire that follows needs the very same
+  # count, to refuse displacing a writer whose own dispatch is still running, and a second
+  # parse of the transcript on a PreToolUse path buys nothing. It is set before the early
+  # return, so a slot file with no readable name still leaves the fact behind.
+  local held rc
+  CHANGE_FLIGHT="$(change_dispatches_in_flight "$2")"
+  held="$(jq -r '.slot // empty' "$SLOT_FILE" 2>/dev/null || printf '')"
+  [ -n "$held" ] || return 0
+  if [ "$CHANGE_FLIGHT" = unknown ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 kept: this session's transcript could not be read, so no dispatch could be shown finished"
+    return 0
+  fi
+  if [ "$CHANGE_FLIGHT" -gt 0 ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 kept: $CHANGE_FLIGHT dispatch(es) declaring it are still in flight"
+    return 0
+  fi
+  register_writer_release "$1" "$2" "$held" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 released: its dispatch has resolved and none is in flight"
+  else
+    guard_log dispatch "$TYPE" note \
+      "writer slot $held for $2 could not be released (register exit $rc); the acquire decides on the TTL instead"
+  fi
+  return 0
+}
+
 TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
@@ -283,192 +385,6 @@ $REFUSED
 EOF
 fi
 
-# Workspace isolation for git-mutating dispatches ({builder, executor,
-# deployer, test-author}). Only these roles are policed; skip the scan entirely
-# otherwise.
-IS_SERIALIZED_ROLE=0
-for name in $GIT_SERIALIZED_ROLES; do
-  if [ "$TYPE" = "$name" ]; then
-    IS_SERIALIZED_ROLE=1
-    break
-  fi
-done
-
-# Normalize a declared worktree path for comparison: trim surrounding blanks
-# and any trailing slashes, so ".../wt", ".../wt/" and ".../wt  " are one
-# directory. Purely textual — the path need not exist yet, since the builder
-# creates it.
-normalize_worktree() {
-  printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's:/*$::'
-}
-
-if [ "$IS_SERIALIZED_ROLE" -eq 1 ]; then
-  PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
-  case "$PROMPT" in
-    *"$PARALLEL_SAFE_MARKER"*) exit 0 ;;
-  esac
-
-  # The worktree this dispatch declares for itself, if any.
-  DECLARED_WORKTREE="$(normalize_worktree "$(
-    # Read exactly as the runtime reads it: at the START of a line. Tolerating
-    # leading whitespace here while the worktree guard requires column zero let an
-    # indented declaration pass the dispatch and then fail every action afterwards
-    # — two rules for one line is how a dispatch looks fine and the builder dies.
-    printf '%s\n' "$PROMPT" | sed -n "s/^${WORKTREE_MARKER_PREFIX}[[:space:]]*//p" | head -n1
-  )")"
-
-  WORKTREE_REQUIRED=0
-  for name in $WORKTREE_REQUIRED_ROLES; do
-    if [ "$TYPE" = "$name" ]; then
-      WORKTREE_REQUIRED=1
-      break
-    fi
-  done
-
-  if [ "$WORKTREE_REQUIRED" -eq 1 ] && [ -z "$DECLARED_WORKTREE" ]; then
-    guard_log dispatch "$TYPE" block "no worktree declared"
-    printf 'agent-team dispatch guard: a %s dispatch must declare its own unique worktree. policy:workspace-isolation gives every builder a private git worktree created before any code is touched, and this guard cannot prove two builders are disjoint without the declaration. Add one line to the dispatch:\n  %s <project>/.claude/worktrees/<task-slug>-<builder-instance>\nUse a path no other live dispatch is using, and never the parent checkout.\n' \
-      "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
-    exit 2
-  fi
-
-  # The declaration must be a path, and for a builder it must be a worktree that
-  # already exists. Both refusals used to arrive after launch, from the worktree
-  # guard, phrased as "the declared worktree <...> is not a registered linked git
-  # worktree" — which reads as a guard defect, not as "your line is malformed."
-  # On 2026-08-04 that cost seven dispatches: one declaration carried a
-  # parenthetical after the path, so the directory being looked for was a
-  # paragraph, and three others named a worktree that had been removed an hour
-  # earlier. Every one of those was knowable here, before a builder was launched.
-  if [ -n "$DECLARED_WORKTREE" ]; then
-    case "$DECLARED_WORKTREE" in
-      /*) ;;
-      *)
-        guard_log dispatch "$TYPE" block "worktree declaration is not absolute"
-        printf 'agent-team dispatch guard: the %s line in this dispatch is "%s", which is not an absolute path. Declare one absolute path and nothing else:\n  %s /absolute/path/to/the/worktree\n' \
-          "$WORKTREE_MARKER_PREFIX" "$DECLARED_WORKTREE" "$WORKTREE_MARKER_PREFIX" >&2
-        exit 2
-        ;;
-    esac
-    case "$DECLARED_WORKTREE" in
-      *[[:space:]]*|*'('*|*')'*|*';'*|*','*)
-        guard_log dispatch "$TYPE" block "worktree declaration carries more than a path"
-        printf 'agent-team dispatch guard: the %s line in this dispatch carries more than a path:\n  %s\nEverything after "%s" to the end of that line is read as the directory name, so the worktree being looked for is that whole string and no such directory exists. Put the path alone on the line and move the explanation to its own line:\n  %s /absolute/path/to/the/worktree\n' \
-          "$WORKTREE_MARKER_PREFIX" "$DECLARED_WORKTREE" "$WORKTREE_MARKER_PREFIX" "$WORKTREE_MARKER_PREFIX" >&2
-        exit 2
-        ;;
-    esac
-  fi
-  # A builder cannot create the worktree it is given — this guard confines it there
-  # and the worktree guard refuses Git aimed outside it — so for a builder the
-  # directory has to exist before the dispatch, and a missing one is fatal on
-  # arrival. Other git-mutating roles may legitimately be dispatched to create one,
-  # so their declaration is checked for shape only.
-  if [ "$WORKTREE_REQUIRED" -eq 1 ] && [ -n "$DECLARED_WORKTREE" ]; then
-    if [ ! -d "$DECLARED_WORKTREE" ]; then
-      guard_log dispatch "$TYPE" block "declared worktree does not exist: $DECLARED_WORKTREE"
-      printf 'agent-team dispatch guard: this %s dispatch declares the worktree %s, which does not exist. A builder cannot create it — it is confined to that path and refused Git aimed anywhere else — so it would be refused every action it took. Create the worktree first:\n  git -C <project> worktree add %s\nthen re-issue this dispatch. If an earlier dispatch used a worktree that has since been removed, name the one that exists now.\n' \
-        "$TYPE" "$DECLARED_WORKTREE" "$DECLARED_WORKTREE" >&2
-      exit 2
-    fi
-    if ! { [ -f "$DECLARED_WORKTREE/.git" ] \
-           && head -n1 "$DECLARED_WORKTREE/.git" 2>/dev/null \
-              | grep -Eq '^gitdir: .*/\.git/worktrees/[^/]+[[:space:]]*$'; }; then
-      guard_log dispatch "$TYPE" block "declared path is not a linked worktree: $DECLARED_WORKTREE"
-      printf 'agent-team dispatch guard: this %s dispatch declares %s, which exists but is not a registered linked git worktree — so it gives no isolation from the shared checkout or from another builder, and the worktree guard would refuse every write into it. Create a real worktree and declare that path instead:\n  git -C <project> worktree add <project>/.claude/worktrees/<task-slug>-<builder-instance>\n' \
-        "$TYPE" "$DECLARED_WORKTREE" >&2
-      exit 2
-    fi
-  fi
-
-  # A builder never works in the parent checkout. Enforced only when the
-  # harness supplies cwd; absence leaves the rule unenforced, not inverted.
-  if [ -n "$DECLARED_WORKTREE" ]; then
-    CWD="$(printf '%s' "$PARSED" | jq -r '.cwd // empty')"
-    if [ -n "$CWD" ] && [ -d "$CWD" ]; then
-      CHECKOUT_ROOT="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$CWD")"
-      if [ "$(normalize_worktree "$CHECKOUT_ROOT")" = "$DECLARED_WORKTREE" ]; then
-        guard_log dispatch "$TYPE" block "declared the parent checkout: $DECLARED_WORKTREE"
-        printf 'agent-team dispatch guard: this %s dispatch declares the parent checkout (%s) as its worktree. policy:workspace-isolation forbids a builder editing the shared checkout — create a separate worktree under %s/.claude/worktrees/ and declare that path instead.\n' \
-          "$TYPE" "$DECLARED_WORKTREE" "$CHECKOUT_ROOT" >&2
-        exit 2
-      fi
-    fi
-  fi
-
-  TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
-  if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-    # Background dispatches: the immediate tool_result is a launch stub
-    # ("Async agent launched successfully"); the dispatch is only resolved by
-    # a later task-notification carrying its tool_use id. A stub therefore
-    # does NOT clear in-flight status; a notification does.
-    # One "<role><TAB><declared worktree>" line per still-in-flight
-    # git-mutating dispatch. The worktree is read from that dispatch's own
-    # prompt, so uniqueness is judged against what each builder was actually
-    # told to use.
-    UNRESOLVED_TARGETS="$(
-      jq -rs --arg roles "$GIT_SERIALIZED_ROLES" --arg marker "$WORKTREE_MARKER_PREFIX" '
-        ($roles | split(" ")) as $serialized
-        | ([ .[] | .. | strings
-             | match("<tool-use-id>([^<]+)</tool-use-id>"; "g")
-             | .captures[0].string ] | unique) as $notified
-        | reduce .[] as $line ({};
-            ((($line.message.content // []) | if type == "array" then . else [] end))[] as $block
-            | if ($block.type == "tool_use" and $block.name == "Agent")
-              then .[$block.id] = {
-                     role: ($block.input.subagent_type // ""),
-                     worktree: (
-                       ($block.input.prompt // "")
-                       | [ splits("\n") ]
-                       | map(select(startswith($marker)))
-                       | if length == 0 then "" else (.[0] | ltrimstr($marker)) end
-                     )
-                   }
-              elif ($block.type == "tool_result" and $block.tool_use_id != null
-                    and (([$block.content] | flatten
-                          | map(if type == "object" then (.text // "") else tostring end)
-                          | join(" "))
-                         | contains("Async agent launched successfully") | not))
-              then del(.[$block.tool_use_id])
-              else . end
-          )
-        | to_entries[]
-        | select((.key as $k | $notified | index($k) | not)
-                 and (.value.role as $r | $serialized | index($r)))
-        | "\(.value.role)\t\(.value.worktree)"
-      ' "$TRANSCRIPT" 2>/dev/null
-    )"
-
-    if [ -n "$UNRESOLVED_TARGETS" ]; then
-      if [ -n "$DECLARED_WORKTREE" ]; then
-        # Declared target: the only conflict is another live dispatch in the
-        # SAME worktree. Distinct worktrees are what makes concurrent builders
-        # legal, so they pass here.
-        while IFS="$(printf '\t')" read -r other_role other_wt; do
-          [ -n "$other_role" ] || continue
-          [ -n "$other_wt" ] || continue
-          if [ "$(normalize_worktree "$other_wt")" = "$DECLARED_WORKTREE" ]; then
-            guard_log dispatch "$TYPE" block "worktree collision: $DECLARED_WORKTREE"
-            printf 'agent-team dispatch guard: worktree collision: a %s dispatch is still in flight in %s, and no two dispatches may share a worktree (policy:workspace-isolation). Give this %s its own path — %s <project>/.claude/worktrees/<task-slug>-<builder-instance> — or wait for the other dispatch to resolve if this work must follow it.\n' \
-              "$other_role" "$DECLARED_WORKTREE" "$TYPE" "$WORKTREE_MARKER_PREFIX" >&2
-            exit 2
-          fi
-        done <<EOF
-$UNRESOLVED_TARGETS
-EOF
-      else
-        # Undeclared target: cannot be proven disjoint from the shared
-        # checkout, so the old serialization still applies.
-        FIRST_ROLE="$(printf '%s\n' "$UNRESOLVED_TARGETS" | head -n1 | cut -f1)"
-        guard_log dispatch "$TYPE" block "undeclared target serialized behind $FIRST_ROLE"
-        printf 'agent-team dispatch guard: this %s dispatch declares no worktree, so it is treated as mutating the shared checkout, and a %s dispatch is still in flight. Wait for it to resolve, declare a %s path this dispatch owns, or include the exact prompt line "%s" if this dispatch makes no git mutation.\n' \
-          "$TYPE" "$FIRST_ROLE" "$WORKTREE_MARKER_PREFIX" "$PARALLEL_SAFE_MARKER" >&2
-        exit 2
-      fi
-    fi
-  fi
-fi
-
 # T12: dispatch-count budget ratchet. Missing/invalid config fails to the
 # strict side (checkpoint 10). Count is ALL Agent dispatches so far
 # (resolved + unresolved) in the transcript; this incoming dispatch would be
@@ -508,5 +424,28 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ "$DISPATCH_CHECKPOINT" -gt 
     esac
   fi
 fi
+
+# --- workspace isolation: the declaration claims the change, the hook builds it.
+# The unit of isolation is the CHANGE, so this guard no longer checks a path somebody
+# else was supposed to have created: it claims the change in the work register and then
+# creates or adopts its worktree. What replaced the old transcript collision scan is the
+# register's writer slot — two live writers in one change are decided by a file on disk,
+# never by re-reading conversation history, which is the 2026-08-04 defect where one
+# malformed declaration poisoned every later builder. The mechanics are one file over, in
+# agent-team-dispatch-change.sh, and they are not optional: without them no dispatch can
+# be checked for workspace isolation at all.
+#
+# It runs LAST, after every read-only check above, because it is the only part of this
+# guard with SIDE EFFECTS: it claims the change, builds the worktree, and takes the
+# writing turn. Ordered before the budget ratchet, a checkpoint-blocked dispatch left a
+# claim, a tree and a phantom writer slot behind, and the honest retry was then refused by
+# a writer that had never run. The ratchet is read-only, so ordering it first costs
+# nothing; every check that can refuse this dispatch has already had its say.
+if ! command -v dispatch_change_gate >/dev/null 2>&1; then
+  guard_log dispatch "$TYPE" block "dispatch change library missing"
+  printf 'agent-team dispatch guard: agent-team-dispatch-change.sh is missing beside this guard, so no dispatch can be checked for workspace isolation and no change can be claimed — the install is incomplete. Blocking rather than failing open; re-run: bash install.sh\n' >&2
+  exit 2
+fi
+dispatch_change_gate
 
 exit 0

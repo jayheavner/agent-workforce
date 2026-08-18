@@ -45,15 +45,37 @@ grep -q "is builder work" "$AGENTS/executor.md" \
 grep -q "Agent(executor)" "$AGENTS/orchestrator.md" && ok || no "orchestrator tools include Agent(executor)"
 grep -q "executor" "$HERE/../hooks/agent-team-dispatch-guard.sh" && ok || no "dispatch guard admits executor"
 
-# workspace-isolation is enforced on the builder in both directions: prevention
-# before each write, and a Stop backstop that refuses completion outside a real
-# worktree. Both must stay wired or the policy is prose again.
-grep -q 'agent-team-worktree-guard.sh builder' "$AGENTS/builder.md" \
-  && ok || no "builder wires the worktree guard"
-awk '/^  PreToolUse:/{p=1} /^  PostToolUse:/{p=0} p && /worktree-guard/{found=1} END{exit !found}' "$AGENTS/builder.md" \
-  && ok || no "builder wires the worktree guard as PreToolUse prevention"
-awk '/^  (Stop|SubagentStop):/{p=1} /^  (PreToolUse|PostToolUse):/{p=0} p && /worktree-guard/{found=1} END{exit !found}' "$AGENTS/builder.md" \
-  && ok || no "builder wires the worktree guard as a Stop backstop"
+# workspace-isolation is enforced on every role that can write, and the guard's
+# own POLICED_ROLES list is the set: a role in that list with no hook entry is
+# policed by nobody, and the policy is prose again for it. The guard is wired on
+# writing tools only (PreToolUse), never on Read, Glob or Grep — that reads are
+# never gated is a property of this wiring, not of a sentence inside the guard.
+POLICED_ROLES="builder test-author architect scribe executor deployer verifier reviewer debugger ops"
+for a in $POLICED_ROLES; do
+  f="$AGENTS/$a.md"
+  [ -f "$f" ] || { no "$a.md exists"; continue; }
+  grep -q "agent-team-worktree-guard.sh $a" "$f" \
+    && ok || no "$a wires the worktree guard"
+  awk -v role="$a" '/^  PreToolUse:/{p=1} /^  (PostToolUse|Stop|SubagentStop):/{p=0}
+       p && index($0, "worktree-guard.sh " role){found=1} END{exit !found}' "$f" \
+    && ok || no "$a wires the worktree guard as PreToolUse prevention"
+  awk '/^  PreToolUse:/{p=1} /^  (PostToolUse|Stop|SubagentStop):/{p=0}
+       p && /matcher:/ && (/Read/ || /Glob/ || /Grep/){bad=1} END{exit bad}' "$f" \
+    && ok || no "$a does not gate reads (matcher names Read, Glob or Grep)"
+done
+# The Stop/SubagentStop backstop, for the roles whose work is a commit: a role
+# that finishes outside a real workspace leaves evidence on the guard log rather
+# than a silent success.
+for a in builder test-author executor deployer; do
+  awk -v role="$a" '/^  (Stop|SubagentStop):/{p=1} /^  (PreToolUse|PostToolUse):/{p=0}
+       p && index($0, "worktree-guard.sh " role){found=1} END{exit !found}' "$AGENTS/$a.md" \
+    && ok || no "$a wires the worktree guard as a Stop backstop"
+done
+# The guard's own list and this test's list are the same list.
+for a in $POLICED_ROLES; do
+  grep -q "POLICED_ROLES=.*$a" "$HERE/../hooks/agent-team-worktree-guard.sh" \
+    && ok || no "the worktree guard's POLICED_ROLES names $a"
+done
 grep -q 'agent-team-worktree-guard.sh' "$HERE/../install.sh" \
   && ok || no "install.sh installs the worktree guard"
 
@@ -107,6 +129,60 @@ grep -q "ACCEPTANCE CRITERIA" "$HERE/../hooks/agent-team-dispatch-guard.sh" && o
 # plugin router runs it on its cost route.
 grep -q 'agent-team-interrupt-guard.sh' "$AGENTS/orchestrator.md" && ok || no "orchestrator wires the interrupt guard"
 grep -q 'agent-team-interrupt-guard.sh' "$HERE/../hooks/agent-team-plugin-router.sh" && ok || no "plugin router runs the interrupt guard"
+
+# The unit of isolation is the CHANGE, and its workspace is a hook side effect: no
+# role document may tell an agent to build one. Until 2026-08-18 the orchestrator's
+# own document said "You create each builder's worktree before you dispatch it" —
+# a git mutation by the one role forbidden to mutate git, and an instruction the
+# runtime no longer honours, since the dispatch guard builds or adopts the tree
+# from the declaration itself.
+CREATE_HITS="$(grep -rniE 'worktree add' "$AGENTS" 2>/dev/null | tr '\n' ' ')"
+[ -z "$CREATE_HITS" ] && ok || no "no agent document runs a worktree-add ($CREATE_HITS)"
+CREATE_HITS="$(grep -rniE 'you create|create your own|create its own|creates and works in its own|create (a|the|each|every) [^.]{0,40}worktree' \
+  "$AGENTS" 2>/dev/null | tr '\n' ' ')"
+[ -z "$CREATE_HITS" ] && ok || no "no agent document instructs an agent to create a workspace ($CREATE_HITS)"
+
+# The declaration rule itself, in the document of the role that declares it, and the
+# retired marker gone from it: a line no guard reads is worse than no line at all.
+grep -q "$(printf 'CHANGE:')" "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator states the CHANGE: declaration rule"
+grep -q 'CHANGE: <slug>' "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator gives the CHANGE: line in its exact shape"
+grep -q 'WORKTREE:' "$AGENTS/orchestrator.md" \
+  && no "orchestrator still names the retired WORKTREE: declaration" || ok
+grep -rq 'WORKTREE:' "$AGENTS" \
+  && no "an agent document still names the retired WORKTREE: declaration ($(grep -rl 'WORKTREE:' "$AGENTS" | tr '\n' ' '))" || ok
+
+# "Which roles hold writing tools" must be answerable from the file, for every role:
+# the worktree guard's four rule sets and its exemptions are derived from that fact.
+for f in "$AGENTS"/*.md; do
+  a="$(basename "$f" .md)"
+  grep -qE '^(tools|disallowedTools):' "$f" \
+    && ok || no "$a declares its tools (tools: or disallowedTools:)"
+done
+
+# The researcher and the ticketer are exempt from the worktree guard, and the reason
+# is that they hold nothing to police. Keep that true or the exemption is a hole.
+for a in researcher ticketer; do
+  DENIED="$(awk -F': *' '/^disallowedTools:/{print $2; exit}' "$AGENTS/$a.md")"
+  for t in Write Edit NotebookEdit Bash; do
+    printf '%s\n' "$DENIED" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+      | grep -qx "$t" && ok || no "$a still denies the $t tool"
+  done
+  grep -q 'agent-team-worktree-guard.sh' "$AGENTS/$a.md" \
+    && no "$a needs no worktree guard (it denies every writing tool)" || ok
+done
+
+# The judges and the diagnostic roles are refused writes where it cannot be reasoned
+# past — the tool layer. The Bash patterns in the guard are defence in depth on top of
+# this, never what the guarantee rests on.
+for a in verifier reviewer debugger ops; do
+  ATOOLS="$(awk -F': *' '/^tools:/{print $2; exit}' "$AGENTS/$a.md")"
+  for t in Write Edit NotebookEdit; do
+    printf '%s\n' "$ATOOLS" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+      | grep -qx "$t" && no "$a must not carry the $t tool" || ok
+  done
+done
 
 # The skill mirror (skill-mode sessions run without hooks) carries the same
 # contracts, and the Codex dispatcher enforces the report marker mechanically.

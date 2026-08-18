@@ -71,8 +71,8 @@ architectural problem; question the pattern instead of attempting fix #4.
 Resolve `policy:workspace-isolation` from the project policy and state the
 resolved value and its source — project policy / user policy / judgment
 default — before the fix touches any file, and create that workspace first.
-Where no policy defines it: open your own unique worktree inside the project
-folder and make the fix only there.
+Where no policy defines it: the fix gets its own worktree inside the project
+folder, and the repair happens only there.
 
 Write the regression test before the fix, at a seam where the test exercises the
 real bug pattern as it occurred. If the only available seam is too shallow to
