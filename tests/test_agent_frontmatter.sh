@@ -130,6 +130,60 @@ grep -q "ACCEPTANCE CRITERIA" "$HERE/../hooks/agent-team-dispatch-guard.sh" && o
 grep -q 'agent-team-interrupt-guard.sh' "$AGENTS/orchestrator.md" && ok || no "orchestrator wires the interrupt guard"
 grep -q 'agent-team-interrupt-guard.sh' "$HERE/../hooks/agent-team-plugin-router.sh" && ok || no "plugin router runs the interrupt guard"
 
+# The unit of isolation is the CHANGE, and its workspace is a hook side effect: no
+# role document may tell an agent to build one. Until 2026-08-18 the orchestrator's
+# own document said "You create each builder's worktree before you dispatch it" —
+# a git mutation by the one role forbidden to mutate git, and an instruction the
+# runtime no longer honours, since the dispatch guard builds or adopts the tree
+# from the declaration itself.
+CREATE_HITS="$(grep -rniE 'worktree add' "$AGENTS" 2>/dev/null | tr '\n' ' ')"
+[ -z "$CREATE_HITS" ] && ok || no "no agent document runs a worktree-add ($CREATE_HITS)"
+CREATE_HITS="$(grep -rniE 'you create|create your own|create its own|creates and works in its own|create (a|the|each|every) [^.]{0,40}worktree' \
+  "$AGENTS" 2>/dev/null | tr '\n' ' ')"
+[ -z "$CREATE_HITS" ] && ok || no "no agent document instructs an agent to create a workspace ($CREATE_HITS)"
+
+# The declaration rule itself, in the document of the role that declares it, and the
+# retired marker gone from it: a line no guard reads is worse than no line at all.
+grep -q "$(printf 'CHANGE:')" "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator states the CHANGE: declaration rule"
+grep -q 'CHANGE: <slug>' "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator gives the CHANGE: line in its exact shape"
+grep -q 'WORKTREE:' "$AGENTS/orchestrator.md" \
+  && no "orchestrator still names the retired WORKTREE: declaration" || ok
+grep -rq 'WORKTREE:' "$AGENTS" \
+  && no "an agent document still names the retired WORKTREE: declaration ($(grep -rl 'WORKTREE:' "$AGENTS" | tr '\n' ' '))" || ok
+
+# "Which roles hold writing tools" must be answerable from the file, for every role:
+# the worktree guard's four rule sets and its exemptions are derived from that fact.
+for f in "$AGENTS"/*.md; do
+  a="$(basename "$f" .md)"
+  grep -qE '^(tools|disallowedTools):' "$f" \
+    && ok || no "$a declares its tools (tools: or disallowedTools:)"
+done
+
+# The researcher and the ticketer are exempt from the worktree guard, and the reason
+# is that they hold nothing to police. Keep that true or the exemption is a hole.
+for a in researcher ticketer; do
+  DENIED="$(awk -F': *' '/^disallowedTools:/{print $2; exit}' "$AGENTS/$a.md")"
+  for t in Write Edit NotebookEdit Bash; do
+    printf '%s\n' "$DENIED" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+      | grep -qx "$t" && ok || no "$a still denies the $t tool"
+  done
+  grep -q 'agent-team-worktree-guard.sh' "$AGENTS/$a.md" \
+    && no "$a needs no worktree guard (it denies every writing tool)" || ok
+done
+
+# The judges and the diagnostic roles are refused writes where it cannot be reasoned
+# past — the tool layer. The Bash patterns in the guard are defence in depth on top of
+# this, never what the guarantee rests on.
+for a in verifier reviewer debugger ops; do
+  ATOOLS="$(awk -F': *' '/^tools:/{print $2; exit}' "$AGENTS/$a.md")"
+  for t in Write Edit NotebookEdit; do
+    printf '%s\n' "$ATOOLS" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+      | grep -qx "$t" && no "$a must not carry the $t tool" || ok
+  done
+done
+
 # The skill mirror (skill-mode sessions run without hooks) carries the same
 # contracts, and the Codex dispatcher enforces the report marker mechanically.
 SKILL="$HERE/../skills/agent-workforce/SKILL.md"

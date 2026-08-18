@@ -17,7 +17,7 @@ finishing-a-branch eval record for `docstrings`.
 - docstrings — documentation mandate (consumers: via reviewing; observed in finishing-a-branch eval runs)
 - git-conventions — commit/branch/init rules (consumers: finishing-a-branch)
 - dependency-freshness — how dependency versions are chosen and pinned (consumers: planning)
-- workspace-isolation — one unique worktree per builder, created before any code is touched (consumers: planning, tdd, debugging, finishing-a-branch)
+- workspace-isolation — one worktree per change, claimed in the work register and created by the dispatch guard before any agent writes; every git-mutating dispatch declares `CHANGE: <slug>` (consumers: planning, tdd, debugging, finishing-a-branch)
 - test-naming — recommended test naming convention (consumers: via reviewing)
 
 ## review-policy
