@@ -209,6 +209,66 @@ case_writer_release_foreign_slot_refused() {
   expect_there "$lock" 'the slot file after a nameless release'
 }
 
+# A matching slot NAME is not identity, and the acquire used to treat one as its own
+# re-entry and return success. Two dispatches that both compute `builder#0` — what happens
+# whenever the transcript cannot be read twice — were therefore two live writers in one
+# change, the exact condition the slot exists to prevent. Re-entry now also requires the
+# slot file to record THIS incarnation of the claim: the session and the `opened` stamp the
+# card carries now, the same pair the reap's slot take already authorises against.
+case_reacquire_foreign_session_refused() {
+  fixture reacquire-foreign || return 1
+  local cp lock out rc
+  must claim "$PROJ" shared sess-w || return 1
+  must writer-acquire "$PROJ" shared 'builder#0' || return 1
+  cp="$(card_path shared)"
+  lock="$(slot_path shared)"
+  jq -c '.session = "sess-elsewhere"' "$lock" > "$lock.tmp" && mv "$lock.tmp" "$lock" \
+    || { printf 'could not plant a slot recorded for another session'; return 1; }
+  reg writer-acquire "$PROJ" shared 'builder#0'
+  expect_rc 3 "$rc" 'a re-acquire of a slot recorded for another session refused' "$out" || return 1
+  case "$out" in
+    *'builder#0'*) ;;
+    *) printf 'expected the refusal to name the holding slot builder#0; observed %s' "$out"; return 1 ;;
+  esac
+  expect_there "$lock" "the foreign session's slot file" || return 1
+  expect_jq "$lock" '.session == "sess-elsewhere"' "the foreign session's slot left alone"
+}
+
+# --- the slug the ref name has to carry -------------------------------------
+
+# What the register says about a slug, as a caller can ask it: sourcing the library is the
+# only way in, since validation deliberately has no CLI subcommand of its own.
+valid_slug() { # $1 slug
+  bash -c '. "$1"; register_valid_slug "$2"' _ "$REG" "$1" 2>/dev/null
+}
+
+# The validator's message promises a slug the derived ref can carry, so git itself is the
+# oracle and the two cannot drift. `foo.lock` and any slug ending in a dot passed the
+# character class, so a claim was written, `git worktree add` then failed with git's raw
+# complaint, and the guard released the claim it had just written — recoverable, but one
+# churned claim per attempt, refused for a reason the message never states.
+case_illegal_ref_slug_refused() {
+  fixture ref-slug || return 1
+  local s want got out rc
+  for s in ok-slug a.b x_1 end- foo.lock 'foo.' 'a..b' '.hidden'; do
+    if git check-ref-format "refs/heads/change/$s" >/dev/null 2>&1; then want=legal; else want=illegal; fi
+    if valid_slug "$s"; then got=legal; else got=illegal; fi
+    [ "$want" = "$got" ] \
+      || { printf 'expected register_valid_slug to agree with git check-ref-format about "%s": git says %s, the register says %s' \
+           "$s" "$want" "$got"; return 1; }
+  done
+  reg claim "$PROJ" foo.lock sess-ref
+  expect_rc 6 "$rc" 'a claim on a slug whose ref name is illegal refused' "$out" || return 1
+  # And the refusal has to state the rule it applied — echoing the slug back is not a
+  # reason, and a reader told only "lower-case letters, digits, dot, dash, underscore"
+  # cannot see what is wrong with `foo.lock`.
+  case "$out" in
+    *"ref name"*) ;;
+    *) printf 'expected the refusal to name the derived ref name as the reason "foo.lock" is illegal; observed %s' "$out"; return 1 ;;
+  esac
+  expect_gone "$(card_path foo.lock)" 'no claim written for a slug the ref name cannot carry'
+}
+
 # --- reaping ----------------------------------------------------------------
 
 # An abandoned take token is crash debris, not a holder — but recovering from it
@@ -296,6 +356,9 @@ run_case 'writer slot is exclusive' case_writer_slot_exclusive
 run_case 'a stale writer slot is releasable' case_stale_writer_releasable
 run_case 'writer release by the holding slot succeeds' case_writer_release_by_holder
 run_case 'writer release naming a different slot is refused' case_writer_release_foreign_slot_refused
+run_case 'a re-acquire with a matching name but a foreign session is refused' \
+  case_reacquire_foreign_session_refused
+run_case 'a slug that derives an illegal ref is refused' case_illegal_ref_slug_refused
 run_case 'a card behind an abandoned token is reaped on a later pass' case_abandoned_token_reaped_later
 run_case "reap leaves a new claim's writer slot alone" case_reap_keeps_new_claim_slot
 run_case "reap leaves a resumed session's fresh writer slot alone" case_reap_keeps_resumed_session_slot

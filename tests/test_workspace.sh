@@ -171,6 +171,27 @@ case_ensure_refuses_unignored() {
   return 0
 }
 
+# The state a brand-new project is actually in the first time it is dispatched: the
+# gitignore line the refusal above tells the human to add — `.claude/worktrees/`, with the
+# trailing slash — and no such directory yet. A trailing-slash pattern matches only an
+# EXISTING directory, so asking git about the bare path refused every first-ever dispatch
+# in a project that had done exactly what it was told, in a loop nothing could break.
+case_ensure_accepts_trailing_slash_ignore() {
+  fixture first-ever || { printf 'fixture setup failed'; return 1; }
+  rm -rf "$PROJ/.claude" || return 1
+  local out rc
+  out="$(ws ensure "$PROJ" firstever main)"; rc=$?
+  [ "$rc" -eq 0 ] \
+    || { printf 'expected exit 0 for a correctly ignored project whose worktree directory does not exist yet; observed exit=%s out=%s' "$rc" "$out"; return 1; }
+  listed_at "$WTPATH/firstever" refs/heads/change/firstever \
+    || { printf 'expected the first-ever tree created and registered; observed %s' \
+         "$(git -C "$PROJ" worktree list --porcelain | tr '\n' ' ')"; return 1; }
+  [ -z "$(git -C "$PROJ" status --porcelain)" ] \
+    || { printf 'expected the new tree to leave the shared checkout clean; observed %s' \
+         "$(git -C "$PROJ" status --porcelain | tr '\n' ' ')"; return 1; }
+  return 0
+}
+
 # --- integrate --------------------------------------------------------------
 
 # A claimed, ready change with one commit in its own tree.
@@ -372,6 +393,8 @@ run_case 'ensure refuses a tree registered at another ref' case_ensure_refuses_o
 run_case 'ensure prunes a stale registration and retries' case_ensure_prunes_stale
 run_case 'ensure attaches to an existing ref whose tree was removed' case_ensure_attaches_existing_ref
 run_case 'ensure refuses when the worktree directory is not gitignored' case_ensure_refuses_unignored
+run_case 'ensure accepts a gitignore whose pattern has a trailing slash and no directory yet' \
+  case_ensure_accepts_trailing_slash_ignore
 run_case 'integrate refuses a dirty change tree' case_integrate_refuses_dirty
 run_case 'integrate refuses when HEAD is not the integration ref' case_integrate_refuses_wrong_head
 run_case 'integrate merges, removes the tree, deletes the ref, and releases the card' case_integrate_merges_and_releases

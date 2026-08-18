@@ -70,8 +70,10 @@ register_take_token_live() { # $1 token
 # first removes and re-creates, the second's removal then takes the FIRST's fresh
 # token and it re-creates in turn, so two processes hold "the" exclusive take and
 # the later unlink lands on whatever the winner has already put at the path. So an
-# abandoned token is left to register_sweep_debris, which every reap runs last: the
-# token goes as debris and the path is taken on the next pass, one cycle later.
+# abandoned token is left to register_sweep_debris (in agent-team-register-lib.sh,
+# because a sweep is authorised by liveness rather than by contention), which every
+# reap runs last: the token goes as debris and the path is taken on the next pass,
+# one cycle later.
 register_take_file() { # $1 path $2 digest-of-the-judged-bytes
   local path="$1" want="${2:-}" token
   [ -n "$want" ] || return 1
@@ -151,36 +153,6 @@ register_writer_displace() { # $1 card $2 slot-file $3 ttl $4 now
   return "$rc"
 }
 
-# Crash debris: a merged rewrite's temp file (`<card>.rewrite.<pid>`), a take's pin
-# (`<card>.pin.<pid>`), a displacer's pin (`<slot-file>.stale.<pid>`), and an
-# abandoned take token. None of them can ever be read as a timecard — no card glob
-# matches them — but nothing swept them either, so a crash between the jq and the mv
-# of a rewrite left one behind forever. A file whose trailing pid is gone, and a
-# token whose taker is gone, have no owner that could still be writing them.
-#
-# Noted limit, deliberately left as it is: a trailing pid is checked with `kill -0`
-# alone, without the process-start-time half that register_alive uses, because the
-# file name carries a pid and nothing else. A RECYCLED pid therefore reads as the
-# original owner and its debris survives this sweep. That error is in the safe
-# direction — debris is kept, never a live writer's file removed — and the next
-# sweep after the recycled pid exits collects it.
-register_sweep_debris() { # $1 dir
-  local f pid
-  [ -d "$1" ] || return 0
-  for f in "$1"/*.rewrite.* "$1"/*.pin.* "$1"/*.stale.*; do
-    [ -f "$f" ] || continue
-    pid="${f##*.}"
-    case "$pid" in '' | *[!0-9]*) continue ;; esac
-    kill -0 "$pid" 2>/dev/null && continue
-    rm -f "$f" && printf 'swept %s abandoned-rewrite\n' "$(basename "$f")"
-  done
-  for f in "$1"/.take.*; do
-    [ -f "$f" ] || continue
-    register_take_token_live "$f" && continue
-    rm -f "$f" && printf 'swept %s abandoned-take-token\n' "$(basename "$f")"
-  done
-}
-
 # The writer slot is exclusive by the SAME primitive the claim is: an atomic
 # exclusive create of a path. It cannot be a field inside the card guarded by a read
 # — two guards firing from one dispatch message both read an empty slot, both merge
@@ -223,7 +195,7 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot
     return 5
   }
   cur="$(jq -r '.slot // empty' "$lock" 2>/dev/null)"
-  if [ -n "$cur" ] && [ "$cur" = "$3" ]; then
+  if [ -n "$cur" ] && [ "$cur" = "$3" ] && register_writer_slot_is_ours "$card" "$lock"; then
     register_write_merged "$lock" '.heartbeat = $hb' --argjson hb "$now" >/dev/null 2>&1
     register_writer_record "$card" "$3" "$now"
     return
@@ -242,6 +214,22 @@ register_writer_acquire() { # $1 project-dir $2 slug $3 slot
   printf 'register: the writer slot for %s could not be displaced; %s holds it now\n' \
     "$2" "$(jq -r '.slot // "an unnamed writer"' "$lock" 2>/dev/null)" >&2
   return 3
+}
+
+# Does the slot file record THIS incarnation of the claim — the session and the
+# `opened` stamp the card carries now? A matching slot NAME is not identity, and
+# treating one as its own re-entry granted two live writers in one change: the
+# name is `<role>#<n>` counted from a transcript, so two dispatches whose
+# transcript cannot be read both compute `builder#0` and both were told they may
+# write. The same pair register_reap authorises its slot take against, and read
+# from the card and the slot file themselves rather than trusted from the caller.
+# Unreadable either side is a NO, which refuses re-entry rather than granting a
+# second writer.
+register_writer_slot_is_ours() { # $1 card $2 slot-file
+  local want got
+  want="$(jq -r '[(.session // ""), (.opened // "")] | @tsv' "$1" 2>/dev/null)"
+  got="$(jq -r '[(.session // ""), (.opened // "")] | @tsv' "$2" 2>/dev/null)"
+  [ -n "$want" ] && [ "$want" = "$got" ]
 }
 
 # The one operation that decides occupancy. The noclobber is set HERE, in this

@@ -253,7 +253,7 @@ case_stale_writer_slot_is_fail_open() {
 case_malformed_slug_refused() {
   dg_fixture bad-slug || { printf 'fixture setup failed'; return 1; }
   local s trees
-  for s in '../escape' 'Bad Slug' 'has/slash' 'UPPER'; do
+  for s in '../escape' 'Bad Slug' 'has/slash' 'UPPER' 'foo.lock' 'trailing.'; do
     run "$(dg_payload executor "Integrate it.
 CHANGE: $s
 " sess-bad "$PROJ" "")"

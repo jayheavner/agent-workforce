@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# hooks/agent-team-register-lib.sh — derived names, liveness, and safe rewrites
-# for the work register.
+# hooks/agent-team-register-lib.sh — derived names, liveness, safe rewrites, and the
+# debris sweep for the work register.
 #
 # The register (agent-team-register.sh) holds the claim decisions; this file holds
 # everything those decisions are computed FROM: where a timecard lives, which
@@ -91,9 +91,16 @@ register_ref_name() { # $1 slug — the short ref; the full ref is refs/heads/<t
 }
 
 # A slug can never contain a path separator or `..`, so no card path and no
-# worktree path derived from one can escape its directory.
+# worktree path derived from one can escape its directory — and the ref name
+# derived from it has to be one git will accept, or this validator says yes and
+# `worktree add` then says no in git's own words. A trailing `.` and a `.lock`
+# suffix are the complete residue: every other rule `git check-ref-format`
+# enforces on one path component — a leading `.`, a path separator, `@{`, a bare
+# `@`, a backslash, whitespace, and `~ ^ : ? * [` — is already impossible under
+# the character class below. Kept as pure shell rather than shelling out to git,
+# because this is called on paths where no repository has been resolved yet.
 register_valid_slug() { # $1 slug
-  case "$1" in *..*) return 6 ;; esac
+  case "$1" in *..* | *. | *.lock) return 6 ;; esac
   [[ $1 =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 6
 }
 
@@ -163,6 +170,41 @@ register_ensure_dir() { # $1 dir
 # is empty, and callers treat that as "cannot tell" rather than as a verdict.
 register_link_count() { # $1 path
   stat -f %l "$1" 2>/dev/null || stat -c %h "$1" 2>/dev/null
+}
+
+# Crash debris: a merged rewrite's temp file (`<card>.rewrite.<pid>`), a take's pin
+# (`<card>.pin.<pid>`), a displacer's pin (`<slot-file>.stale.<pid>`), and an
+# abandoned take token. None of them can ever be read as a timecard — no card glob
+# matches them — but nothing swept them either, so a crash between the jq and the mv
+# of a rewrite left one behind forever. A file whose trailing pid is gone, and a
+# token whose taker is gone, have no owner that could still be writing them.
+#
+# Noted limit, deliberately left as it is: a trailing pid is checked with `kill -0`
+# alone, without the process-start-time half that register_alive uses, because the
+# file name carries a pid and nothing else. A RECYCLED pid therefore reads as the
+# original owner and its debris survives this sweep. That error is in the safe
+# direction — debris is kept, never a live writer's file removed — and the next
+# sweep after the recycled pid exits collects it.
+#
+# It lives in this library rather than beside the writer slot's exclusive take, though
+# every reap runs it last: what authorises a sweep is LIVENESS — the trailing pid has
+# no process behind it — which is a fact one reader decides alone, not a fact two
+# processes contend for. That is this file's half of the split.
+register_sweep_debris() { # $1 dir
+  local f pid
+  [ -d "$1" ] || return 0
+  for f in "$1"/*.rewrite.* "$1"/*.pin.* "$1"/*.stale.*; do
+    [ -f "$f" ] || continue
+    pid="${f##*.}"
+    case "$pid" in '' | *[!0-9]*) continue ;; esac
+    kill -0 "$pid" 2>/dev/null && continue
+    rm -f "$f" && printf 'swept %s abandoned-rewrite\n' "$(basename "$f")"
+  done
+  for f in "$1"/.take.*; do
+    [ -f "$f" ] || continue
+    register_take_token_live "$f" && continue
+    rm -f "$f" && printf 'swept %s abandoned-take-token\n' "$(basename "$f")"
+  done
 }
 
 # Every rewrite goes through here: read the existing object, MERGE the changed

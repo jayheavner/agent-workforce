@@ -67,7 +67,7 @@ unset register_sibling
 # because a session keeps its id across a resume and gets a new process.
 register_claim() { # $1 project-dir $2 slug $3 session-id
   register_valid_slug "$2" || {
-    printf 'register: "%s" is not a legal change slug (lower-case letters, digits, dot, dash, underscore; no path separator, no "..")\n' \
+    printf 'register: "%s" is not a legal change slug (lower-case letters, digits, dot, dash, underscore; no path separator, no ".."; and because the ref name refs/heads/change/<slug> is derived from it, it may not end in a dot or in ".lock")\n' \
       "$2" >&2
     return 6
   }

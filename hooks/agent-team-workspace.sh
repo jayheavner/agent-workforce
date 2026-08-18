@@ -60,7 +60,14 @@ workspace_ensure() { # $1 project-root $2 slug $3 base-ref
   }
   # An un-ignored worktree directory turns every change into dirt in the shared
   # checkout, so this is refused before anything is created.
-  if ! git -C "$1" check-ignore -q .claude/worktrees 2>/dev/null; then
+  #
+  # The question is asked about the CHILD path this change is about to create, never about
+  # the bare directory: `.claude/worktrees/` — the trailing-slash line this refusal itself
+  # tells the human to add — matches only a directory that already EXISTS, so asking about
+  # the bare path refused every first-ever dispatch in a project that had done exactly what
+  # it was told, and the refusal's own repair was already done. A child path matches under
+  # either form of the pattern, whether or not the directory is there yet.
+  if ! git -C "$1" check-ignore -q ".claude/worktrees/$2" 2>/dev/null; then
     printf 'workspace: .claude/worktrees is not ignored in %s, so a change worktree would show up as untracked dirt in the shared checkout. Repair: add the line ".claude/worktrees/" to %s/.gitignore\n' \
       "$1" "$1" >&2
     return 7

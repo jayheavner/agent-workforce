@@ -44,15 +44,22 @@ dispatch_change_gate() {
   # The two retired declarations are REFUSED, never ignored. A line the runtime no longer
   # reads is worse than no line at all: on 2026-08-04 seven dispatches were spent on a
   # declaration that looked enforced and was not.
-  RETIRED_WORKTREE_LINE="$(
-    printf '%s\n' "$PROMPT" | sed -n "s/^${RETIRED_WORKTREE_PREFIX}[[:space:]]*//p" | head -n1
-  )"
-  if [ -n "$RETIRED_WORKTREE_LINE" ]; then
-    guard_log dispatch "$TYPE" block "retired WORKTREE: declaration"
-    printf 'agent-team dispatch guard: this dispatch carries a "%s" line, which no guard reads any more, so nothing would have enforced it. The unit of isolation is the change, not the agent: one worktree per change, created by this guard, shared by every agent working on that change. Replace that line with:\n  %s <slug>\nThe worktree is then <project>/.claude/worktrees/<slug> at refs/heads/change/<slug> — derived from the slug, never passed, so every participant computes the same one.\n' \
-      "$RETIRED_WORKTREE_PREFIX" "$CHANGE_MARKER_PREFIX" >&2
-    exit 2
-  fi
+  #
+  # Detection is the MARKER's presence at the start of a line, never a non-empty capture
+  # after it. Extracting the remainder and refusing only a non-empty one let a bare
+  # `WORKTREE:` line — no path — be silently ignored, which is precisely the outcome this
+  # rule forbids. The remainder is no part of the decision: the message names the prefix and
+  # its replacement and quotes no path. A two-arm `case` on the prompt matches the marker at
+  # the very start or immediately after a newline, so it needs no subprocess and no regular
+  # expression and the literal cannot be misinterpreted.
+  case "$PROMPT" in
+    "$RETIRED_WORKTREE_PREFIX"* | *$'\n'"$RETIRED_WORKTREE_PREFIX"*)
+      guard_log dispatch "$TYPE" block "retired WORKTREE: declaration"
+      printf 'agent-team dispatch guard: this dispatch carries a "%s" line, which no guard reads any more, so nothing would have enforced it. The unit of isolation is the change, not the agent: one worktree per change, created by this guard, shared by every agent working on that change. Replace that line with:\n  %s <slug>\nThe worktree is then <project>/.claude/worktrees/<slug> at refs/heads/change/<slug> — derived from the slug, never passed, so every participant computes the same one.\n' \
+        "$RETIRED_WORKTREE_PREFIX" "$CHANGE_MARKER_PREFIX" >&2
+      exit 2
+      ;;
+  esac
   case "$PROMPT" in
     *"$RETIRED_PARALLEL_SAFE"*)
       guard_log dispatch "$TYPE" block "retired PARALLEL_SAFE literal"
@@ -108,7 +115,7 @@ dispatch_change_gate() {
     fi
     if ! register_valid_slug "$DECLARED_CHANGE"; then
       guard_log dispatch "$TYPE" block "malformed change slug: $DECLARED_CHANGE"
-      printf 'agent-team dispatch guard: "%s" is not a legal change slug, so nothing was claimed and nothing was created. A slug is lower-case letters, digits, dot, dash and underscore, starts with a letter or a digit, is at most 64 characters, and can never contain a path separator or "..", because the worktree path and the ref name are derived from it. Re-issue the dispatch with one line:\n  %s <slug>\n' \
+      printf 'agent-team dispatch guard: "%s" is not a legal change slug, so nothing was claimed and nothing was created. A slug is lower-case letters, digits, dot, dash and underscore, starts with a letter or a digit, is at most 64 characters, and can never contain a path separator or "..", because the worktree path and the ref name are derived from it. For the same reason it may not end in a dot or in ".lock" — git refuses those as ref names. Re-issue the dispatch with one line:\n  %s <slug>\n' \
         "$DECLARED_CHANGE" "$CHANGE_MARKER_PREFIX" >&2
       exit 2
     fi

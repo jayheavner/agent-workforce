@@ -98,6 +98,15 @@ $CRITERIA_BODY")" \
 expect_block "$(dg_payload executor "PARALLEL_SAFE: no git mutation in this dispatch
 Run the finalizer" sess-criteria "$CRIT_PROJ" "")" \
   "the retired PARALLEL_SAFE literal is refused and names the new one"
+# Detection is the MARKER's presence at the start of a line, never a non-empty path after
+# it: a bare marker was silently ignored, which is the one outcome this rule exists to
+# forbid — "refused, never ignored". The declaration beside it is legal, so nothing else in
+# the guard could account for a refusal.
+expect_block "$(dg_payload builder "Implement it.
+WORKTREE:
+CHANGE: bare-marker
+$CRITERIA_BODY" sess-criteria "$CRIT_PROJ" "")" \
+  "a bare WORKTREE: line with no path is refused"
 expect_block "$(agent_json_p builder "Implement it.
 $CRITERIA_BODY")" \
   "a builder with neither CHANGE: nor PARALLEL_SAFE is refused"
