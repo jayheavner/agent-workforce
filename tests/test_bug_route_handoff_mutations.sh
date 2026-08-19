@@ -3,15 +3,19 @@
 # is load-bearing rather than decorative: strip the newly pinned prose from a
 # copy of each of the five pinned surfaces in turn (debugger.md,
 # orchestrator.md, builder.md, verifier.md, and the agent-workforce skill's
-# criteria-authoring sentence), plus two further targeted cases (the
-# assertion-protection clause's closing half alone, and the real line-wrapped
-# Phase-5 seam mechanics injected into a copy of builder.md) — and confirm
-# the drift test fails closed each time, naming the mutated file. A further
-# cosmetic-rewrap case proves the opposite: a rewrap of a pinned sentence
-# must NOT turn the drift test red. Copies live under a project-local scratch
-# directory (temp/, gitignored) and are removed when this finishes. Runs in
-# well under five seconds, so it is registered directly in install.sh's
-# install-test gate rather than merely named as a manual proof.
+# criteria-authoring sentence), plus further targeted cases (the
+# assertion-protection clause's closing half alone; the real line-wrapped
+# Phase-5 seam mechanics injected into a copy of builder.md; the literal
+# `[throwaway]` marker alone on each of the three surfaces that must
+# recognise it; and one Phase-5 vocabulary anchor stripped from a copy of the
+# debugging skill) — and confirm the drift test fails closed each time,
+# naming the mutated file. Two cosmetic-rewrap cases prove the opposite: a
+# rewrap of a pinned sentence in agents/builder.md and in the
+# agent-workforce skill's routing rule must NOT turn the drift test red.
+# Copies live under a project-local scratch directory (temp/, gitignored)
+# and are removed when this finishes. Runs in a few seconds — install.sh's
+# runtime budget for its whole install-test gate, not any single suite — so
+# it is registered directly there rather than merely named as a manual proof.
 #
 # A negative control runs an unmutated copy through the same drift test and
 # requires it to pass — proving the drift test isn't red by default for some
@@ -224,7 +228,41 @@ run_mutation "agents/builder.md" "builder_closing_half" "paragraph-suffix" "reli
 # injected verbatim into a copy of agents/builder.md. Proves the drift
 # test's anti-restatement check (section 6) can actually fire on the wrapped
 # form this repo's prose actually takes, not just on a hand-retyped
-# single-line version that never appears in the source.
+# single-line version that never appears in the source. Requires all three
+# PHASE5_VOCAB phrases to name their own dead pin, not just any one of the
+# three — one surviving phrase, out of three, must not be enough to call the
+# whole check alive: proven by reverting the drift test's joined_contains fix
+# to a raw-line grep, which still catches the one PHASE5_VOCAB phrase that
+# happens to sit on a single unwrapped source line while missing the other
+# two, and must therefore turn this case NOT CAUGHT.
+#
+# The three phrases are extracted straight from the live PHASE5_VOCAB array
+# in tests/test_bug_route_handoff.sh, not hand-retyped here, so this stays in
+# sync with that array rather than silently checking a stale list.
+# mapfile is bash 4+; macOS ships bash 3.2, so build the array with a
+# read loop instead — portable to both.
+PHASE5_ITEMS=()
+while IFS= read -r phase5_item; do
+  PHASE5_ITEMS+=("$phase5_item")
+done < <(python3 - "$REPO/tests/test_bug_route_handoff.sh" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"PHASE5_VOCAB=\((.*?)\n\)", text, re.S)
+if not m:
+    sys.exit("PHASE5_VOCAB array not found in tests/test_bug_route_handoff.sh")
+for line in m.group(1).splitlines():
+    line = line.strip()
+    if not line.startswith("'"):
+        continue
+    end = line.index("'", 1)
+    sys.stdout.write(line[1:end] + "\n")
+PY
+)
+if [ "${#PHASE5_ITEMS[@]}" -eq 0 ]; then
+  echo "NOT CAUGHT: restatement-injection (could not extract PHASE5_VOCAB from tests/test_bug_route_handoff.sh)"
+  FAIL=1
+fi
+
 run_restatement_injection() {
   local dest="$SCRATCH_ROOT/restatement_injection"
   local marker_file="$SCRATCH_ROOT/.marker-restatement_injection"
@@ -240,11 +278,16 @@ run_restatement_injection() {
   local out status
   out="$(bash "$dest/tests/test_bug_route_handoff.sh" 2>&1)"
   status=$?
-  if [ "$status" -ne 0 ] && printf '%s\n' "$out" | grep -qF "restates skills/debugging/SKILL.md Phase 5 verbatim"; then
+  local missing=0 item
+  for item in "${PHASE5_ITEMS[@]}"; do
+    printf '%s\n' "$out" | grep -qF "restates skills/debugging/SKILL.md Phase 5 verbatim: \"$item\"" \
+      || missing=1
+  done
+  if [ "$status" -ne 0 ] && [ "$missing" -eq 0 ]; then
     echo "CAUGHT: restatement-injection (agents/builder.md)"
     CAUGHT=$((CAUGHT+1))
   else
-    echo "NOT CAUGHT: restatement-injection (exit=$status)"
+    echo "NOT CAUGHT: restatement-injection (exit=$status, all three phrases pinned=$([ "$missing" -eq 0 ] && echo yes || echo no))"
     printf '%s\n' "$out"
     FAIL=1
   fi
@@ -252,7 +295,93 @@ run_restatement_injection() {
 }
 run_restatement_injection
 
-# 8. Cosmetic-rewrap tolerance: the builder's assertion-protection sentence,
+# 8-10. The literal ` [throwaway]` marker alone (not the whole surrounding
+# paragraph a case above already mutates) on each of the three surfaces that
+# must recognise it — debugger.md (which appends it), orchestrator.md, and
+# skills/agent-workforce/SKILL.md (which both trigger on it). Proves the
+# marker itself is load-bearing on each surface independently, not merely
+# incidental to a coarser paragraph deletion.
+run_marker_mutation() {
+  local rel="$1" label="$2"
+  local dest="$SCRATCH_ROOT/$label"
+  local err_file="$SCRATCH_ROOT/.err-$label"
+  copy_tree "$dest"
+  if ! python3 - "$dest/$rel" 2> "$err_file" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+if "[throwaway]" not in text:
+    sys.exit("literal marker '[throwaway]' not found")
+text = text.replace("[throwaway]", "", 1)
+open(path, "w", encoding="utf-8").write(text)
+PY
+  then
+    echo "NOT CAUGHT: $rel (could not strip [throwaway] marker: $(cat "$err_file"))"
+    FAIL=1
+    rm -rf "$dest"
+    return
+  fi
+  local out status
+  out="$(bash "$dest/tests/test_bug_route_handoff.sh" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ] && printf '%s\n' "$out" | grep -qF "$rel"; then
+    echo "CAUGHT: $rel ($label)"
+    CAUGHT=$((CAUGHT+1))
+  else
+    echo "NOT CAUGHT: $rel ($label, exit=$status)"
+    printf '%s\n' "$out"
+    FAIL=1
+  fi
+  rm -rf "$dest"
+}
+run_marker_mutation "agents/debugger.md" "debugger_marker"
+run_marker_mutation "agents/orchestrator.md" "orchestrator_marker"
+run_marker_mutation "skills/agent-workforce/SKILL.md" "workforce_skill_marker"
+
+# 11. Vocabulary rot: skills/debugging/SKILL.md's Phase 5 wording changes and
+# the PHASE5_VOCAB anchors the drift test's anti-restatement check (and its
+# vocabulary-rot guard) rely on silently stop matching anything. Strips one
+# anchor phrase, folded across the file's real line wraps, from a copy of
+# the skill file and requires the drift test to go red — proving that guard
+# actually fires. The real skills/debugging/SKILL.md is never touched; only
+# this scratch copy is mutated.
+run_vocab_rot() {
+  local dest="$SCRATCH_ROOT/vocab_rot"
+  local err_file="$SCRATCH_ROOT/.err-vocab_rot"
+  copy_tree "$dest"
+  if ! python3 - "$dest/skills/debugging/SKILL.md" 2> "$err_file" <<'PY'
+import re, sys
+path = sys.argv[1]
+phrase = "at a seam where the test exercises the real bug pattern as it occurred"
+text = open(path, encoding="utf-8").read()
+pattern = re.compile(r"\s+".join(re.escape(w) for w in phrase.split(" ")))
+new_text, n = pattern.subn("", text, count=1)
+if n == 0:
+    sys.exit(f"vocabulary phrase not found (folded) in {path}")
+open(path, "w", encoding="utf-8").write(new_text)
+PY
+  then
+    echo "NOT CAUGHT: vocab-rot (could not strip phrase: $(cat "$err_file"))"
+    FAIL=1
+    rm -rf "$dest"
+    return
+  fi
+  local out status
+  out="$(bash "$dest/tests/test_bug_route_handoff.sh" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ] && printf '%s\n' "$out" | grep -qiE 'vocabulary anchor'; then
+    echo "CAUGHT: skills/debugging/SKILL.md (vocab_rot)"
+    CAUGHT=$((CAUGHT+1))
+  else
+    echo "NOT CAUGHT: vocab-rot (exit=$status)"
+    printf '%s\n' "$out"
+    FAIL=1
+  fi
+  rm -rf "$dest"
+}
+run_vocab_rot
+
+# 12. Cosmetic-rewrap tolerance: the builder's assertion-protection sentence,
 # rewrapped across two lines with a two-space continuation indent (the shape
 # a markdown reflow produces), must NOT turn the drift test red — proving
 # joined_contains folds whitespace rather than just newlines. Unlike the
@@ -301,8 +430,63 @@ PY
 }
 run_rewrap_tolerance
 
+# 13. Cosmetic-rewrap tolerance, second surface: a sentence inside
+# skills/agent-workforce/SKILL.md's symptom-routing paragraph, rewrapped the
+# same way (not the paragraph-locating anchor itself — paragraph_containing
+# matches that anchor as a raw substring, so splitting the anchor across a
+# line break would make the paragraph unfindable, which is a distinct,
+# already-covered failure mode, not the cosmetic-reflow case this proves).
+# Confirms the drift test's routing-rule check (paragraph_containing + a
+# folding matcher, not a raw single-line grep) tolerates a reflow of the
+# paragraph's body text, not just in agents/builder.md.
+run_rewrap_tolerance_skill_routing() {
+  local dest="$SCRATCH_ROOT/rewrap_tolerance_skill_routing"
+  local err_file="$SCRATCH_ROOT/.err-rewrap_tolerance_skill_routing"
+  copy_tree "$dest"
+  if ! python3 - "$dest/skills/agent-workforce/SKILL.md" 2> "$err_file" <<'PY'
+import sys
+path = sys.argv[1]
+sentence = "before assigning a build tier or a builder"
+text = open(path, encoding="utf-8").read()
+idx = text.find(sentence)
+if idx == -1:
+    sys.exit(f"sentence not found in {path}")
+words = sentence.split(" ")
+mid = len(words) // 2
+wrapped = " ".join(words[:mid]) + "\n  " + " ".join(words[mid:])
+text = text[:idx] + wrapped + text[idx + len(sentence):]
+open(path, "w", encoding="utf-8").write(text)
+PY
+  then
+    echo "NOT TOLERATED: rewrap-tolerance-skill-routing (could not rewrap sentence: $(cat "$err_file"))"
+    FAIL=1
+    rm -rf "$dest"
+    return
+  fi
+  local out status
+  out="$(bash "$dest/tests/test_bug_route_handoff.sh" 2>&1)"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    echo "TOLERATED: cosmetic rewrap of skills/agent-workforce/SKILL.md's routing rule (drift test stayed GREEN)"
+    TOLERATED=$((TOLERATED+1))
+  else
+    echo "NOT TOLERATED: cosmetic rewrap of skills/agent-workforce/SKILL.md's routing rule turned the drift test red"
+    printf '%s\n' "$out"
+    FAIL=1
+  fi
+  rm -rf "$dest"
+}
+run_rewrap_tolerance_skill_routing
+
 rm -rf "$SCRATCH_ROOT"
 
 echo "caught=$CAUGHT"
 echo "tolerated=$TOLERATED"
-[ "$FAIL" -eq 0 ] && [ "$CAUGHT" -eq 7 ] && [ "$TOLERATED" -eq 1 ]
+# These counts are deliberate pins, not incidental totals: 11 CAUGHT cases
+# (debugger, orchestrator, builder, verifier, workforce_skill,
+# builder_closing_half, restatement-injection, debugger_marker,
+# orchestrator_marker, workforce_skill_marker, vocab_rot) and 2 TOLERATED
+# cases (builder.md rewrap, workforce-skill routing-rule rewrap). Adding a
+# case updates both this comment and the numbers below in the same commit —
+# a bare non-zero exit here otherwise tells the next contributor nothing.
+[ "$FAIL" -eq 0 ] && [ "$CAUGHT" -eq 11 ] && [ "$TOLERATED" -eq 2 ]

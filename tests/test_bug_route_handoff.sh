@@ -203,6 +203,18 @@ for f in "$DEBUGGER" "$ORCHESTRATOR" "$BUILDER"; do
   [ "$found" -eq 0 ] && ok
 done
 
+# Vocabulary-rot guard: the anti-restatement check above only works while
+# every PHASE5_VOCAB anchor still matches skills/debugging/SKILL.md's actual
+# Phase 5 wording. Reword that phase and these anchors stop matching
+# anything — the check above then stays green forever, having gone silently
+# toothless. Confirm every anchor is still present, folded, in the skill
+# file itself, so a rewording reds this gate instead of leaving it green.
+DEBUGGING_SKILL="$REPO/skills/debugging/SKILL.md"
+for v in "${PHASE5_VOCAB[@]}"; do
+  joined_contains "$DEBUGGING_SKILL" "$v" && ok \
+    || bad "skills/debugging/SKILL.md: Phase 5 vocabulary anchor no longer present (reworded?): \"$v\""
+done
+
 # --- 7. The rendered Codex profiles carry the same pinned prose forward, so
 # the Claude and Codex surfaces cannot silently diverge. ---
 if [ -f "$DEBUGGER_TOML" ]; then
