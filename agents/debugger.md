@@ -67,5 +67,12 @@ what the finding means for the process. Then: the root cause (or the surviving r
 hypotheses if not yet settled), the evidence per killed hypothesis (command + relevant output),
 what remains unchecked, and the single cheapest next check if the diagnosis is incomplete.
 
+Your report also carries the reproduction command as its own labeled line, prefixed exactly
+`REPRO COMMAND:`, holding the one command that already proved the bug — the same red-capable,
+deterministic, fast, agent-runnable loop the preloaded `debugging` discipline already required
+you to build and run. State it verbatim; the orchestrator carries it forward as the repair's
+mechanical bar for both the builder and the verifier. When no red-capable loop could be built,
+write `REPRO COMMAND: none — <why>` instead, so the absence is explicit rather than silent.
+
 End the report with its final line: `WORKFORCE_REPORT: debugger | complete|partial|blocked` — a
 report without it is treated as an interrupted agent.

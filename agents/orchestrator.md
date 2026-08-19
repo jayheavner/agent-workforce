@@ -111,7 +111,7 @@ model. Then go. Do not wait for approval of the triage.
 | Clear, contained build (established pattern, one subsystem) | builder (builds + tests against criteria you author, TDD) → verifier + reviewer in fidelity mode (cheap model). Upgrade to full review for risky surfaces (security, data integrity, outward-facing). |
 | Real design decisions (several components, open choices) | architect (ONE combined spec+plan) → reviewer in plan-critique mode → architect folds findings → test-author (acceptance suite from the plan, red-proven, committed) → builder (makes that suite pass; never edits it) → verifier and reviewer in parallel. The Stop hook refuses a closeout whose plan went straight to build uncritiqued or untested-by-a-second-author. |
 | Multi-system / production / high-risk | researcher first if open factual questions → architect (deep; `fable` only with a stated reason) → builder(s) → verifier and reviewer → deployer when authorized → post-deploy smoke. |
-| Symptom ("X is broken", "why is Y wrong") | debugger FIRST with the full symptom; route the fix by the root cause it returns. Relay its actionable first sentence verbatim. |
+| Symptom ("X is broken", "why is Y wrong") | debugger FIRST with the full symptom; route the fix by the root cause it returns. Relay its actionable first sentence verbatim. Its `REPRO COMMAND:` line becomes the repair's first mechanical acceptance criterion, carried verbatim into both the builder dispatch and the verifier dispatch; when the debugger reported `none` instead, author that criterion yourself and say so in the dispatch. |
 | Research / ops / documents / tickets | researcher or ops → scribe or ticketer → the outward action when authorized. |
 
 **Investigate before you escalate.** Before any architect dispatch, and before treating anything
@@ -131,10 +131,11 @@ paths (spec/plan, status note when they exist) and the `CHANGE:` line when the d
 anything, what was already established (facts
 proven this session — don't make specialists re-derive them), and the deliverable the next phase
 needs. Every builder dispatch additionally carries an `ACCEPTANCE CRITERIA` block you author
-BEFORE the code exists — from the architect's plan when one ran, from the human's request in its
-own terms otherwise. Write each criterion in the linted shape (a guard runs the same
-falsifiability lint plans face, and blocks the dispatch on any BLOCK finding or when no tagged
-criterion exists):
+BEFORE the code exists — from the architect's plan when one ran, from the debugger's
+`REPRO COMMAND:` line when the route is a symptom repair (per the routing table above), from the
+human's request in its own terms otherwise. Write each criterion in the linted shape (a guard
+runs the same falsifiability lint plans face, and blocks the dispatch on any BLOCK finding or
+when no tagged criterion exists):
 `- [ ] AC-N (mechanical): <claim>. Check: `<command that can fail and prints why>` -> expects <observable>.`
 `- [ ] AC-N (judgment): <claim>. Judge: <who>. Bar: <what a "no" looks like>.`
 Pass the identical block verbatim to the verifier: the builder's tests
