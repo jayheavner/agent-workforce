@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # tests/test_bug_route_handoff_mutations.sh — proves tests/test_bug_route_handoff.sh
 # is load-bearing rather than decorative: strip the newly pinned prose from a
-# copy of each of the three role documents in turn and confirm the drift test
-# fails closed, naming the mutated file. Copies live under a project-local
-# scratch directory (temp/, gitignored) and are removed when this finishes.
+# copy of each of the five pinned surfaces in turn (debugger.md,
+# orchestrator.md, builder.md, verifier.md, and the agent-workforce skill's
+# criteria-authoring sentence) and confirm the drift test fails closed, naming
+# the mutated file. Copies live under a project-local scratch directory
+# (temp/, gitignored) and are removed when this finishes. Runs in well under
+# five seconds, so it is registered directly in install.sh's install-test
+# gate rather than merely named as a manual proof.
+#
+# A negative control runs an unmutated copy through the same drift test and
+# requires it to pass — proving the drift test isn't red by default for some
+# unrelated reason, which would make every "CAUGHT" below meaningless. That
+# control is itself falsifiable: set MUTATION_HARNESS_SELFTEST=1 to corrupt
+# the control copy too, which must turn this harness's own exit non-zero.
 #
 # Each marker is extracted straight from the live repo file (never hand-
 # retyped), so the mutation always matches the prose actually pinned today —
@@ -114,6 +124,33 @@ run_mutation() {
   rm -rf "$dest"
 }
 
+# Negative control: an unmutated copy of the repo must pass the drift test.
+# Without this, a structural break in the drift test itself (wrong path, a
+# check that always short-circuits true) would make every mutation below
+# report CAUGHT while proving nothing.
+run_control() {
+  local dest="$SCRATCH_ROOT/control"
+  copy_tree "$dest"
+  if [ "${MUTATION_HARNESS_SELFTEST:-0}" = "1" ]; then
+    # Self-test: deliberately break the control copy's drift test so this
+    # control is itself falsifiable — if corrupting it doesn't turn the
+    # drift test red, the control was never asserting anything.
+    printf '\nthis line is not valid bash(\n' >> "$dest/tests/test_bug_route_handoff.sh"
+  fi
+  local out status
+  out="$(bash "$dest/tests/test_bug_route_handoff.sh" 2>&1)"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    echo "CONTROL: drift test passes on an unmutated copy"
+  else
+    echo "CONTROL FAILED: drift test did not pass on an unmutated copy (exit=$status)"
+    printf '%s\n' "$out"
+    FAIL=1
+  fi
+  rm -rf "$dest"
+}
+run_control
+
 # 1. agents/debugger.md — the whole REPRO COMMAND: report-line paragraph.
 run_mutation "agents/debugger.md" "debugger" "paragraph" "REPRO COMMAND:"
 
@@ -125,7 +162,15 @@ run_mutation "agents/orchestrator.md" "orchestrator" "row-suffix" "Relay its act
 # 3. agents/builder.md — the whole repair-stance paragraph.
 run_mutation "agents/builder.md" "builder" "paragraph" "Repairing a diagnosed bug"
 
+# 4. agents/verifier.md — the whole reproduction-command diff-inspection
+# paragraph.
+run_mutation "agents/verifier.md" "verifier" "paragraph" "When an acceptance criterion's Check is a reproduction"
+
+# 5. skills/agent-workforce/SKILL.md — the whole criteria-authoring
+# paragraph, which is where the mirrored REPRO COMMAND source lives.
+run_mutation "skills/agent-workforce/SKILL.md" "workforce_skill" "paragraph" "Author every builder phase's"
+
 rm -rf "$SCRATCH_ROOT"
 
 echo "caught=$CAUGHT"
-[ "$FAIL" -eq 0 ] && [ "$CAUGHT" -eq 3 ]
+[ "$FAIL" -eq 0 ] && [ "$CAUGHT" -eq 5 ]
