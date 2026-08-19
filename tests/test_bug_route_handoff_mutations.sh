@@ -148,10 +148,10 @@ run_mutation() {
   out="$(bash "$dest/tests/test_bug_route_handoff.sh" 2>&1)"
   status=$?
   if [ "$status" -ne 0 ] && printf '%s\n' "$out" | grep -qF "$rel"; then
-    echo "CAUGHT: $rel"
+    echo "CAUGHT: $rel ($label)"
     CAUGHT=$((CAUGHT+1))
   else
-    echo "NOT CAUGHT: $rel (exit=$status)"
+    echo "NOT CAUGHT: $rel ($label, exit=$status)"
     printf '%s\n' "$out"
     FAIL=1
   fi
