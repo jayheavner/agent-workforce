@@ -28,11 +28,27 @@ count_occurrences() {
   grep -o -F -- "$2" "$1" 2>/dev/null | wc -l | tr -d ' '
 }
 
-# A prose phrase can legitimately wrap across a markdown source line without
-# any semantic change, so a literal multi-word match has to look at the text
-# with line breaks folded to spaces rather than at raw source lines.
+# A prose phrase can legitimately wrap across a markdown source line — and a
+# rewrapped continuation can pick up leading indent (a list item, a quoted
+# block) — without any semantic change, so a literal multi-word match has to
+# look at the text with all newlines, tabs, and repeated spaces folded down to
+# single spaces rather than at raw source lines.
 joined_contains() {
-  tr '\n' ' ' < "$1" | grep -qF -- "$2"
+  tr '\n\t' '  ' < "$1" | tr -s ' ' | grep -qF -- "$2"
+}
+
+# Prints the whole blank-line-delimited paragraph containing $2, so a check
+# that needs "does this paragraph also require Y" is scoped to the paragraph
+# rather than to an arbitrary fixed number of following lines.
+paragraph_containing() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+path, needle = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+paras = text.split("\n\n")
+hits = [p for p in paras if needle in p]
+sys.stdout.write(hits[0] if hits else "")
+PY
 }
 
 for f in "$DEBUGGER" "$ORCHESTRATOR" "$BUILDER" "$VERIFIER" "$WORKFORCE_SKILL"; do
@@ -48,7 +64,10 @@ repro_count="$(count_occurrences "$DEBUGGER" 'REPRO COMMAND:')"
   || bad "agents/debugger.md: expected >=2 occurrences of 'REPRO COMMAND:' (report line + none-form), found ${repro_count:-0}"
 grep -q 'REPRO COMMAND: none' "$DEBUGGER" && ok \
   || bad "agents/debugger.md: missing the explicit 'REPRO COMMAND: none' form"
-none_context="$(grep -A3 'REPRO COMMAND: none' "$DEBUGGER" 2>/dev/null | tr '\n' ' ')"
+# Scoped to the whole blank-line-delimited paragraph containing the 'none'
+# form, not a fixed line count — a rewrap that pushes any of the three
+# requirements below onto a later line must not escape this check.
+none_context="$(paragraph_containing "$DEBUGGER" 'REPRO COMMAND: none' | tr '\n' ' ')"
 case "$none_context" in
   *'what you tried'*|*'what was tried'*) ok ;;
   *) bad "agents/debugger.md: the 'none' form does not require stating what was tried" ;;
@@ -116,7 +135,11 @@ grep -q 'governing loop' "$BUILDER" && ok \
   || bad "agents/builder.md: repair stance does not cite the debugging discipline as the governing loop"
 grep -q 'reproduction command' "$BUILDER" && ok \
   || bad "agents/builder.md: missing the reproduction-command assertion-protection clause"
-grep -q 'never a file to edit' "$BUILDER" && ok \
+# Scoped to the new clause's own closing half, not the pre-existing
+# acceptance-suite sentence a few lines above that happens to end the same
+# way — deleting only this clause's closing half must not still pass by
+# accident.
+joined_contains "$BUILDER" "a reproduction command you believe is wrong is a diagnosis defect to report, never a file to edit" && ok \
   || bad "agents/builder.md: does not say a wrong reproduction command is a diagnosis defect to report, never a file to edit"
 
 # --- 4. agents/verifier.md: when a criterion's Check is a reproduction
@@ -135,8 +158,18 @@ grep -q 'blocking finding' "$VERIFIER" && ok \
 skill_repro_count="$(count_occurrences "$WORKFORCE_SKILL" 'REPRO COMMAND')"
 [ "${skill_repro_count:-0}" -ge 2 ] 2>/dev/null && ok \
   || bad "skills/agent-workforce/SKILL.md: expected >=2 occurrences of 'REPRO COMMAND' (symptom-routing rule + criteria-authoring sentence), found ${skill_repro_count:-0}"
-grep -qF 'Route symptom-shaped requests' "$WORKFORCE_SKILL" && grep -q 'REPRO COMMAND' "$WORKFORCE_SKILL" && ok \
-  || bad "skills/agent-workforce/SKILL.md: symptom-routing rule does not name the debugger's REPRO COMMAND line"
+# Scoped to the routing rule's own line, not two independent file-wide
+# greps — confirming both substrings exist somewhere in the file proves
+# nothing about whether the routing sentence itself names REPRO COMMAND.
+routing_line="$(grep -F 'Route symptom-shaped requests' "$WORKFORCE_SKILL")"
+if [ -n "$routing_line" ]; then
+  case "$routing_line" in
+    *'REPRO COMMAND'*) ok ;;
+    *) bad "skills/agent-workforce/SKILL.md: symptom-routing rule does not name the debugger's REPRO COMMAND line" ;;
+  esac
+else
+  bad "skills/agent-workforce/SKILL.md: no symptom-routing rule found (expected a line starting 'Route symptom-shaped requests')"
+fi
 joined_contains "$WORKFORCE_SKILL" "from the debugger's \`REPRO COMMAND:\` line when the route is a symptom repair" && ok \
   || bad "skills/agent-workforce/SKILL.md: criteria-authoring sentence does not name the debugger's REPRO COMMAND line as a source"
 
@@ -153,7 +186,10 @@ PHASE5_VOCAB=(
 for f in "$DEBUGGER" "$ORCHESTRATOR" "$BUILDER"; do
   found=0
   for v in "${PHASE5_VOCAB[@]}"; do
-    if grep -qF -- "$v" "$f"; then
+    # joined_contains, not grep -qF: two of these three phrases exist in
+    # skills/debugging/SKILL.md only as line-wrapped text, so a raw-line
+    # match can never fire on the wrapped form actually written there.
+    if joined_contains "$f" "$v"; then
       bad "$f restates skills/debugging/SKILL.md Phase 5 verbatim: \"$v\""
       found=1
     fi
@@ -181,6 +217,21 @@ if [ -f "$BUILDER_TOML" ]; then
 else
   bad "rendered Codex builder profile not found at $BUILDER_TOML"
 fi
+
+# --- 8. A reproduction command built as a throwaway outside every checkout
+# can outlive the workspace it ran in. agents/debugger.md prefers a command
+# runnable from the checkout and, when the loop was a throwaway anyway, says
+# so plainly on the REPRO COMMAND: line; agents/orchestrator.md, on receiving
+# such a flag, authors AC-1's Check as a durable equivalent and says it did
+# so, rather than carrying forward a command that may already be gone. ---
+grep -q 'throwaway' "$DEBUGGER" && ok \
+  || bad "agents/debugger.md: does not address a throwaway reproduction command"
+joined_contains "$DEBUGGER" "since the builder and the verifier may need to run it again long after your own workspace is gone" && ok \
+  || bad "agents/debugger.md: does not say why a throwaway repro must be flagged on the REPRO COMMAND: line"
+grep -q 'throwaway' "$ORCHESTRATOR" && ok \
+  || bad "agents/orchestrator.md: does not address a throwaway reproduction command"
+joined_contains "$ORCHESTRATOR" "author AC-1's Check as a durable equivalent" && ok \
+  || bad "agents/orchestrator.md: does not author a durable Check in place of a flagged throwaway repro"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
