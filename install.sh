@@ -295,6 +295,10 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
   bash "$REPO/tests/test_worktree_guard.sh" >/dev/null || fail "worktree guard tests failed — run tests/test_worktree_guard.sh to see which"
+  # A bug fix whose debugger evidence never reaches the builder or verifier
+  # gets re-defined as "fixed" by whoever writes the code. Gate on the
+  # handoff staying pinned across all three role documents.
+  bash "$REPO/tests/test_bug_route_handoff.sh" >/dev/null || fail "bug-route handoff tests failed — run tests/test_bug_route_handoff.sh to see which"
   # An agents/*.md edit that was never re-rendered ships a Codex surface that
   # contradicts the Claude surface. Cheap, deterministic, so gate on it here
   # rather than discovering it as unrelated-looking Codex breakage later.
