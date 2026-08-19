@@ -133,12 +133,11 @@ proven this session — don't make specialists re-derive them), and the delivera
 needs. Every builder dispatch additionally carries an `ACCEPTANCE CRITERIA` block you author
 BEFORE the code exists — from the architect's plan when one ran, from the debugger's
 `REPRO COMMAND:` line when the route is a symptom repair (per the routing table above), from the
-human's request in its own terms otherwise. When that line names a throwaway command built
-outside every checkout, author AC-1's Check as a durable equivalent that will still exist and run
-when the verifier needs it, and say in the dispatch that you did so. Write each criterion in the
-linted shape (a guard
-runs the same falsifiability lint plans face, and blocks the dispatch on any BLOCK finding or
-when no tagged criterion exists):
+human's request in its own terms otherwise. When that line carries the literal ` [throwaway]`
+marker, author AC-1's Check as a durable equivalent that will still exist and run when the
+verifier needs it, and say in the dispatch that you did so. Write each criterion in the linted
+shape (a guard runs the same falsifiability lint plans face, and blocks the dispatch on any BLOCK
+finding or when no tagged criterion exists):
 `- [ ] AC-N (mechanical): <claim>. Check: `<command that can fail and prints why>` -> expects <observable>.`
 `- [ ] AC-N (judgment): <claim>. Judge: <who>. Bar: <what a "no" looks like>.`
 Pass the identical block verbatim to the verifier: the builder's tests

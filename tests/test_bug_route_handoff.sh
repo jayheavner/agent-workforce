@@ -80,10 +80,13 @@ case "$none_context" in
   *'partial'*) ok ;;
   *) bad "agents/debugger.md: the 'none' form does not require reporting partial rather than complete" ;;
 esac
-redcapable_context="$(grep -n -A1 'red-capable' "$DEBUGGER" | head -2)"
+# Scoped to the whole paragraph containing 'red-capable', not a fixed
+# following-line count — a rewrap that pushes the gloss onto a later source
+# line must not escape this check.
+redcapable_context="$(paragraph_containing "$DEBUGGER" 'red-capable' | tr '\n' ' ')"
 case "$redcapable_context" in
   *'goes red'*) ok ;;
-  *) bad "agents/debugger.md: 'red-capable' is used without a plain-words gloss at its first use" ;;
+  *) bad "agents/debugger.md: 'red-capable' is used without a plain-words gloss in its own paragraph" ;;
 esac
 
 # --- 2. agents/orchestrator.md: the symptom row carries the debugger's
@@ -158,17 +161,20 @@ grep -q 'blocking finding' "$VERIFIER" && ok \
 skill_repro_count="$(count_occurrences "$WORKFORCE_SKILL" 'REPRO COMMAND')"
 [ "${skill_repro_count:-0}" -ge 2 ] 2>/dev/null && ok \
   || bad "skills/agent-workforce/SKILL.md: expected >=2 occurrences of 'REPRO COMMAND' (symptom-routing rule + criteria-authoring sentence), found ${skill_repro_count:-0}"
-# Scoped to the routing rule's own line, not two independent file-wide
-# greps — confirming both substrings exist somewhere in the file proves
-# nothing about whether the routing sentence itself names REPRO COMMAND.
-routing_line="$(grep -F 'Route symptom-shaped requests' "$WORKFORCE_SKILL")"
-if [ -n "$routing_line" ]; then
-  case "$routing_line" in
+# Scoped to the routing rule's own paragraph, not two independent
+# file-wide greps — confirming both substrings exist somewhere in the file
+# proves nothing about whether the routing sentence itself names REPRO
+# COMMAND. Uses the paragraph helper and the folding matcher, not a raw
+# single-line grep, so a cosmetic reflow of this paragraph can't turn the
+# check red.
+routing_para="$(paragraph_containing "$WORKFORCE_SKILL" 'Route symptom-shaped requests' | tr '\n' ' ')"
+if [ -n "$routing_para" ]; then
+  case "$routing_para" in
     *'REPRO COMMAND'*) ok ;;
     *) bad "skills/agent-workforce/SKILL.md: symptom-routing rule does not name the debugger's REPRO COMMAND line" ;;
   esac
 else
-  bad "skills/agent-workforce/SKILL.md: no symptom-routing rule found (expected a line starting 'Route symptom-shaped requests')"
+  bad "skills/agent-workforce/SKILL.md: no symptom-routing rule found (expected a paragraph containing 'Route symptom-shaped requests')"
 fi
 joined_contains "$WORKFORCE_SKILL" "from the debugger's \`REPRO COMMAND:\` line when the route is a symptom repair" && ok \
   || bad "skills/agent-workforce/SKILL.md: criteria-authoring sentence does not name the debugger's REPRO COMMAND line as a source"
@@ -219,19 +225,34 @@ else
 fi
 
 # --- 8. A reproduction command built as a throwaway outside every checkout
-# can outlive the workspace it ran in. agents/debugger.md prefers a command
-# runnable from the checkout and, when the loop was a throwaway anyway, says
-# so plainly on the REPRO COMMAND: line; agents/orchestrator.md, on receiving
-# such a flag, authors AC-1's Check as a durable equivalent and says it did
-# so, rather than carrying forward a command that may already be gone. ---
-grep -q 'throwaway' "$DEBUGGER" && ok \
-  || bad "agents/debugger.md: does not address a throwaway reproduction command"
+# can outlive the workspace it ran in. The handoff is pinned with a literal
+# marker — the suffix ` [throwaway]` on the REPRO COMMAND: line — rather than
+# a free-form phrase, so recognising the flag is mechanical, not judgment:
+# agents/debugger.md appends it when the loop that proved the bug was such a
+# throwaway; agents/orchestrator.md and skills/agent-workforce/SKILL.md both
+# trigger on it, authoring AC-1's Check as a durable equivalent and saying so,
+# rather than carrying forward a command that may already be gone. Checked
+# on the REPRO COMMAND paragraph specifically, not the whole file — a bare
+# file-wide grep for the word "throwaway" cannot fail here, since
+# agents/debugger.md's mutation-boundary prose used that word already,
+# unrelated to this clause, before this rule existed. ---
+repro_para="$(paragraph_containing "$DEBUGGER" 'REPRO COMMAND:' | tr '\n' ' ')"
+case "$repro_para" in
+  *'throwaway'*) ok ;;
+  *) bad "agents/debugger.md: REPRO COMMAND paragraph does not address a throwaway reproduction command" ;;
+esac
+grep -qF '[throwaway]' "$DEBUGGER" && ok \
+  || bad "agents/debugger.md: does not carry the literal '[throwaway]' marker on the REPRO COMMAND: line"
 joined_contains "$DEBUGGER" "since the builder and the verifier may need to run it again long after your own workspace is gone" && ok \
   || bad "agents/debugger.md: does not say why a throwaway repro must be flagged on the REPRO COMMAND: line"
-grep -q 'throwaway' "$ORCHESTRATOR" && ok \
-  || bad "agents/orchestrator.md: does not address a throwaway reproduction command"
+grep -qF '[throwaway]' "$ORCHESTRATOR" && ok \
+  || bad "agents/orchestrator.md: does not trigger on the literal '[throwaway]' marker"
 joined_contains "$ORCHESTRATOR" "author AC-1's Check as a durable equivalent" && ok \
   || bad "agents/orchestrator.md: does not author a durable Check in place of a flagged throwaway repro"
+grep -qF '[throwaway]' "$WORKFORCE_SKILL" && ok \
+  || bad "skills/agent-workforce/SKILL.md: does not trigger on the literal '[throwaway]' marker"
+joined_contains "$WORKFORCE_SKILL" "author AC-1's Check as a durable equivalent" && ok \
+  || bad "skills/agent-workforce/SKILL.md: does not mirror the durable-equivalent rule for a flagged throwaway repro"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -73,9 +73,9 @@ goes red while the bug is present and green once it is fixed), deterministic, fa
 agent-runnable loop the preloaded `debugging` discipline already required you to build and run.
 State it verbatim; the orchestrator carries it forward as the repair's mechanical bar for both
 the builder and the verifier. Prefer a command that runs from inside the repository checkout over
-a throwaway outside every checkout; when the loop that proved the bug was such a throwaway, say so
-plainly on this line, since the builder and the verifier may need to run it again long after your
-own workspace is gone. When no red-capable loop could be built, write
+a throwaway outside every checkout; when the loop that proved the bug was such a throwaway, append
+the literal suffix ` [throwaway]` to this line, since the builder and the verifier may need to run
+it again long after your own workspace is gone. When no red-capable loop could be built, write
 `REPRO COMMAND: none — <why>` instead, where `<why>` states what you tried and what access or
 artifact would unblock a reproduction, so the absence is explicit rather than silent — and report
 `partial`, not `complete`, since reaching this line means the discipline's own completion bar was
