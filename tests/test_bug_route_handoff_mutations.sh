@@ -28,11 +28,20 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
 # copy_tree below builds its scratch trees from `git ls-files`, so this
-# harness has no way to run against a checkout that isn't a git working tree
-# — skip rather than fail closed; install.sh otherwise tolerates a non-git
-# checkout, and this is the one suite that genuinely can't.
-if ! git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "SKIPPED: $REPO is not a git working tree — this harness copies tracked files via 'git ls-files' and cannot run here"
+# harness only works when its own files are tracked in the repository it is
+# running from. `git rev-parse --is-inside-work-tree` is not that check — it
+# answers "is this path under some repository", which stays true even when
+# this harness's own tests aren't tracked there at all (e.g. this tree was
+# unpacked without its .git directory into a location that itself sits
+# inside another repository's working tree). Gate on the harness's own files
+# actually being tracked at $REPO instead, and skip — never fail closed — when
+# they are not; install.sh otherwise tolerates a non-git checkout, and this is
+# the one suite that genuinely can't. Route the message to stderr, not
+# stdout, since install.sh discards this harness's stdout on success.
+if ! git -C "$REPO" ls-files --error-unmatch \
+      tests/test_bug_route_handoff.sh tests/test_bug_route_handoff_mutations.sh \
+      >/dev/null 2>&1; then
+  echo "SKIPPED: this harness's own files (tests/test_bug_route_handoff.sh, tests/test_bug_route_handoff_mutations.sh) are untracked at $REPO — 'git ls-files' can't find them to copy into scratch trees" >&2
   exit 0
 fi
 
