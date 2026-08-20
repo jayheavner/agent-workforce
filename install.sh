@@ -284,9 +284,12 @@ bash -n "$REPO/tools/agent-team-scoreboard.sh" || fail "scoreboard script failed
 # The outer installer runs these once. Sandbox installs launched by
 # test_install_skills.sh inherit AGENT_TEAM_SKIP_INSTALL_TEST=1 so they exercise
 # skill/install behavior without multiplying the unrelated hook suites.
-# Install validates only what it installs: the hook suites that guard the
-# artifacts being copied. The wider repo suite (plugin/Codex packaging, prose
-# pins) runs in CI and before commits, never as an install hostage.
+# Install validates what it installs: the hook suites that guard the
+# artifacts being copied, plus any prose pin that guards a cross-file
+# contract between those artifacts. This repository has no CI runner, so
+# here — and before commits — is where that guard actually runs; the wider
+# repo suite (plugin/Codex packaging) still never becomes an install
+# hostage.
 if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_secrets_hook.sh" >/dev/null || fail "secrets guard tests failed — run tests/test_secrets_hook.sh to see which"
   bash "$REPO/tests/test_audit_hook.sh" >/dev/null || fail "audit hook tests failed — run tests/test_audit_hook.sh to see which"
@@ -295,6 +298,16 @@ if [ -z "${AGENT_TEAM_SKIP_INSTALL_TEST:-}" ]; then
   bash "$REPO/tests/test_cost_hook.sh" >/dev/null || fail "cost hook tests failed — run tests/test_cost_hook.sh to see which"
   bash "$REPO/tests/test_dispatch_guard.sh" >/dev/null || fail "dispatch guard tests failed — run tests/test_dispatch_guard.sh to see which"
   bash "$REPO/tests/test_worktree_guard.sh" >/dev/null || fail "worktree guard tests failed — run tests/test_worktree_guard.sh to see which"
+  # A bug fix whose debugger evidence never reaches the builder or verifier
+  # gets re-defined as "fixed" by whoever writes the code. Gate on the
+  # handoff staying pinned across all five surfaces (debugger, orchestrator,
+  # builder, verifier, and the agent-workforce skill).
+  bash "$REPO/tests/test_bug_route_handoff.sh" >/dev/null || fail "bug-route handoff tests failed — run tests/test_bug_route_handoff.sh to see which"
+  # Proves the pin above is load-bearing rather than decorative (strips each
+  # pinned surface in turn and confirms the drift test fails closed). Runs
+  # in well under five seconds, so it rides the same gate rather than being
+  # left as a manual-only proof.
+  bash "$REPO/tests/test_bug_route_handoff_mutations.sh" >/dev/null || fail "bug-route handoff mutation self-check failed — run tests/test_bug_route_handoff_mutations.sh to see which"
   # An agents/*.md edit that was never re-rendered ships a Codex surface that
   # contradicts the Claude surface. Cheap, deterministic, so gate on it here
   # rather than discovering it as unrelated-looking Codex breakage later.

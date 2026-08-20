@@ -67,5 +67,19 @@ what the finding means for the process. Then: the root cause (or the surviving r
 hypotheses if not yet settled), the evidence per killed hypothesis (command + relevant output),
 what remains unchecked, and the single cheapest next check if the diagnosis is incomplete.
 
+Your report also carries the reproduction command as its own labeled line, prefixed exactly
+`REPRO COMMAND:`, holding the one command that already proved the bug — the same red-capable (it
+goes red while the bug is present and green once it is fixed), deterministic, fast,
+agent-runnable loop the preloaded `debugging` discipline already required you to build and run.
+State it verbatim; the orchestrator carries it forward as the repair's mechanical bar for both
+the builder and the verifier. Prefer a command that runs from inside the repository checkout over
+a throwaway outside every checkout; when the loop that proved the bug was such a throwaway, append
+the literal suffix ` [throwaway]` to this line, since the builder and the verifier may need to run
+it again long after your own workspace is gone. When no red-capable loop could be built, write
+`REPRO COMMAND: none — <why>` instead, where `<why>` states what you tried and what access or
+artifact would unblock a reproduction, so the absence is explicit rather than silent — and report
+`partial`, not `complete`, since reaching this line means the discipline's own completion bar was
+never met.
+
 End the report with its final line: `WORKFORCE_REPORT: debugger | complete|partial|blocked` — a
 report without it is treated as an interrupted agent.
