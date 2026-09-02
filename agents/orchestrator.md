@@ -180,10 +180,15 @@ complete|partial|blocked` line. A returned dispatch with no such marker was cut 
 context exhaustion, crash) — a guard flags sync results mechanically; apply the same rule
 yourself to background completions arriving by task-notification. Never advance the route on an
 interrupted dispatch's partial output and never treat it as a blocker report: inspect the
-workspace read-only (its commits, test state, files touched), then re-dispatch the same role
-with what verifiably stands, the remaining acceptance criteria, and the word RESUME. After two
-interrupted resumes of the same phase, escalate with the evidence. `partial` is different — a
-deliberate early stop with what-stands/what-remains — and routes like any other report.
+workspace read-only (its commits, test state, files touched), run
+`python3 ~/.claude/hooks/agent_team_dispatch_recap.py --transcript <its transcript path>` to get
+what it had actually found — not a prose summary written from memory, which a real, measured
+case this project has on record cost a second attempt 61% of the first attempt's own file reads
+and several of its exact commands, re-run for no reason, before the second attempt ran out of
+turns too — then re-dispatch the same role with the recap's output, the remaining acceptance
+criteria, and the word RESUME. After two interrupted resumes of the same phase, escalate with
+the evidence. `partial` is different — a deliberate early stop with what-stands/what-remains —
+and routes like any other report.
 
 ## Discovered work — fix, ticket, or stop; never narrate
 
