@@ -110,6 +110,62 @@ else
   fail "unmapped subagent reports role unknown, never invented"
 fi
 
+# --- (e) stop_reason: three values, each from real evidence, never a guess ---
+# Neither fixture above ends with the WORKFORCE_REPORT marker and neither's request
+# count (4, 3) meets its role's cap (builder 150, no role for the unmapped one), so
+# both are the honest default: neither complete nor a cap hit.
+if jq -es 'any(.agent_id == "aaaa1111" and .stop_reason == "unknown")' "$TELE_FILE" >/dev/null 2>&1; then
+  pass "no marker and under the cap: stop_reason is unknown, not guessed"
+else
+  fail "no marker and under the cap: stop_reason is unknown, not guessed"
+fi
+if jq -es 'any(.agent_id == "bbbb2222" and .stop_reason == "unknown")' "$TELE_FILE" >/dev/null 2>&1; then
+  pass "an unmapped role cannot be checked against a cap: stop_reason is unknown"
+else
+  fail "an unmapped role cannot be checked against a cap: stop_reason is unknown"
+fi
+
+STOP_DIR="$TMP/stop-reason"
+mkdir -p "$STOP_DIR/session/subagents"
+SR_SESSION="$STOP_DIR/session.jsonl"
+: > "$SR_SESSION"
+
+# A dispatch that finished normally: its own final message carries the marker.
+jq -nc '{type:"assistant",message:{id:"msg_done",model:"claude-sonnet-5",
+  content:[{type:"text",text:"Delivered and verified.\n\nWORKFORCE_REPORT: builder | complete"}],
+  usage:{input_tokens:10,output_tokens:5,cache_creation_input_tokens:0,cache_read_input_tokens:0}},
+  timestamp:"2026-09-02T00:00:00.000Z"}' > "$STOP_DIR/session/subagents/agent-cccc1111.jsonl"
+
+# A dispatch cut off by its own turn cap: no marker, and the scribe's real cap
+# (40, read from agents/scribe.md) is exactly met by its request count.
+: > "$STOP_DIR/session/subagents/agent-dddd2222.jsonl"
+for i in $(seq -w 1 40); do
+  jq -nc --arg id "msg_cap_$i" '{type:"assistant",message:{id:$id,model:"claude-sonnet-5",
+    content:[{type:"text",text:"working"}],
+    usage:{input_tokens:5,output_tokens:5,cache_creation_input_tokens:0,cache_read_input_tokens:0}},
+    timestamp:"2026-09-02T00:00:00.000Z"}' >> "$STOP_DIR/session/subagents/agent-dddd2222.jsonl"
+done
+
+SR_COST="$STOP_DIR/cost.json"
+jq -n '{dispatches:{cccc1111:{agent_type:"builder"},dddd2222:{agent_type:"scribe"}}}' > "$SR_COST"
+SR_TELE_DIR="$STOP_DIR/telemetry"
+python3 "$TOOL" --transcript "$SR_SESSION" --cost-file "$SR_COST" \
+  --telemetry-dir "$SR_TELE_DIR" --session-id "sess-stop-reason" --cwd "/work/stop" >/dev/null 2>&1
+SR_TELE_FILE="$SR_TELE_DIR/-work-stop--sess-stop-reason.jsonl"
+
+if jq -es 'any(.agent_id == "cccc1111" and .stop_reason == "complete")' "$SR_TELE_FILE" >/dev/null 2>&1; then
+  pass "a dispatch ending with its own WORKFORCE_REPORT marker: stop_reason is complete"
+else
+  fail "a dispatch ending with its own WORKFORCE_REPORT marker: stop_reason is complete" \
+    "$(cat "$SR_TELE_FILE" 2>/dev/null)"
+fi
+if jq -es 'any(.agent_id == "dddd2222" and .stop_reason == "max_turns" and .requests == 40)' "$SR_TELE_FILE" >/dev/null 2>&1; then
+  pass "no marker at exactly the role's own maxTurns cap: stop_reason is max_turns"
+else
+  fail "no marker at exactly the role's own maxTurns cap: stop_reason is max_turns" \
+    "$(cat "$SR_TELE_FILE" 2>/dev/null)"
+fi
+
 # --- (f) undercount warning: dispatches recorded but no subagent transcripts ---
 ORPHAN="$TMP/orphan-session.jsonl"
 {

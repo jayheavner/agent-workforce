@@ -17,6 +17,8 @@ hooks:
           command: "$HOME/.claude/hooks/agent-team-lane-guard.sh test-author"
         - type: command
           command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh test-author"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-turn-budget-guard.sh test-author"
   PostToolUse:
     - matcher: Bash
       hooks:

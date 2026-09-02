@@ -21,6 +21,14 @@ Save plans where the project keeps them (default: `plans/YYYY-MM-DD-<feature>.md
   the tasks proceed on, so the executor sees the seam.
 - **Scope:** if the spec spans several independent subsystems, write one plan per
   subsystem; each plan must produce working, testable software on its own.
+- **Turn budget per dispatch:** a plan's own task numbering is not a turn-budget
+  unit — grouping several tasks under one label for readability, then handing
+  the whole label to one builder dispatch, has silently bundled ten or more
+  separately-testable fixes into a single dispatch and run it past its role's
+  turn cap with no warning. Count the red-test-first cycles a group of tasks
+  actually needs, not the labels it happens to have, before deciding how many
+  dispatches it becomes; a group whose own cycle count is uncertain gets its own
+  dispatch rather than being folded into a neighbor's.
 - **File structure first:** map every file to create or modify and give each one
   clear responsibility. Prefer small, focused files; follow the codebase's
   existing patterns rather than restructuring unilaterally.

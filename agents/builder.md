@@ -15,6 +15,8 @@ hooks:
           command: "$HOME/.claude/hooks/agent-team-secrets.sh builder"
         - type: command
           command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh builder"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-turn-budget-guard.sh builder"
   PostToolUse:
     - matcher: Bash
       hooks:

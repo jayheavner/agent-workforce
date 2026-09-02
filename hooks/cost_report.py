@@ -21,6 +21,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import shlex
 import sys
 from collections import defaultdict
@@ -308,15 +309,103 @@ def count_dispatches(transcript):
 
 
 def collect(transcript, rates):
-    """Parse main + subagent transcripts. Returns (main_reqs, {agent_id: reqs})."""
+    """Parse main + subagent transcripts. Returns (main_reqs, {agent_id: reqs},
+    {agent_id: transcript_path}) — the path alongside the parsed requests, since
+    the stop reason is read from the raw file, not from anything parse_transcript
+    keeps."""
     main_reqs = parse_transcript(transcript, rates.keys())
     sub_dir = transcript[:-len(".jsonl")] + "/subagents" if transcript.endswith(".jsonl") else None
     subs = {}
+    sub_paths = {}
     if sub_dir and os.path.isdir(sub_dir):
         for f in sorted(glob.glob(os.path.join(sub_dir, "agent-*.jsonl"))):
             aid = os.path.basename(f)[len("agent-"):-len(".jsonl")]
             subs[aid] = parse_transcript(f, rates.keys())
-    return main_reqs, subs
+            sub_paths[aid] = f
+    return main_reqs, subs, sub_paths
+
+
+def role_max_turns(role, agents_dir=None):
+    """The role's own maxTurns cap, read from its agents/<role>.md frontmatter,
+    or None when the role is unknown or carries no cap (e.g. the orchestrator)."""
+    if not role or role == "unknown":
+        return None
+    if agents_dir is None:
+        agents_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agents")
+    path = os.path.join(agents_dir, f"{role}.md")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip() == "---" and line != "---\n":
+                    continue
+                m = re.match(r"^maxTurns:\s*(\d+)\s*$", line)
+                if m:
+                    return int(m.group(1))
+    except OSError:
+        return None
+    return None
+
+
+def transcript_final_text(path):
+    """The most recent assistant message's own text, joined — the raw content
+    a closing-report check reads, independent of anything parse_transcript kept
+    (that dict has no room for message text, only priced usage)."""
+    last_text = ""
+    try:
+        f = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict) or rec.get("type") != "assistant":
+                continue
+            content = ((rec.get("message") or {}).get("content"))
+            if isinstance(content, list):
+                texts = [b.get("text", "") for b in content
+                         if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
+                if texts:
+                    last_text = "\n".join(texts)
+            elif isinstance(content, str) and content:
+                last_text = content
+    return last_text
+
+
+def has_workforce_report(text):
+    """This project's own closing-report contract (agent-team-report-guard.sh):
+    the marker in the last three non-empty lines, never a bare substring match
+    anywhere in the message."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return any("WORKFORCE_REPORT:" in ln for ln in lines[-3:])
+
+
+def dispatch_stop_reason(path, role, request_count, agents_dir=None):
+    """Why a dispatch's transcript ends where it does — one of exactly three
+    values, each requiring its own positive evidence:
+
+    'complete'  — the dispatch's own final message carries the closing-report
+                  marker this project already requires of every specialist.
+    'max_turns' — no marker, and the request count meets or exceeds this
+                  role's own maxTurns cap: the harness's own turn-count unit,
+                  confirmed by counting unique reply ids against a transcript
+                  known to have hit its cap.
+    'unknown'   — neither fact holds. A dispatch cut short by something else
+                  (a crash, a context limit) is NOT guessed into either of the
+                  other two — that would repeat the exact mistake this field
+                  exists to stop making.
+    """
+    if has_workforce_report(transcript_final_text(path)):
+        return "complete"
+    cap = role_max_turns(role, agents_dir)
+    if cap is not None and request_count >= cap:
+        return "max_turns"
+    return "unknown"
 
 
 def fmt_tokens(n):
@@ -463,24 +552,29 @@ def markdown_report(main_reqs, subs, rates, agent_types, dispatches=0,
     return "\n".join(lines), total
 
 
-def write_telemetry(tdir, session_id, cwd, subs, rates, agent_types):
+def write_telemetry(tdir, session_id, cwd, subs, rates, agent_types, sub_paths=None):
     """One JSONL record per dispatch — mechanical facts only."""
     os.makedirs(tdir, exist_ok=True)
     slug = cwd.replace("/", "-")
     path = os.path.join(tdir, f"{slug}--{session_id}.jsonl")
+    sub_paths = sub_paths or {}
     with open(path, "w") as f:
         for aid, reqs in subs.items():
             _, _, cost, _, _ = aggregate(reqs, rates)
             models = sorted({r["model"] for r in reqs})
             tokens = {tf: sum(r[tf] for r in reqs) for tf in TOKEN_FIELDS}
+            role = agent_types.get(aid, "unknown")
+            src = sub_paths.get(aid)
+            stop_reason = dispatch_stop_reason(src, role, len(reqs)) if src else "unknown"
             f.write(json.dumps({
                 "agent_id": aid,
-                "role": agent_types.get(aid, "unknown"),
+                "role": role,
                 "resolved_models": models,
                 "requests": len(reqs),
                 "tokens": tokens,
                 "cost_usd": round(cost, 6),
                 "session_id": session_id,
+                "stop_reason": stop_reason,
             }) + "\n")
     return path
 
@@ -517,7 +611,7 @@ def main():
     rates = rates_doc["models"]
     stale_note = rates_staleness_note(rates_doc.get("as_of"))
 
-    main_reqs, subs = collect(args.transcript, rates)
+    main_reqs, subs, sub_paths = collect(args.transcript, rates)
     agent_types = load_agent_types(args.cost_file) if args.cost_file else {}
     dispatches = count_dispatches(args.transcript)
 
@@ -541,7 +635,7 @@ def main():
 
     if args.telemetry_dir and args.session_id:
         write_telemetry(args.telemetry_dir, args.session_id, args.cwd or os.getcwd(),
-                        subs, rates, agent_types)
+                        subs, rates, agent_types, sub_paths)
     return 0
 
 

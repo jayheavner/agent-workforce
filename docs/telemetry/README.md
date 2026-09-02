@@ -31,7 +31,8 @@ One JSON object per line, one line per subagent dispatch:
   "requests": 12,
   "tokens": {"input": 84120, "output": 9310, "cw5m": 41200, "cw1h": 0, "cread": 512000},
   "cost_usd": 0.734210,
-  "session_id": "<uuid>"
+  "session_id": "<uuid>",
+  "stop_reason": "complete"
 }
 ```
 
@@ -49,10 +50,25 @@ One JSON object per line, one line per subagent dispatch:
   Tokens for a model with no rate entry are counted but contribute no cost — never an
   estimate.
 - `session_id` — the session the dispatch belonged to.
+- `stop_reason` — why the dispatch's transcript ends where it does, one of exactly
+  three values, each derived mechanically, never remembered or self-reported:
+  - `"complete"` — the dispatch's own final message carries the closing-report
+    marker (`WORKFORCE_REPORT:`) this project already requires of every specialist,
+    in the last three non-empty lines — the same rule `agent-team-report-guard.sh`
+    enforces at the dispatch's own stop.
+  - `"max_turns"` — no such marker, and `requests` meets or exceeds this role's own
+    `maxTurns` cap, read directly from `agents/<role>.md`. A turn cap kills an agent
+    with no chance to write a final line, so absence of the marker plus a request
+    count at the cap is the mechanical signature of that specific death.
+  - `"unknown"` — neither fact holds: no marker, and the request count sits below
+    the cap (or the role carries none, or attribution to a role failed). This is
+    not a residual guess folded into one of the other two — a crash, a context
+    limit, or an unmapped role all land here honestly, on purpose.
 
-There are no tier, sequence, or verdict fields. Those were remembered facts a dispatch
-had to write down at the moment of maximum context exhaustion, and they were never
-reliably written; everything recorded here is mechanical.
+There are no tier, sequence, or verdict fields beyond `stop_reason` above. Those
+were remembered facts a dispatch had to write down at the moment of maximum context
+exhaustion, and they were never reliably written; everything recorded here is
+mechanical, `stop_reason` included.
 
 ## What it is for
 

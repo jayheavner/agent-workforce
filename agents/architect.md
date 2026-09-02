@@ -16,6 +16,8 @@ hooks:
           command: "$HOME/.claude/hooks/agent-team-lane-guard.sh architect"
         - type: command
           command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh architect"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-turn-budget-guard.sh architect"
   Stop:
     - hooks:
         - type: command
