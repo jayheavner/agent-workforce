@@ -148,10 +148,13 @@ grep -q "$(printf 'CHANGE:')" "$AGENTS/orchestrator.md" \
   && ok || no "orchestrator states the CHANGE: declaration rule"
 grep -q 'CHANGE: <slug>' "$AGENTS/orchestrator.md" \
   && ok || no "orchestrator gives the CHANGE: line in its exact shape"
-grep -q 'WORKTREE:' "$AGENTS/orchestrator.md" \
-  && no "orchestrator still names the retired WORKTREE: declaration" || ok
-grep -rq 'WORKTREE:' "$AGENTS" \
-  && no "an agent document still names the retired WORKTREE: declaration ($(grep -rl 'WORKTREE:' "$AGENTS" | tr '\n' ' '))" || ok
+# The WORKTREE: line is live again (2026-09-01) with one meaning: an existing worktree the
+# human named, adopted beside the CHANGE: line. The orchestrator must state it in that
+# shape, and no agent document may still carry the retired per-builder meaning.
+grep -q 'WORKTREE: <absolute path>' "$AGENTS/orchestrator.md" \
+  && ok || no "orchestrator gives the WORKTREE: line in its exact shape beside CHANGE:"
+RETIRED_HITS="$(grep -rniE 'one (unique )?worktree per (builder|agent)|own unique (git )?worktree|WORKTREE: <path>' "$AGENTS" 2>/dev/null | tr '\n' ' ')"
+[ -z "$RETIRED_HITS" ] && ok || no "an agent document still carries the retired per-builder worktree rule ($RETIRED_HITS)"
 
 # "Which roles hold writing tools" must be answerable from the file, for every role:
 # the worktree guard's four rule sets and its exemptions are derived from that fact.

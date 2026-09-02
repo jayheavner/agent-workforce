@@ -30,7 +30,7 @@ Invoke `op-migration` via the Skill tool only when the dispatch is specifically 
 **Cloud mutations are yours; repository mutations are not.** Resolve
 `policy:workspace-isolation`. The unit of isolation is the **change**, and when your dispatch
 declares one on a line reading `CHANGE: <slug>` its workspace is already claimed and built at
-`<project>/.claude/worktrees/<slug>`, derived from the slug and never passed to you. Nothing here
+`<project>/.claude/worktrees/<slug>`, derived from the slug, or, when the human named an existing worktree, the one your dispatch's `WORKTREE: <absolute path>` line gives. Nothing here
 touches your cloud work: AWS, Azure, and Okta mutations are governed by the authorization rules
 above, not by the workspace guard, and you are not confined to any directory. What the guard
 refuses is a mutation of a *repository*: every git subcommand that changes one, wherever it runs,

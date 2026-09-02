@@ -80,8 +80,11 @@ register_card_path() { # $1 project-root $2 slug
   printf '%s/%s/%s.json' "$(register_root)" "$key" "$2"
 }
 
-# Decision 10: the workspace path and its ref are DERIVED from the slug by every
-# participant, never passed between them.
+# Decision 10, amended 2026-09-01: the workspace path and its ref are DERIVED from the
+# slug by every participant — unless the human named an existing worktree, in which
+# case the dispatch carries it once and the TIMECARD records it (`adopted: true`), and
+# every participant reads the card rather than re-deriving. Where work happens is the
+# human's call; this derivation is the default when they make none.
 register_worktree_path() { # $1 project-root $2 slug
   printf '%s/.claude/worktrees/%s' "$1" "$2"
 }
@@ -290,19 +293,31 @@ register_card_member() { # $1 card $2 pid $3 pid-start $4 session-id
   return 1
 }
 
-# Timecard schema version 1, exactly as the plan states it.
-register_new_card_json() { # $1 project $2 key $3 slug $4 session $5 pid $6 start
-  local base_ref base_sha
+# Timecard schema version 1, exactly as the plan states it, plus one field added
+# 2026-09-01: `adopted` is true when the worktree is one the human named rather than one
+# this design derived and created. Its ref is then whatever the worktree is checked out
+# at — a full ref name, or the word `detached` — and an adopted worktree is never removed
+# by integrate or remove, because nothing here created it.
+register_new_card_json() { # $1 project $2 key $3 slug $4 session $5 pid $6 start [$7 named-worktree]
+  local base_ref base_sha wt ref adopted=false
   base_ref="$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)"
   base_sha="$(git -C "$1" rev-parse HEAD 2>/dev/null)"
+  if [ -n "${7:-}" ]; then
+    wt="$7"
+    adopted=true
+    ref="$(git -C "$7" symbolic-ref --quiet HEAD 2>/dev/null || printf 'detached')"
+  else
+    wt="$(register_worktree_path "$1" "$3")"
+    ref="refs/heads/$(register_ref_name "$3")"
+  fi
   jq -cn --arg slug "$3" --arg proj "$1" --arg key "$2" --arg sess "$4" \
     --argjson pid "$5" --arg start "$6" \
-    --arg wt "$(register_worktree_path "$1" "$3")" \
-    --arg ref "refs/heads/$(register_ref_name "$3")" \
+    --arg wt "$wt" --arg ref "$ref" --argjson adopted "$adopted" \
     --arg base_ref "$base_ref" --arg base_sha "$base_sha" \
     --arg opened "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson hb "$(date +%s)" \
     '{v:1,slug:$slug,project:$proj,project_key:$key,session:$sess,pid:$pid,
-      pid_start:$start,worktree:$wt,ref:$ref,base_ref:$base_ref,base_sha:$base_sha,
+      pid_start:$start,worktree:$wt,ref:$ref,adopted:$adopted,
+      base_ref:$base_ref,base_sha:$base_sha,
       state:"claiming",opened:$opened,heartbeat:$hb,writer:null}'
 }
 

@@ -315,6 +315,18 @@ so `policy:dependency-freshness` pins nothing in this plan.
     The timecard records both verbatim so a guard reads them rather than re-deriving them,
     and a slug is constrained to `[a-z0-9][a-z0-9._-]{0,63}` so it can never contain a
     path separator or `..`.
+    *Amended 2026-09-01 (Jay's ruling: "A worktree is required but I should be able to
+    specify one. If I don't specify one then it should create a new one.")* Derivation is
+    the DEFAULT, not the only path. A dispatch may carry a second line beside the slug,
+    `WORKTREE: <absolute path>`, naming an existing worktree git already lists for the
+    project; the guard adopts it, records it on the timecard with `adopted: true` and the
+    ref it is checked out at (or `detached`), and creates nothing. The timecard stays the
+    one authority every participant reads. `integrate` merges the adopted worktree's HEAD
+    and leaves the tree and its ref in place; `remove` releases the claim and leaves them
+    too, because the guard did not create them. The refusal of the `WORKTREE:` literal by
+    name (decision 10's companion in the dispatch guard) is withdrawn; what is refused is a
+    bare marker, a marker without a `CHANGE:` line, a relative path, a path git does not
+    list, the shared checkout, and a second worktree for an already-claimed change.
 11. **Bash cannot be read/write-classified, so the Bash rule is per role.** *(New,
     2026-08-17.)* The verifier and the reviewer hold only `Read, Glob, Grep, Bash`; gating
     their Bash by working directory the way a builder's is gated would stop the verifier

@@ -72,9 +72,16 @@ in the dispatch prompt, at the start of the line, nothing after the slug:
 `CHANGE: <slug>`. The dispatch guard then claims that change in the work register — one file on
 disk naming the owning session — and builds or adopts its worktree at
 `<project>/.claude/worktrees/<slug>` on the ref `refs/heads/change/<slug>`. Both names are derived
-from the slug, so you never pass a path and there is no path to get wrong. The old per-builder
-path declaration is retired and any dispatch still carrying it is refused by name, because a
-declaration no guard reads is worse than none. Use the same slug for every dispatch of that work — builder, verifier, reviewer, scribe,
+from the slug, so by default you pass no path and there is no path to get wrong. **When the human
+names an existing worktree, that is where the work happens:** carry it on a second line beside the
+change, `WORKTREE: <absolute path>`, and the guard adopts that worktree instead of creating one — it
+records the path on the timecard, the worktree guard confines every specialist to it, and nothing is
+created or moved. The path must be one `git worktree list` already shows for the project (a
+detached worktree is fine); a path git does not know, a relative path, or the shared checkout itself
+is refused. Once the change is claimed, later dispatches of the same change may omit the line and
+still land in that worktree; a different worktree for the same change is refused. A `WORKTREE:` line
+with no `CHANGE:` line beside it is refused, because the claim is what enforces the place. Use the
+same slug for every dispatch of that work — builder, verifier, reviewer, scribe,
 executor — and it is the same workspace each time. This is also where the task's status note
 lives: `docs/STATUS-<task-slug>.md` **inside the change's workspace**, reaching the shared
 checkout by integration like any other file, which is the answer for a project whose main ref is

@@ -62,8 +62,8 @@ materialize a secret. Your commit touches only test files and any fixture data t
 **The change's workspace, before the first test file.** Resolve `policy:workspace-isolation`. The
 unit of isolation is the **change**: your dispatch declares it on a line reading `CHANGE: <slug>`,
 and before your first turn the dispatch guard claimed that change in the work register and built
-or adopted its worktree. The path is derived from the slug, never passed — the worktree is
-`<project>/.claude/worktrees/<slug>` and its ref is `refs/heads/change/<slug>`. Step into it
+or adopted its worktree. The path is derived from the slug — the worktree is
+`<project>/.claude/worktrees/<slug>` and its ref is `refs/heads/change/<slug>` — or, when the human named an existing worktree, the one your dispatch's `WORKTREE: <absolute path>` line gives. Step into it
 (`cd <that path>`) and confirm with `git rev-parse --show-toplevel` before you write or run
 anything; a write or a shell command outside it is refused, and reads are never gated. The suite
 you author lives with the change it judges, so it reaches the shared checkout by integration and

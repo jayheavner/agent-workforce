@@ -18,6 +18,15 @@ readonly VALID_SPECIALISTS="architect builder debugger verifier reviewer deploye
 # what the retired collision scan did. MUTATING_ROLES in the closeout hook serves
 # baseline-capture logic and is a different set — do not conflate the two.
 readonly CHANGE_MARKER_PREFIX="CHANGE:"
+# Where the change works, when the HUMAN named an existing worktree (2026-09-01): one
+# absolute path on a line of its own, beside the CHANGE: line. The guard adopts that
+# worktree — records it on the timecard, creates nothing — and the worktree guard confines
+# the agent to it. Without this line the worktree is derived from the slug and created.
+# The line is REQUIRED to sit beside a CHANGE: line: a place with no change to claim is
+# refused, and so is a bare marker with no path, because a line the runtime ignores is
+# worse than none (the 2026-08-04 incident). This same literal was retired on 2026-08-04
+# when nothing read it; it is live again because something does.
+readonly WORKTREE_MARKER_PREFIX="WORKTREE:"
 readonly PARALLEL_SAFE_MARKER="PARALLEL_SAFE: this dispatch writes nothing"
 # Roles that MUST declare a change: everything that writes. The debugger and ops MAY
 # declare one and it is honoured when present — a diagnosis that will commit claims its
@@ -32,8 +41,7 @@ readonly CHANGE_REQUIRED_ROLES="builder test-author executor deployer"
 # was being blocked by the first. A superset of CHANGE_REQUIRED_ROLES by exactly the
 # architect and the scribe, who write documents inside the claimed tree.
 readonly WRITER_SLOT_ROLES="builder test-author architect scribe executor deployer"
-# The two retired declarations, kept only so they can be REFUSED by name.
-readonly RETIRED_WORKTREE_PREFIX="WORKTREE:"
+# The retired declaration, kept only so it can be REFUSED by name.
 readonly RETIRED_PARALLEL_SAFE="PARALLEL_SAFE: no git mutation in this dispatch"
 readonly BUDGETS_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-budgets.json"
 readonly LANES_FILE="$(cd "$(dirname "$0")" && pwd)/agent-team-lanes.json"

@@ -65,7 +65,12 @@ unset register_sibling
 # the liveness fact; the session id is the identity fact. Both real callers of
 # `claim` — a fresh dispatch and a resumed session — carry the same session id,
 # because a session keeps its id across a resume and gets a new process.
-register_claim() { # $1 project-dir $2 slug $3 session-id
+#
+# An optional fourth argument names the worktree the human chose (2026-09-01). It is
+# recorded on a NEW card only; an existing card already says where the change works, and
+# the caller compares the two. Validation of the path — absolute, on disk, a worktree
+# git lists for this project — is the workspace library's, not this file's.
+register_claim() { # $1 project-dir $2 slug $3 session-id [$4 named-worktree]
   register_valid_slug "$2" || {
     printf 'register: "%s" is not a legal change slug (lower-case letters, digits, dot, dash, underscore; no path separator, no ".."; and because the ref name refs/heads/change/<slug> is derived from it, it may not end in a dot or in ".lock")\n' \
       "$2" >&2
@@ -107,7 +112,7 @@ register_claim() { # $1 project-dir $2 slug $3 session-id
     cat "$card"
     return 3
   fi
-  json="$(register_new_card_json "$proj" "$key" "$2" "$3" "$pid" "$start")" || return 5
+  json="$(register_new_card_json "$proj" "$key" "$2" "$3" "$pid" "$start" "${4:-}")" || return 5
   if ( set -o noclobber; printf '%s\n' "$json" > "$card" ) 2>/dev/null; then
     printf '%s\n' "$card"
     return 0

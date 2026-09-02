@@ -60,8 +60,8 @@ refused edit there means the bar is not yours to move.
 `policy:workspace-isolation`. The unit of isolation is the **change**, not you: your dispatch
 declares it on a line reading `CHANGE: <slug>`, and before your first turn the dispatch guard
 claimed that change in the work register and built or adopted its worktree. The path is derived
-from the slug and never passed to you — the worktree is `<project>/.claude/worktrees/<slug>` and
-its ref is `refs/heads/change/<slug>`. Step into it first (`cd <that path>`) and confirm with
+from the slug — the worktree is `<project>/.claude/worktrees/<slug>` and its ref is
+`refs/heads/change/<slug>` — or, when the human named an existing worktree, the one your dispatch's `WORKTREE: <absolute path>` line gives. Step into it first (`cd <that path>`) and confirm with
 `git rev-parse --show-toplevel` that every later command runs there. Nothing else happens first:
 not a read-modify, not a scratch edit, not a "quick" fix in the shared checkout. You never build a
 workspace yourself and you never write in the tree of another change; if the worktree your change

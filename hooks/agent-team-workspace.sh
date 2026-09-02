@@ -10,8 +10,12 @@
 # dispatched to run, never by a Stop hook, because a mid-task pause that integrated
 # unfinished work and deleted a live workspace is the failure that shape prevents.
 #
-# The path and the ref are DERIVED from the slug (decision 10), never passed:
-# <project-root>/.claude/worktrees/<slug> at refs/heads/change/<slug>.
+# The path and the ref are DERIVED from the slug (decision 10) —
+# <project-root>/.claude/worktrees/<slug> at refs/heads/change/<slug> — unless the
+# human named an existing worktree (amendment of 2026-09-01). Then the timecard
+# records that path as ADOPTED, `ensure` accepts it and creates nothing, and
+# `integrate` and `remove` leave the tree and its ref in place, because nothing here
+# created them and they are the human's.
 #
 # Exit codes: 0 ok, 7 workspace unusable, 8 not integrable. Codes 1/3/4/5/6 come
 # from the register and are passed through untouched.
@@ -50,14 +54,58 @@ workspace_registered_ref() { # $1 project-root $2 path
         END { if (seen) { print ref; exit 0 } ; exit 1 }'
 }
 
+# The ref a path is checked out at, when git lists it as a worktree of this project:
+# `refs/heads/...` or `detached`. Both sides are compared in canonical form, so a path
+# written through a symlinked directory still finds its listing. Exit 1 when the path
+# is not listed at all.
+workspace_lookup_worktree() { # $1 project-root $2 path
+  local want listed canon ref
+  want="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
+  while IFS= read -r listed; do
+    [ -n "$listed" ] || continue
+    canon="$(cd "$listed" 2>/dev/null && pwd -P)" || continue
+    [ "$canon" = "$want" ] || continue
+    ref="$(workspace_registered_ref "$1" "$listed")" || ref=detached
+    printf '%s\n' "${ref:-detached}"
+    return 0
+  done <<EOF
+$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+EOF
+  return 1
+}
+
 # Create or adopt the change's worktree. Adoption is what makes a re-claim after a
 # reap succeed against the tree a dead session left behind, rather than fighting
 # over it.
-workspace_ensure() { # $1 project-root $2 slug $3 base-ref
+#
+# With a fourth argument — the worktree the human named, as the timecard records it —
+# nothing is created and nothing is checked for ignore status: the path has to exist
+# and git has to list it as a worktree of this project, and that is the whole test.
+# The shared checkout itself is refused, because it is not isolation.
+workspace_ensure() { # $1 project-root $2 slug $3 base-ref [$4 named-worktree]
   register_valid_slug "$2" || {
     printf 'workspace: "%s" is not a legal change slug, so no worktree path can be derived from it\n' "$2" >&2
     return 6
   }
+  if [ -n "${4:-}" ]; then
+    if [ ! -d "$4" ]; then
+      printf 'workspace: the named worktree %s does not exist on disk, so the change "%s" has nowhere to work. Repair: name a worktree that exists, or drop the WORKTREE: line so one is created at %s\n' \
+        "$4" "$2" "$(register_worktree_path "$1" "$2")" >&2
+      return 7
+    fi
+    if [ "$(cd "$4" && pwd -P)" = "$(cd "$1" && pwd -P)" ]; then
+      printf 'workspace: %s is the shared checkout, not a worktree, so it cannot isolate the change "%s". Name a linked worktree, or drop the WORKTREE: line so one is created\n' \
+        "$4" "$2" >&2
+      return 7
+    fi
+    if ! workspace_lookup_worktree "$1" "$4" >/dev/null; then
+      printf 'workspace: %s is not a worktree git lists for %s, so the change "%s" cannot adopt it. See what git does list with: git -C %s worktree list. Name one of those, or drop the WORKTREE: line so one is created at %s\n' \
+        "$4" "$1" "$2" "$1" "$(register_worktree_path "$1" "$2")" >&2
+      return 7
+    fi
+    printf '%s\n' "$4"
+    return 0
+  fi
   # An un-ignored worktree directory turns every change into dirt in the shared
   # checkout, so this is refused before anything is created.
   #
@@ -129,7 +177,7 @@ workspace_ensure() { # $1 project-root $2 slug $3 base-ref
 # whole. A conflicted merge is aborted and leaves the tree, the ref, and the
 # timecard exactly as they were.
 workspace_integrate() { # $1 project-root $2 slug $3 integration-ref [$4 session-id]
-  local card path short head dirty err
+  local card path short head dirty err adopted source
   card="$(register_resolve_card "$1" "$2")" || {
     printf 'workspace: there is no timecard for %s in %s, so there is no claim to integrate. Repair: dispatch the work with "CHANGE: %s" first\n' \
       "$2" "$1" "$2" >&2
@@ -140,8 +188,18 @@ workspace_integrate() { # $1 project-root $2 slug $3 integration-ref [$4 session
       "$2" "$(jq -r '.session // "unknown"' "$card")" >&2
     return 8
   fi
-  path="$(register_worktree_path "$1" "$2")"
+  # An adopted worktree is merged from what its HEAD holds — a commit, whichever ref
+  # or no ref it sits on — because the human's tree may be detached, and its name is
+  # not this library's to assume.
+  adopted="$(jq -r '.adopted // false' "$card" 2>/dev/null)"
   short="$(register_ref_name "$2")"
+  if [ "$adopted" = true ]; then
+    path="$(jq -r '.worktree // empty' "$card" 2>/dev/null)"
+    source="$(git -C "$path" rev-parse HEAD 2>/dev/null || printf '')"
+  else
+    path="$(register_worktree_path "$1" "$2")"
+    source="$short"
+  fi
   # The tree has to be there before its cleanliness can mean anything: a card whose
   # tree was deleted by hand would otherwise pass an empty dirty check, merge, and
   # only then fail at worktree removal — with the merge already done.
@@ -168,11 +226,24 @@ workspace_integrate() { # $1 project-root $2 slug $3 integration-ref [$4 session
       "$1" "$dirty" >&2
     return 8
   fi
-  if ! err="$(git -C "$1" merge --no-ff --no-edit "$short" 2>&1)"; then
+  if [ -z "$source" ]; then
+    printf 'workspace: the adopted worktree %s has no readable HEAD, so there is nothing to merge from it\n' "$path" >&2
+    return 8
+  fi
+  if ! err="$(git -C "$1" merge --no-ff --no-edit "$source" 2>&1)"; then
     git -C "$1" merge --abort >/dev/null 2>&1
     printf 'workspace: merging %s into %s did not succeed, so it was aborted and nothing changed: %s\n' \
-      "$short" "$3" "$err" >&2
+      "$source" "$3" "$err" >&2
     return 8
+  fi
+  if [ "$adopted" = true ]; then
+    # Merged; the human's worktree and whatever ref it sits on are left in place —
+    # nothing here created them. The claim and its writer slot come down as usual.
+    printf 'workspace: merged %s from the named worktree %s into %s; that worktree was not created by this library and is left in place\n' \
+      "$source" "$path" "$3"
+    register_writer_teardown "$1" "$2" >/dev/null 2>&1
+    register_release "$1" "$2" "${4:-}" || return 8
+    return 0
   fi
   if ! err="$(git -C "$1" worktree remove "$path" 2>&1)"; then
     printf 'workspace: %s merged into %s, but its worktree %s could not be removed: %s\n' \
@@ -211,6 +282,20 @@ workspace_remove() { # $1 project-root $2 slug [$3 session-id]
     printf 'workspace: the timecard for %s is held by session %s, so this session may not remove it\n' \
       "$2" "$(jq -r '.session // "unknown"' "$card")" >&2
     return 8
+  fi
+  # An adopted worktree is the human's: the claim and its writer slot are released, the
+  # tree and its ref are left exactly as they are, and nothing is checked for merge
+  # state because nothing is about to be destroyed.
+  if [ -n "$card" ] && [ "$(jq -r '.adopted // false' "$card" 2>/dev/null)" = true ]; then
+    printf 'workspace: released the claim on %s; its worktree %s was named by the human, not created here, and is left in place\n' \
+      "$2" "$(jq -r '.worktree // "?"' "$card")"
+    register_writer_teardown "$1" "$2" >/dev/null 2>&1
+    register_release "$1" "$2" "${3:-}" || {
+      rc=$?
+      [ "$rc" -eq 1 ] && return 0
+      return "$rc"
+    }
+    return 0
   fi
   if ! git -C "$1" show-ref --verify --quiet "refs/heads/$short"; then
     printf 'workspace: there is no ref refs/heads/%s in %s, so there is no change workspace to remove\n' \

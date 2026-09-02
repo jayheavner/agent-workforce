@@ -65,8 +65,8 @@ edit that file in place with a dated note. Never re-run the design process while
 isolation is the **change**, and a task that will produce a commit declares one at intake — yours
 included, on a line reading `CHANGE: <slug>` in your dispatch. Before your first turn the dispatch
 guard claimed that change in the work register and built or adopted its worktree; the path is
-derived from the slug, never passed to you, at `<project>/.claude/worktrees/<slug>` with the ref
-`refs/heads/change/<slug>`. Write every artifact under that worktree — the `plans/`, `docs/`,
+derived from the slug, at `<project>/.claude/worktrees/<slug>` with the ref
+`refs/heads/change/<slug>`, or, when the human named an existing worktree, the one your dispatch's `WORKTREE: <absolute path>` line gives. Write every artifact under that worktree — the `plans/`, `docs/`,
 `skills/` and `agents/` paths your lane names, resolved inside it, so the design integrates with
 the change it designs. You hold no Bash tool and never build a workspace: a shell command from you is refused
 outright, and a missing worktree is something to report, not to repair. Two rules apply to each

@@ -9,8 +9,9 @@
 # moved.
 #
 # Sourced by agent-team-dispatch-guard.sh, which owns the marker constants this reads
-# (CHANGE_MARKER_PREFIX, PARALLEL_SAFE_MARKER, CHANGE_REQUIRED_ROLES, the two retired
-# literals, OVERRIDE_MARKER) and the helpers it calls (guard_log, human_override_paths).
+# (CHANGE_MARKER_PREFIX, WORKTREE_MARKER_PREFIX, PARALLEL_SAFE_MARKER,
+# CHANGE_REQUIRED_ROLES, the retired literal, OVERRIDE_MARKER) and the helpers it calls
+# (guard_log, human_override_paths).
 # Sourcing defines two functions and does nothing else; `dispatch_change_gate` does the
 # work. It deliberately runs in the guard's own variable space rather than declaring
 # everything local, so a refusal here is the guard's own `exit 2` — a workspace that
@@ -33,33 +34,77 @@ EOF
   return 1
 }
 
-dispatch_change_gate() {
-  # In order: refuse the two retired declarations; read the change this dispatch declares;
-  # require one from every role that writes; then claim it, build or adopt its worktree,
-  # mark it ready, and take the writer slot. Each step's own refusal names the durable
-  # fact it rests on and the one line or command that clears it.
-  PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
-  TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
+# The `<marker> <value>` line at the start of a line in the prompt, value only: everything
+# after the marker to the end of the line with surrounding blanks trimmed, first such line.
+# "Bad Slug" stays malformed and is refused as such rather than squeezed into a legal name.
+dispatch_declared_line() { # $1 marker
+  printf '%s\n' "$PROMPT" | sed -n "s/^${1}[[:space:]]*//p" | head -n1 | sed -e 's/[[:space:]]*$//'
+}
 
-  # The two retired declarations are REFUSED, never ignored. A line the runtime no longer
-  # reads is worse than no line at all: on 2026-08-04 seven dispatches were spent on a
-  # declaration that looked enforced and was not.
-  #
-  # Detection is the MARKER's presence at the start of a line, never a non-empty capture
-  # after it. Extracting the remainder and refusing only a non-empty one let a bare
-  # `WORKTREE:` line — no path — be silently ignored, which is precisely the outcome this
-  # rule forbids. The remainder is no part of the decision: the message names the prefix and
-  # its replacement and quotes no path. A two-arm `case` on the prompt matches the marker at
-  # the very start or immediately after a newline, so it needs no subprocess and no regular
-  # expression and the literal cannot be misinterpreted.
+# Is the marker present at the start of some line at all? Presence is decided separately
+# from the value: a bare marker with nothing after it was once silently ignored, which is
+# precisely the outcome the "refused, never ignored" rule forbids. A two-arm `case` matches
+# the marker at the very start or immediately after a newline — no subprocess, no regular
+# expression, and the literal cannot be misinterpreted.
+dispatch_marker_present() { # $1 marker
   case "$PROMPT" in
-    "$RETIRED_WORKTREE_PREFIX"* | *$'\n'"$RETIRED_WORKTREE_PREFIX"*)
-      guard_log dispatch "$TYPE" block "retired WORKTREE: declaration"
-      printf 'agent-team dispatch guard: this dispatch carries a "%s" line, which no guard reads any more, so nothing would have enforced it. The unit of isolation is the change, not the agent: one worktree per change, created by this guard, shared by every agent working on that change. Replace that line with:\n  %s <slug>\nThe worktree is then <project>/.claude/worktrees/<slug> at refs/heads/change/<slug> — derived from the slug, never passed, so every participant computes the same one.\n' \
-        "$RETIRED_WORKTREE_PREFIX" "$CHANGE_MARKER_PREFIX" >&2
+    "$1"* | *$'\n'"$1"*) return 0 ;;
+  esac
+  return 1
+}
+
+# The worktree the human named, validated before anything is claimed: absolute, on disk,
+# canonicalised, not the shared checkout, and one git lists for this project. Sets
+# DECLARED_WORKTREE to the canonical path — set in the guard's own shell, never printed
+# from a subshell, because an `exit 2` inside a command substitution ends only the
+# substitution and the dispatch would then proceed. The path is checked HERE, not left to
+# workspace_ensure, so a bad path claims nothing and there is nothing to release.
+dispatch_named_worktree_gate() { # $1 declared path -> sets DECLARED_WORKTREE
+  local canon listed
+  case "$1" in
+    /*) ;;
+    *)
+      guard_log dispatch "$TYPE" block "relative WORKTREE: path: $1"
+      printf 'agent-team dispatch guard: the line "%s %s" names a relative path, and a relative path means something different in the shared checkout and in a worktree, so it cannot name a workspace. Write the absolute path of the worktree.\n' \
+        "$WORKTREE_MARKER_PREFIX" "$1" >&2
       exit 2
       ;;
   esac
+  if [ ! -d "$1" ]; then
+    guard_log dispatch "$TYPE" block "WORKTREE: path missing on disk: $1"
+    printf 'agent-team dispatch guard: the line "%s %s" names a directory that does not exist, so nothing was claimed. Name a worktree that exists — git -C %s worktree list shows the ones git knows — or drop the line so the worktree is created at %s.\n' \
+      "$WORKTREE_MARKER_PREFIX" "$1" "$PROJECT_ROOT" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
+    exit 2
+  fi
+  canon="$(cd "$1" && pwd -P)"
+  if [ "$canon" = "$PROJECT_ROOT" ]; then
+    guard_log dispatch "$TYPE" block "WORKTREE: names the shared checkout: $1"
+    printf 'agent-team dispatch guard: the line "%s %s" names the shared checkout itself, which is not a worktree and isolates nothing, so nothing was claimed. Name a linked worktree — git -C %s worktree list shows them — or drop the line so one is created at %s.\n' \
+      "$WORKTREE_MARKER_PREFIX" "$1" "$PROJECT_ROOT" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
+    exit 2
+  fi
+  if ! listed="$(workspace_lookup_worktree "$PROJECT_ROOT" "$canon")"; then
+    guard_log dispatch "$TYPE" block "WORKTREE: path is not a registered worktree: $1"
+    printf 'agent-team dispatch guard: the line "%s %s" names a directory that git does not list as a worktree of %s, so nothing was claimed. This guard adopts only a worktree git already knows. See them with: git -C %s worktree list. Name one of those, or drop the line so the worktree is created at %s.\n' \
+      "$WORKTREE_MARKER_PREFIX" "$1" "$PROJECT_ROOT" "$PROJECT_ROOT" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
+    exit 2
+  fi
+  guard_log dispatch "$TYPE" note "change=$DECLARED_CHANGE adopts the human-named worktree $canon at ${listed:-detached}"
+  DECLARED_WORKTREE="$canon"
+}
+
+dispatch_change_gate() {
+  # In order: refuse the retired declaration; read the change this dispatch declares and
+  # the worktree it names, if any; require a change from every role that writes; then
+  # claim it, build or adopt its worktree, mark it ready, and take the writer slot. Each
+  # step's own refusal names the durable fact it rests on and the one line or command
+  # that clears it.
+  PROMPT="$(printf '%s' "$PARSED" | jq -r '.tool_input.prompt // empty')"
+  TRANSCRIPT="$(printf '%s' "$PARSED" | jq -r '.transcript_path // empty')"
+
+  # The retired declaration is REFUSED, never ignored. A line the runtime no longer reads
+  # is worse than no line at all: on 2026-08-04 seven dispatches were spent on a
+  # declaration that looked enforced and was not.
   case "$PROMPT" in
     *"$RETIRED_PARALLEL_SAFE"*)
       guard_log dispatch "$TYPE" block "retired PARALLEL_SAFE literal"
@@ -69,14 +114,28 @@ dispatch_change_gate() {
       ;;
   esac
 
-  # The change this dispatch declares, if any. Read exactly as the runtime reads it: at
-  # the START of a line, everything after the marker to the end of the line, with only
-  # surrounding blanks trimmed — so "Bad Slug" stays malformed and is refused as such
-  # rather than silently squeezed into a legal-looking name.
-  DECLARED_CHANGE="$(
-    printf '%s\n' "$PROMPT" | sed -n "s/^${CHANGE_MARKER_PREFIX}[[:space:]]*//p" | head -n1 \
-      | sed -e 's/[[:space:]]*$//'
-  )"
+  # The change this dispatch declares, and the worktree it names, if any.
+  DECLARED_CHANGE="$(dispatch_declared_line "$CHANGE_MARKER_PREFIX")"
+  DECLARED_WORKTREE="$(dispatch_declared_line "$WORKTREE_MARKER_PREFIX")"
+
+  # A WORKTREE: line is honoured, and so it is held to a shape: a path after it, and a
+  # CHANGE: line beside it. A bare marker is refused rather than ignored — "refused, never
+  # ignored" — and a place with no change is refused because there is nothing to claim,
+  # and a claim is what confines the agent to the place.
+  if dispatch_marker_present "$WORKTREE_MARKER_PREFIX"; then
+    if [ -z "$DECLARED_WORKTREE" ]; then
+      guard_log dispatch "$TYPE" block "bare WORKTREE: line with no path"
+      printf 'agent-team dispatch guard: this dispatch carries a "%s" line with nothing after it. That line names the existing worktree the change works in, so it needs the absolute path — or it should be dropped, in which case the worktree is created at <project>/.claude/worktrees/<slug>. Either:\n  %s <absolute path of an existing worktree>\nbeside the %s <slug> line, or no such line at all.\n' \
+        "$WORKTREE_MARKER_PREFIX" "$WORKTREE_MARKER_PREFIX" "$CHANGE_MARKER_PREFIX" >&2
+      exit 2
+    fi
+    if [ -z "$DECLARED_CHANGE" ]; then
+      guard_log dispatch "$TYPE" block "WORKTREE: line without a CHANGE: line"
+      printf 'agent-team dispatch guard: this dispatch names a worktree but no change. The worktree is where a change works; the change is what is claimed in the work register, and the claim is what confines the agent to that worktree — so the path alone enforces nothing. Add the line:\n  %s <slug>\nand keep the %s line beside it; the guard then adopts that worktree for the change instead of creating one.\n' \
+        "$CHANGE_MARKER_PREFIX" "$WORKTREE_MARKER_PREFIX" >&2
+      exit 2
+    fi
+  fi
 
   CHANGE_REQUIRED=0
   for name in $CHANGE_REQUIRED_ROLES; do
@@ -91,8 +150,8 @@ dispatch_change_gate() {
       *"$PARALLEL_SAFE_MARKER"*) : ;;
       *)
         guard_log dispatch "$TYPE" block "no change declared"
-        printf 'agent-team dispatch guard: a %s dispatch must say which change it works on, because policy:workspace-isolation gives every change its own worktree and admits one writer at a time — and this guard cannot claim a workspace for a dispatch that names none. Add one line:\n  %s <slug>\nThe slug is lower-case letters, digits, dot, dash and underscore; the worktree is created for you at <project>/.claude/worktrees/<slug> on refs/heads/change/<slug>, or adopted when this change already has one. If this dispatch genuinely writes nothing anywhere, say so with the exact line instead:\n  %s\n' \
-          "$TYPE" "$CHANGE_MARKER_PREFIX" "$PARALLEL_SAFE_MARKER" >&2
+        printf 'agent-team dispatch guard: a %s dispatch must say which change it works on, because policy:workspace-isolation gives every change its own worktree and admits one writer at a time — and this guard cannot claim a workspace for a dispatch that names none. Add one line:\n  %s <slug>\nThe slug is lower-case letters, digits, dot, dash and underscore; the worktree is created for you at <project>/.claude/worktrees/<slug> on refs/heads/change/<slug>, or adopted when this change already has one. When the human named an existing worktree, add a second line beside it — %s <absolute path> — and that worktree is adopted instead. If this dispatch genuinely writes nothing anywhere, say so with the exact line instead:\n  %s\n' \
+          "$TYPE" "$CHANGE_MARKER_PREFIX" "$WORKTREE_MARKER_PREFIX" "$PARALLEL_SAFE_MARKER" >&2
         exit 2
         ;;
     esac
@@ -130,6 +189,10 @@ dispatch_change_gate() {
         "$DECLARED_CHANGE" "${CWD:-none supplied by the harness}" >&2
       exit 2
     fi
+    # A named worktree is validated before the claim, so a bad path claims nothing.
+    if [ -n "$DECLARED_WORKTREE" ]; then
+      dispatch_named_worktree_gate "$DECLARED_WORKTREE"
+    fi
     SESSION_ID="$(printf '%s' "$PARSED" | jq -r '.session_id // empty')"
     if [ -z "$SESSION_ID" ]; then
       # No id in the payload: identity falls back to the session PROCESS, which is unique
@@ -157,7 +220,7 @@ dispatch_change_gate() {
     if [ -n "$CARD" ] && [ -f "$CARD" ]; then CARD_EXISTED=1; fi
     SLOT_FILE=""
     [ -n "$CARD" ] && SLOT_FILE="$(dirname "$CARD")/writers/$(basename "$CARD")"
-    CLAIM_OUT="$(register_claim "$PROJECT_ROOT" "$DECLARED_CHANGE" "$SESSION_ID" 2>&1)"
+    CLAIM_OUT="$(register_claim "$PROJECT_ROOT" "$DECLARED_CHANGE" "$SESSION_ID" "$DECLARED_WORKTREE" 2>&1)"
     CLAIM_RC=$?
 
     if [ "$CLAIM_RC" -eq 3 ] && change_released_by_human "$DECLARED_CHANGE"; then
@@ -169,7 +232,7 @@ dispatch_change_gate() {
         "human override of the claim refusal for change $DECLARED_CHANGE, held by $(printf '%s' "$CLAIM_OUT" | jq -r '.session // "an unnamed session"' 2>/dev/null)"
       rm -f "$CARD" ${SLOT_FILE:+"$SLOT_FILE"}
       CARD_EXISTED=0
-      CLAIM_OUT="$(register_claim "$PROJECT_ROOT" "$DECLARED_CHANGE" "$SESSION_ID" 2>&1)"
+      CLAIM_OUT="$(register_claim "$PROJECT_ROOT" "$DECLARED_CHANGE" "$SESSION_ID" "$DECLARED_WORKTREE" 2>&1)"
       CLAIM_RC=$?
     fi
 
@@ -206,13 +269,31 @@ dispatch_change_gate() {
       guard_log dispatch "$TYPE" note "change=$DECLARED_CHANGE resolved an existing claim: membership=$(register_mine "$PROJECT_ROOT" "$DECLARED_CHANGE" "$SESSION_ID" 2>/dev/null | head -n1)"
     fi
 
+    # The card is the authority on WHERE the change works. A first claim recorded the
+    # named worktree, if any; a later dispatch of the same change may omit the line and
+    # still lands there, and one that names a DIFFERENT worktree is refused — one change,
+    # one worktree, and the claim is left exactly as it was.
+    CARD_WT="$(jq -r '.worktree // empty' "$CARD" 2>/dev/null)"
+    CARD_ADOPTED="$(jq -r '.adopted // false' "$CARD" 2>/dev/null)"
+    if [ -n "$DECLARED_WORKTREE" ] && [ "$CARD_EXISTED" -eq 1 ] && [ "$DECLARED_WORKTREE" != "$CARD_WT" ]; then
+      guard_log dispatch "$TYPE" block "change $DECLARED_CHANGE works in $CARD_WT, dispatch named $DECLARED_WORKTREE"
+      printf 'agent-team dispatch guard: the change "%s" already works in %s, and this dispatch names a different worktree, %s. One change has one worktree, so this dispatch was not started and the claim is unchanged. Either drop the %s line — the dispatch then lands in %s — or declare a different change for the other worktree.\n' \
+        "$DECLARED_CHANGE" "$CARD_WT" "$DECLARED_WORKTREE" "$WORKTREE_MARKER_PREFIX" "$CARD_WT" >&2
+      exit 2
+    fi
+
     # Ordering is claim first, tree second, ready third: a card without a tree is reaped
     # by liveness, a tree without a card is reported by hygiene, and a card only reaches
-    # "ready" once its workspace exists.
+    # "ready" once its workspace exists. An adopted worktree is handed to ensure as the
+    # card records it, so nothing is created and nothing is derived.
     BASE_REF="$(jq -r '.base_ref // empty' "$CARD" 2>/dev/null)"
     [ -n "$BASE_REF" ] || BASE_REF="$(git -C "$PROJECT_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '')"
     [ -n "$BASE_REF" ] || BASE_REF=HEAD
-    ENSURE_OUT="$(workspace_ensure "$PROJECT_ROOT" "$DECLARED_CHANGE" "$BASE_REF" 2>&1)"
+    if [ "$CARD_ADOPTED" = true ]; then
+      ENSURE_OUT="$(workspace_ensure "$PROJECT_ROOT" "$DECLARED_CHANGE" "$BASE_REF" "$CARD_WT" 2>&1)"
+    else
+      ENSURE_OUT="$(workspace_ensure "$PROJECT_ROOT" "$DECLARED_CHANGE" "$BASE_REF" 2>&1)"
+    fi
     ENSURE_RC=$?
     if [ "$ENSURE_RC" -ne 0 ]; then
       # Window A: a claim whose tree then failed to build must not be left behind a live
@@ -314,7 +395,7 @@ dispatch_change_gate() {
         guard_log dispatch "$TYPE" block "writer slot $WRITER_SLOT for $DECLARED_CHANGE refused"
         printf 'agent-team dispatch guard: the change "%s" already has a live writer, and one change admits one writer at a time — the worktree is shared, the writing turn is not. The register said:\n%s\nTwo escapes. Wait for that writer to finish: its own agent frees the slot with\n  bash %s writer-release %s %s <the slot it holds>\nIts slot is also released automatically by the next dispatch for this change once that agent'"'"'s own dispatch has finished, so a sequence of dispatches on one change needs nothing done by hand. Or let it lapse: a writer that died without releasing the slot is displaced automatically once its heartbeat is older than writer_ttl_seconds in %s/agent-team-register.json AND no dispatch of this change is still in flight — a lapsed heartbeat alone never displaces a writer whose dispatch is still running, because nothing refreshes a heartbeat during work. The worktree %s is already built either way — nothing needs creating.\n' \
           "$DECLARED_CHANGE" "$WRITER_OUT" "$REGISTER_CLI" "$PROJECT_ROOT" "$DECLARED_CHANGE" \
-          "$GUARD_DIR" "$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")" >&2
+          "$GUARD_DIR" "${CARD_WT:-$(register_worktree_path "$PROJECT_ROOT" "$DECLARED_CHANGE")}" >&2
         exit 2
       fi
       if [ "$HELD_BEFORE" -eq 1 ] && { [ "$DISPLACED_SLOT" != "$WRITER_SLOT" ] \

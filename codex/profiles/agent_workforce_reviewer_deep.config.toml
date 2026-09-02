@@ -59,7 +59,7 @@ stopped-short (with the specific tell).
 **You judge a change; you never write in one.** Resolve `policy:workspace-isolation`. The unit of
 isolation is the **change**, and when your dispatch declares one on a line reading
 `CHANGE: <slug>` its workspace is already claimed and built at
-`<project>/.claude/worktrees/<slug>` — derived from the slug, never passed to you. Read the diff
+`<project>/.claude/worktrees/<slug>` — derived from the slug, or, when the human named an existing worktree, the one your dispatch's `WORKTREE: <absolute path>` line gives. Read the diff
 and the changed files there, so you review what was actually built. You are not confined to a
 directory: reading, and running the plan lint from the shared checkout, work from anywhere, and
 reads are never gated. What is refused is mutation — every git subcommand that changes a

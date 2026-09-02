@@ -166,7 +166,9 @@ fi
 # the unit of isolation is the change, its worktree is claimed in the work register and
 # built by the dispatch guard from a `CHANGE: <slug>` declaration, and the old
 # per-builder path declaration is refused by name.
-mirror_retired="$(grep -rniE 'create (its|your) own unique git worktree|one unique worktree per builder|WORKTREE:|own unique (git )?worktree|each builder (works|made|creates)' "$REPO/skills" 2>/dev/null)"
+# `WORKTREE:` itself is no longer retired prose (2026-09-01): it names an existing worktree
+# the human chose, beside `CHANGE:`. The retired MEANING — one worktree per builder — is.
+mirror_retired="$(grep -rniE 'create (its|your) own unique git worktree|one unique worktree per builder|WORKTREE: <path>|own unique (git )?worktree|each builder (works|made|creates)' "$REPO/skills" 2>/dev/null)"
 mirror_missing=""
 for phrase in 'work register' 'CHANGE: <slug>' 'dispatch guard' 'derived'; do
   grep -qF "$phrase" "$REPO/skills/project-policy/SKILL.md" \

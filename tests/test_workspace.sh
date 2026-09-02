@@ -405,5 +405,9 @@ run_case 'remove refuses a malformed slug' case_remove_refuses_bad_slug
 run_case 'remove tears down the writer slot' case_remove_tears_down_writer_slot
 run_case 'remove reports failure when the card cannot be released' case_remove_reports_failed_release
 
+# A human-named worktree, adopted rather than created (2026-09-01). Sourcing runs the cases.
+# shellcheck source=tests/lib/workspace-adopt-cases.sh
+. "$HERE/lib/workspace-adopt-cases.sh"
+
 printf 'passed=%s failed=%s\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]

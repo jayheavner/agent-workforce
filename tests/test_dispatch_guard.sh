@@ -94,13 +94,16 @@ ACCEPTANCE CRITERIA
 
 # --- the declaration a git-mutating dispatch must carry ---------------------
 # The unit of isolation is the CHANGE: a dispatch names it, and the guard claims it and
-# builds its worktree. The retired markers are refused rather than ignored, because a
-# line the runtime no longer reads is worse than no line at all — the 2026-08-04
+# builds its worktree — or adopts the one a `WORKTREE: <absolute path>` line names (the
+# adoption cases are in tests/lib/dispatch-guard-adopt-cases.sh). A WORKTREE: line with
+# no CHANGE: names a place but no change, so it is refused and the refusal names the
+# CHANGE: line. The retired PARALLEL_SAFE literal is refused rather than ignored, because
+# a line the runtime no longer reads is worse than no line at all — the 2026-08-04
 # incident was a declaration that looked enforced and was not.
 expect_block "$(crit_payload builder "Implement it.
 WORKTREE: $CRIT_PROJ/.claude/worktrees/task-a-b1
 $CRITERIA_BODY")" \
-  "a WORKTREE: line is refused and names CHANGE:"
+  "a WORKTREE: line without CHANGE: is refused and names CHANGE:"
 expect_block "$(dg_payload executor "PARALLEL_SAFE: no git mutation in this dispatch
 Run the finalizer" sess-criteria "$CRIT_PROJ" "")" \
   "the retired PARALLEL_SAFE literal is refused and names the new one"
@@ -130,8 +133,8 @@ run "$(crit_payload builder "Implement it.
 WORKTREE: $CRIT_PROJ/.claude/worktrees/task-a-b1
 $CRITERIA_BODY")"
 case "$OUT" in
-  *"CHANGE: <slug>"*) pass_case "the WORKTREE: refusal names the CHANGE: line that replaces it" ;;
-  *) fail_case "the WORKTREE: refusal names the CHANGE: line that replaces it" "observed: $OUT" ;;
+  *"CHANGE: <slug>"*) pass_case "the WORKTREE:-without-CHANGE: refusal names the CHANGE: line it needs" ;;
+  *) fail_case "the WORKTREE:-without-CHANGE: refusal names the CHANGE: line it needs" "observed: $OUT" ;;
 esac
 run "$(dg_payload executor "PARALLEL_SAFE: no git mutation in this dispatch
 Run it" sess-criteria "$CRIT_PROJ" "")"
@@ -147,6 +150,9 @@ esac
 # file; sourcing it runs them.
 # shellcheck source=tests/lib/dispatch-guard-change-cases.sh
 . "$HERE/lib/dispatch-guard-change-cases.sh"
+# A human-named worktree, adopted rather than created (2026-09-01).
+# shellcheck source=tests/lib/dispatch-guard-adopt-cases.sh
+. "$HERE/lib/dispatch-guard-adopt-cases.sh"
 
 # --- the dispatch-count budget ratchet --------------------------------------
 # Default checkpoint 10 (hooks/agent-team-budgets.json). The transcript holds N PRIOR

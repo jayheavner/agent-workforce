@@ -37,7 +37,7 @@ own output is not authoring and stays inside your lane.
 the **change**: your dispatch declares it on a line reading `CHANGE: <slug>`, and before your
 first turn the dispatch guard claimed that change in the work register and built or adopted its
 worktree at `<project>/.claude/worktrees/<slug>`, ref `refs/heads/change/<slug>` — a path derived
-from the slug, never passed to you. You are not confined to that directory: read-only commands,
+from the slug, or, when the human named an existing worktree, the one your dispatch's `WORKTREE: <absolute path>` line gives. You are not confined to that directory: read-only commands,
 installs, and tool runs go where the work is. Git that *mutates* a repository is confined — it is
 refused unless it runs inside that worktree, which a command opening with `cd <that worktree> &&`
 satisfies. The one sanctioned mutation of the shared checkout is the workspace command itself:

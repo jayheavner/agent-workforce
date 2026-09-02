@@ -38,6 +38,22 @@ CHANGE: some-later-dispatch")"
 allow builder "$(write_payload "$WT_MINE/new.py" "$TR_MAIN_SESSION")" \
   "a main session's declarations are no selector, so the register alone resolves"
 
+# --- a HUMAN-NAMED worktree confines exactly like a derived one ---------------
+# The card records where the change works; the guard reads that, never the derived
+# path. A worktree the human made under `.worktrees/`, detached, is the 2026-09-01 case.
+res_register named-claim
+WT_NAMED="$MAIN/.worktrees/human_plan"
+git -C "$MAIN" worktree add -q --detach "$WT_NAMED" HEAD
+card named "$WT_NAMED" "$SESSION" "$RES_REG" || fail "fixture" "could not write the named timecard"
+TR_NAMED="$(own_tr "Do the work.
+CHANGE: named")"
+allow builder "$(write_payload "$WT_NAMED/new.py" "$TR_NAMED")" \
+  "a claim on a human-named worktree allows writes inside it"
+block builder "$(write_payload "$MAIN/file.txt" "$TR_NAMED")" \
+  "a claim on a human-named worktree still confines writes to it"
+block builder "$(write_payload "$WT_MINE/new.py" "$TR_NAMED")" \
+  "a claim on a human-named worktree refuses the derived path of another change"
+
 # --- MORE THAN ONE candidate, and nothing to choose between them -------------
 res_register two-claims
 card alpha "$WT_MINE" "$SESSION" "$RES_REG" || fail "fixture" "could not write the alpha timecard"
