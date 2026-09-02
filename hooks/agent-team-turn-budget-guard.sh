@@ -24,14 +24,16 @@
 # the one thing this project is trying to stop wasting: turns. So every uncertain case
 # here is exit 0, never exit 2.
 #
-# THE COUNT IS DELIBERATELY CONSERVATIVE, NOT EXACT. It is a raw count of
-# assistant-typed lines in the transcript, not the harness's own deduplicated
-# per-reply count (confirmed this session, by counting unique reply ids against a
-# transcript known to have hit its real cap, to run measurably higher than that count
-# — often by a wide margin when extended thinking splits one reply across lines).
-# Over-counting only makes this warning fire EARLIER than the real cap, never later,
-# which is the safe direction for a nudge whose entire purpose is firing before a
-# silent kill, not after one.
+# THE COUNT MATCHES THE HARNESS'S OWN UNIT EXACTLY: one reply, deduplicated by its
+# own message id, the same rule hooks/cost_report.py already prices by and the same
+# rule this session confirmed, against a real transcript known to have hit its real
+# 150-turn cap, returns exactly 150 — not a raw line count, which on that same
+# transcript returned 226 (a first version of this hook used that cruder count; it
+# would have fired at roughly 56% of the real budget instead of the intended 85%,
+# checked and corrected before ever being trusted). jq -s over one transcript costs
+# single-digit milliseconds even on a multi-megabyte file, checked directly, and this
+# project's own worktree guard already re-scans a whole transcript on every mutating
+# call — this hook asks nothing new of the harness.
 #
 # Hook JSON on stdin. Exit 0 = allow. Exit 2 = block (stderr shown to the agent).
 set -u
@@ -70,7 +72,8 @@ if [ -n "$PROJECT_ROOT" ]; then
   fi
 fi
 
-COUNT="$(grep -c '"type":"assistant"' "$TRANSCRIPT" 2>/dev/null)"
+COUNT="$(jq -rs '[.[] | select(.type=="assistant") | .message.id // empty] | unique | length' \
+  "$TRANSCRIPT" 2>/dev/null)"
 case "$COUNT" in ''|*[!0-9]*) exit 0 ;; esac
 
 THRESHOLD=$(( CAP * THRESHOLD_PCT / 100 ))

@@ -63,6 +63,24 @@ run_guard scribe "not valid json"
 GOUT="$(printf '%s' "$(bash_payload 'printf x > out.txt' "$TR_OVER")" | bash "$GUARD" 2>&1)"; GRC=$?
 [ "$GRC" -eq 0 ] && pass "no role argument at all allows" || fail "no role argument at all allows" "exit $GRC"
 
+# The real failure mode this hook must not repeat: a thinking-block line and its
+# paired tool-use line share one message id (the real pattern this session found
+# inflating a naive line count by roughly 1.5x on a real transcript). The count
+# must dedupe by id, matching hooks/cost_report.py's own accounting exactly, or
+# this hook fires at roughly half the intended threshold instead of 85%.
+TR_SPLIT="$(mktemp "$WORK/split.XXXXXX")"
+: > "$TR_SPLIT"
+i=1
+while [ "$i" -le 30 ]; do
+  printf '{"type":"assistant","message":{"id":"msg_%s"}}\n' "$i" >> "$TR_SPLIT"
+  printf '{"type":"assistant","message":{"id":"msg_%s"}}\n' "$i" >> "$TR_SPLIT"  # same id, second half of the same reply
+  i=$((i + 1))
+done
+# 30 real turns, 60 raw lines. scribe's cap is 40; 85% of 40 is 34 — above 30 real
+# turns, so a correct, deduped count must still allow.
+allow "60 raw lines sharing 30 real ids stays under the threshold (not inflated to 60)" \
+  scribe "$(bash_payload 'printf x > out.txt' "$TR_SPLIT")"
+
 # The refusal, when it fires, names the count, the cap, and the required repair.
 run_guard scribe "$(bash_payload 'printf x > out.txt' "$TR_OVER")"
 case "$GOUT" in
