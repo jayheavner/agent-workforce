@@ -15,6 +15,8 @@ hooks:
           command: "$HOME/.claude/hooks/agent-team-secrets.sh reviewer"
         - type: command
           command: "$HOME/.claude/hooks/agent-team-worktree-guard.sh reviewer"
+        - type: command
+          command: "$HOME/.claude/hooks/agent-team-turn-budget-guard.sh reviewer"
   PostToolUse:
     - matcher: Bash
       hooks:
