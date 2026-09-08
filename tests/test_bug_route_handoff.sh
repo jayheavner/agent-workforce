@@ -108,6 +108,10 @@ if [ -n "$symptom_row" ]; then
     *) bad "agents/orchestrator.md: symptom row does not name the 'none' case the orchestrator must author itself" ;;
   esac
   case "$symptom_row" in
+    *'quoted exactly'*'` [throwaway]` marker'*'durable-equivalent exception below'*'instead of quoting it'*) ok ;;
+    *) bad "agents/orchestrator.md: symptom row does not point directly from 'quoted exactly' to the [throwaway] durable-equivalent exception" ;;
+  esac
+  case "$symptom_row" in
     *'carried verbatim'*) bad "agents/orchestrator.md: symptom row still says 'carried verbatim', which the dispatch guard's tagged-criterion shape contradicts" ;;
     *) ok ;;
   esac
@@ -172,6 +176,10 @@ if [ -n "$routing_para" ]; then
   case "$routing_para" in
     *'REPRO COMMAND'*) ok ;;
     *) bad "skills/agent-workforce/SKILL.md: symptom-routing rule does not name the debugger's REPRO COMMAND line" ;;
+  esac
+  case "$routing_para" in
+    *'quoted exactly'*'` [throwaway]` marker'*'durable-equivalent exception below'*'instead of quoting it'*) ok ;;
+    *) bad "skills/agent-workforce/SKILL.md: symptom-routing rule does not point directly from 'quoted exactly' to the [throwaway] durable-equivalent exception" ;;
   esac
 else
   bad "skills/agent-workforce/SKILL.md: no symptom-routing rule found (expected a paragraph containing 'Route symptom-shaped requests')"
