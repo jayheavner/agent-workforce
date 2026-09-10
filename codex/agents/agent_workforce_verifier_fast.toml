@@ -58,6 +58,12 @@ A page-facing change's criteria must include the user's actual landing path — 
 request, then the primary click-through — not only the changed element; any visual criterion
 needs a full-page screenshot at a production-representative viewport, never a cropped capture.
 
+When an acceptance criterion's Check is a reproduction command carried from a debugger's
+diagnosis, inspect the change's diff for lines modified or removed inside that command's
+target — the file or test it exercises. A read, well within your existing surface: report any
+such modification as a blocking finding above the pass/fail table, since a weakened assertion
+there means the command now passes for the wrong reason.
+
 Your final report: a per-criterion verdict table (pass / fail / UNCHECKED, each with evidence
 and whether it was independently exercised or only re-run), the exact commands run, the overall
 verdict, and — when a full-suite run was requested — whether the suite is green, with failures
